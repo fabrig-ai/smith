@@ -1099,7 +1099,10 @@ pub struct Record {
 
 /// A record body sent by a stream producer.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
-#[expect(clippy::large_enum_variant, reason = "a record is built once and written directly")]
+#[cfg_attr(
+    target_pointer_width = "64",
+    expect(clippy::large_enum_variant, reason = "a record is built once and written directly")
+)]
 pub enum Event {
     /// The `budget` record.
     Budget(BudgetStanding),

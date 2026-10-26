@@ -225,11 +225,6 @@ fn prepare_program(configuration: &mut service::Config, resources: Option<&Progr
     Ok(())
 }
 
-#[cfg(not(unix))]
-fn adopt_program_root(_service: &mut service::Service, _resources: &Resources) -> Result<Option<Fd>, String> {
-    Ok(None)
-}
-
 #[cfg(unix)]
 fn open_trace(path: &Path) -> Result<(Fd, Fd), String> {
     let path = std::path::absolute(path).map_err(|error| format!("trace path: {error}"))?;
@@ -352,7 +347,10 @@ fn prepare(mut configuration: config::Configuration, resources: &Resources) -> R
     });
     let mut service = service::Service::new(configuration.service, resources.seed)
         .map_err(|error| format!("agent configuration cannot start: {error:?}"))?;
+    #[cfg(unix)]
     let unused_program_root = adopt_program_root(&mut service, resources)?;
+    #[cfg(not(unix))]
+    let unused_program_root = None;
     service
         .adopt_streams(resources.input, resources.output, resources.signals)
         .map_err(|fd| format!("agent stream {} cannot be adopted", fd.raw()))?;
