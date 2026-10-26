@@ -249,14 +249,7 @@ fn make_agent(spawn: &Spawn, inherited: &Inherited) -> Proc {
             pid: 101,
             trace: inherited.appends.first().map(|(_, fd)| *fd),
             roots: if matches!(case, Case::Tools | Case::Events) {
-                Some(
-                    inherited
-                        .roots
-                        .iter()
-                        .filter(|(name, _)| name.as_ref() != b"programs")
-                        .map(|(_, fd)| *fd)
-                        .collect(),
-                )
+                Some(inherited.roots.iter().filter(|(name, _)| name.as_ref() != b"programs").cloned().collect())
             } else {
                 None
             },
@@ -539,6 +532,7 @@ fn run_inner(
     let operations = smith_agent_service::program_operations(&configuration(case))
         .expect("program operation bound")
         .checked_add(8)
+        .and_then(|count| count.checked_add(configuration(case).limits.domain.run.directories))
         .expect("shell routes");
     world.host_startup(
         HostedProgram { program: b"smith".as_slice().into(), make: make_agent, instances: 1, operations },
@@ -554,11 +548,11 @@ fn run_inner(
                 if matches!(case, Case::Tools | Case::Events) {
                     roots.extend([
                         skein_world::StartupRoot {
-                            name: b"cwd".as_slice().into(),
+                            name: b"/work/repo".as_slice().into(),
                             path: b"/work/repo".as_slice().into(),
                         },
                         skein_world::StartupRoot {
-                            name: b"library".as_slice().into(),
+                            name: b"/library".as_slice().into(),
                             path: b"/library".as_slice().into(),
                         },
                     ]);

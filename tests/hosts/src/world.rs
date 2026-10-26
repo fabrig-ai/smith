@@ -257,7 +257,7 @@ fn make_agent(spawn: &kernel::Spawn, inherited: &Inherited) -> Proc {
             seed: 7,
             pid: 101,
             trace: None,
-            roots: Some(inherited.roots.iter().map(|(_, fd)| *fd).collect()),
+            roots: Some(inherited.roots.clone().into_boxed_slice()),
         },
         Box::new(errors.clone()),
     )
@@ -527,7 +527,11 @@ impl World {
                 program: b"smith-agent".as_slice().into(),
                 make: if self.program == Program::Service { make_agent } else { make_error },
                 instances: 1,
-                operations: fixture::limits().routes.checked_add(2).expect("agent operations"),
+                operations: fixture::limits()
+                    .routes
+                    .checked_add(2)
+                    .and_then(|count| count.checked_add(fixture::limits().domain.run.directories))
+                    .expect("agent operations"),
             });
         }
         harness.spawn_root(skein_sim::Handle::new(root.raw()), |root| {

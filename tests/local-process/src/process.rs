@@ -722,7 +722,15 @@ pub fn agent_roots(spawn: &kernel::Spawn) -> Vec<StartupRoot> {
     let launch = agent_launch(spawn);
     if launch.change {
         let path = launch.root_path.join("repo");
-        vec![StartupRoot { name: b"repo".as_slice().into(), path: path.as_os_str().as_encoded_bytes().into() }]
+        vec![StartupRoot {
+            // The Start uses local_policy's absolute name, independently of the physical launch root.
+            name: std::path::absolute("repo")
+                .expect("the Start's repository path")
+                .as_os_str()
+                .as_encoded_bytes()
+                .into(),
+            path: path.as_os_str().as_encoded_bytes().into(),
+        }]
     } else {
         vec![]
     }
@@ -779,7 +787,7 @@ pub fn make_agent(spawn: &kernel::Spawn, inherited: &Inherited) -> Proc {
             seed: launch.seed,
             pid: 102,
             trace: inherited.appends.first().map(|(_, fd)| *fd),
-            roots: Some(inherited.roots.iter().map(|(_, fd)| *fd).collect()),
+            roots: Some(inherited.roots.clone().into_boxed_slice()),
         },
         Box::new(errors.clone()),
     )
