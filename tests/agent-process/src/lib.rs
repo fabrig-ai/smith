@@ -86,7 +86,7 @@ pub fn declarations(environment_bytes: u32) -> agent::profile::Configuration {
     }
 }
 
-/// Adopt scenario-specific service settings and mounts in Start order.
+/// Host scenario-specific service settings and named base directories.
 #[must_use]
 #[expect(
     clippy::zero_sized_map_values,
@@ -118,7 +118,7 @@ pub fn configured(
             seed,
             pid: 101,
             trace: None,
-            roots: Some(inherited.roots.iter().map(|(_, fd)| *fd).collect()),
+            roots: Some(inherited.roots.clone().into_boxed_slice()),
         },
         Box::new(errors),
     )

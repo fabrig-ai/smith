@@ -824,7 +824,9 @@ impl World {
                     program: b"smith-agent".as_slice().into(),
                     make: if self.scenario.linger_agent { process::make_lingering_agent } else { process::make_agent },
                     instances: 8,
-                    operations: process::lower_configuration().limits.routes + 3,
+                    operations: process::lower_configuration().limits.routes
+                        + 3
+                        + process::lower_configuration().limits.domain.run.directories,
                 },
                 process::agent_roots,
                 process::agent_appends,

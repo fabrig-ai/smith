@@ -540,7 +540,11 @@ fn unused_roots(spawn: &Spawn) -> Vec<skein_world::StartupRoot> {
     let mut roots: Vec<_> = [b"unused-a", b"unused-b"]
         .into_iter()
         .map(|name| skein_world::StartupRoot {
-            name: name.as_slice().into(),
+            name: if name == b"unused-a" && spawn.args.first().is_some_and(|arg| arg.as_ref() == b"roots") {
+                b"/host/supplied".as_slice().into()
+            } else {
+                [b"/", name.as_slice()].concat().into()
+            },
             path: [b"/", name.as_slice()].concat().into(),
         })
         .collect();
@@ -564,6 +568,7 @@ struct Machine {
     next_root: u32,
     trace_root: Option<u32>,
     problem_file: bool,
+    directory_opens: Vec<Box<[u8]>>,
 }
 impl skein_world::Machine for Machine {
     fn open_root(&mut self, path: &[u8]) -> Result<skein_sim::Handle, kernel::Error> {
@@ -573,7 +578,11 @@ impl skein_world::Machine for Machine {
         }
         self.next_root += 1;
         let items = if self.problem_file && path == b"/unused-a" {
-            vec![skein_fake_machine::Item::file(b"problem.txt", b"problem")]
+            vec![
+                skein_fake_machine::Item::file(b"problem.txt", b"problem"),
+                skein_fake_machine::Item::directory(b"sub"),
+                skein_fake_machine::Item::file(b"sub/problem.txt", b"beneath the base"),
+            ]
         } else {
             Vec::new()
         };
@@ -585,6 +594,9 @@ impl skein_world::Machine for Machine {
     }
 
     fn step(&mut self, call: skein_sim::Call, answers: &mut Queue<skein_sim::Answer>) {
+        if let skein_sim::Ask::Open { path, how: kernel::OpenHow::Directory, .. } = &call.ask {
+            self.directory_opens.push(path.clone());
+        }
         if let skein_sim::Ask::Spawn { program, env, .. } = &call.ask {
             self.spawns.push(Spawned { program: program.clone(), environment: env.clone() });
             if program.as_ref() == b"/bin/sh" {
@@ -1090,7 +1102,7 @@ impl World {
         self.saved_window = Some(turns);
     }
 
-    /// Send this root path in Start while adopting the fixture's supplied descriptors.
+    /// Send this root path in Start beneath the fixture's named base.
     pub fn root_path(&mut self, path: &[u8]) {
         self.root_path = Some(path.into());
     }
@@ -1385,7 +1397,7 @@ impl World {
             workspace_refusal: self
                 .root_path
                 .as_ref()
-                .filter(|path| path.first() != Some(&b'/'))
+                .filter(|path| !matches!(path.as_ref(), b"/host/supplied" | b"/host/supplied/sub"))
                 .map(|_| smith_channel::InvalidStart::Workspace),
             credential_story: if self.refreshing.is_some() {
                 CredentialStory::Refresh
@@ -1413,6 +1425,7 @@ impl World {
             spawns: Vec::new(),
             next_root: 1,
             trace_root: None,
+            directory_opens: Vec::new(),
             problem_file: self.root_path.is_some() || matches!(self.tracing, Some((TraceCase::StoppedReasoning, _))),
         });
         world.host_roots(
@@ -1632,6 +1645,12 @@ impl World {
     #[must_use]
     pub fn exit(&self) -> Option<kernel::Exit> {
         self.parent().status
+    }
+
+    /// Directory opens observed at the fake machine, beneath inherited bases.
+    #[must_use]
+    pub fn directory_opens(&self) -> &[Box<[u8]>] {
+        &self.outcome.as_ref().expect("settled world").machine.directory_opens
     }
 
     /// Diagnostic bytes actually read from the child's standard-error pipe.

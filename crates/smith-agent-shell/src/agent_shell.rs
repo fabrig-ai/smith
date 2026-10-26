@@ -1,5 +1,5 @@
 //! Shared agent startup and shell pass (protocol/agent.md, sections 4–6).
-//! It keeps the service, startup header, inherited mount descriptors and error
+//! It keeps the service, startup header, named base descriptors, a pending root open and error
 //! output. It never keeps credentials outside the service or knows the driving
 //! kernel, simulator or neighbours. `Agent::read` reads startup settings;
 //! `Agent::new` adopts caller resources; `Host::iterate` runs the same pass in
@@ -10,7 +10,7 @@ use std::io::Write;
 use std::path::Path;
 
 use service::profile::{Layer, LimitName, Refusal};
-use skein_io::kernel::{Complete, Exit, Fd, Op, Submit};
+use skein_io::kernel::{Complete, Done, Exit, Fd, Op, OpenHow, Submit};
 use skein_lib::{List, Queue, Secret, Time, Token, Wall};
 use skein_shell::Host;
 #[cfg(unix)]
@@ -40,9 +40,11 @@ pub struct Resources {
     /// An inherited stderr descriptor whose close the invocation owns; the
     /// supplied writer owns the diagnostic bytes.
     pub error: Option<Fd>,
-    /// When present, roots are adopted in Start order; unused roots close at
-    /// the invocation's end instead of returning to the caller.
-    pub roots: Option<Box<[Fd]>>,
+    /// Named base directories opened by the host. Start roots are opened beneath
+    /// these bases by their paths as given; the agent closes every base at its end.
+    /// None selects native opening by path.
+    #[expect(clippy::type_complexity, reason = "The hosted resource contract supplies named descriptor pairs.")]
+    pub roots: Option<Box<[(Box<[u8]>, Fd)]>>,
     pub programs: Option<ProgramResources>,
 }
 
@@ -51,7 +53,12 @@ pub struct Agent {
     service: service::Service,
     header: Option<smith_events::SessionStarted>,
     trace_root: Option<Fd>,
-    roots: Option<std::vec::IntoIter<Fd>>,
+    #[expect(
+        clippy::type_complexity,
+        reason = "Retain the resource contract's named descriptor pairs until settlement."
+    )]
+    roots: Option<Box<[(Box<[u8]>, Fd)]>>,
+    opening: Option<Box<[u8]>>,
     errors: Box<dyn Write>,
     error: Option<Fd>,
     completions: Queue<Complete>,
@@ -103,7 +110,8 @@ impl Agent {
             service: prepared.service,
             header: prepared.header,
             trace_root: prepared.trace_root,
-            roots: resources.roots.map(|roots| roots.into_vec().into_iter()),
+            roots: resources.roots,
+            opening: None,
             errors,
             error: resources.error,
             completions: Queue::with_capacity(prepared.queue),
@@ -262,9 +270,36 @@ fn open_root(_path: &[u8], _maximum: u32) -> (Result<Fd, ()>, Box<[u8]>) {
     (Err(()), Box::new([]))
 }
 
+// shell.md, section 2.5: match spelling before host_path normalizes metadata.
+fn hosted_root<'a>(roots: &[(Box<[u8]>, Fd)], path: &'a [u8]) -> Option<(Fd, &'a [u8])> {
+    for (name, fd) in roots {
+        let relative = if path == name.as_ref() {
+            b".".as_slice()
+        } else {
+            let Some(remainder) = path.strip_prefix(name.as_ref()) else { continue };
+            if name.last() == Some(&b'/') {
+                remainder
+            } else {
+                let Some(remainder) = remainder.strip_prefix(b"/") else { continue };
+                remainder
+            }
+        };
+        if relative.split(|byte| *byte == b'/').any(|part| part == b"..") {
+            return None;
+        }
+        let mut relative = relative;
+        while let Some(remainder) = relative.strip_prefix(b"/") {
+            relative = remainder;
+        }
+        return Some((*fd, if relative.is_empty() { b"." } else { relative }));
+    }
+    None
+}
+
 fn extra_operations(configuration: &config::Configuration, resources: &Resources, root_count: usize) -> Option<u32> {
     u32::try_from(root_count)
         .ok()?
+        .checked_add(if resources.roots.is_some() { configuration.service.limits.domain.run.directories } else { 0 })?
         .checked_add(u32::from(resources.error.is_some()))
         .and_then(|count| count.checked_add(u32::from(configuration.trace.is_some() && resources.trace.is_none())))
         .and_then(|count| {
@@ -274,6 +309,18 @@ fn extra_operations(configuration: &config::Configuration, resources: &Resources
                     && resources.programs.as_ref().and_then(|programs| programs.directory).is_some(),
             ))
         })
+}
+
+fn roots_worst_case(configuration: &config::Configuration, resources: &Resources) -> Option<u64> {
+    let Some(roots) = &resources.roots else { return Some(0) };
+    let mut bytes = u64::try_from(roots.len().checked_mul(size_of::<(Box<[u8]>, Fd)>())?).ok()?;
+    for (name, _) in roots {
+        bytes = bytes.checked_add(u64::try_from(name.len()).ok()?)?;
+    }
+    // Each requested root reserves its retained path and the submitted relative path.
+    let paths = u64::from(configuration.service.limits.domain.run.directories)
+        .checked_mul(u64::from(configuration.service.limits.domain.run.host_path_bytes).checked_mul(2)?)?;
+    bytes.checked_add(paths)
 }
 
 fn prepare(mut configuration: config::Configuration, resources: &Resources) -> Result<Prepared, String> {
@@ -317,7 +364,7 @@ fn prepare(mut configuration: config::Configuration, resources: &Resources) -> R
         .and_then(|bytes| bytes.checked_add(Queue::<Complete>::worst_case(queue)?))
         .and_then(|bytes| bytes.checked_add(Queue::<Submit>::worst_case(queue)?))
         .and_then(|bytes| bytes.checked_add(u64::try_from(size_of::<Agent>()).ok()?))
-        .and_then(|bytes| bytes.checked_add(u64::try_from(root_count.checked_mul(size_of::<Fd>())?).ok()?))
+        .and_then(|bytes| bytes.checked_add(roots_worst_case(&configuration, resources)?))
         .ok_or_else(|| derivation_refusal("worst_case"))?;
     service::profile::validate::memory(worst, configuration.memory).map_err(config::profile_refusal)?;
     let profile = match configuration.profile.name {
@@ -408,7 +455,24 @@ impl Host for Agent {
 
     fn iterate(&mut self, now: Time, wall: Wall) {
         while let Some(complete) = self.completions.pop() {
-            if complete.op.raw() >= u64::MAX.saturating_sub(u64::from(self.operations)) {
+            if complete.op.raw() == u64::MAX {
+                let path = self.opening.take().expect("one hosted root open in flight");
+                let root = match complete.result {
+                    Ok(Done::Fd(fd)) => Ok(fd),
+                    Err(_) => Err(()),
+                    Ok(_) => unreachable!("a directory open returns a descriptor"),
+                };
+                if service::failure(&self.service).is_none()
+                    && service::done(&self.service).is_none()
+                    && self.service.root_to_open().is_some()
+                {
+                    let host = smith_protocol_channel::host_path(&path, self.service.host_path_bytes())
+                        .expect("the requested host path was checked before submission");
+                    self.service.root_opened(root, host);
+                } else if let Ok(fd) = root {
+                    self.close(fd);
+                }
+            } else if complete.op.raw() >= u64::MAX.saturating_sub(u64::from(self.operations)) {
                 assert!(complete.result.is_ok(), "inherited descriptor closes");
                 self.closing = self.closing.checked_sub(1).expect("submitted inherited close");
             } else {
@@ -441,23 +505,42 @@ impl Host for Agent {
         if self.service.pop_usage_unread() {
             diagnostic(self.errors.as_mut(), "process resource usage is unavailable");
         }
-        while let Some(path) = self.service.root_to_open() {
-            let (root, host) = match &mut self.roots {
-                Some(roots) => {
-                    let Some(host) = smith_protocol_channel::host_path(path, self.service.host_path_bytes()) else {
-                        self.service.root_opened(Err(()), Box::new([]));
-                        continue;
-                    };
-                    (roots.next().ok_or(()), host)
+        while self.opening.is_none() {
+            let Some(path) = self.service.root_to_open() else { break };
+            if let Some(roots) = &self.roots {
+                if service::failure(&self.service).is_some() {
+                    break;
                 }
-                None => open_root(path, self.service.host_path_bytes()),
-            };
-            self.service.root_opened(root, host);
+                let Some((root, relative)) = hosted_root(roots, path) else {
+                    diagnostic(
+                        self.errors.as_mut(),
+                        &format!("the root {} is beneath no root the host supplied", String::from_utf8_lossy(path)),
+                    );
+                    self.service.root_opened(Err(()), Box::new([]));
+                    continue;
+                };
+                if smith_protocol_channel::host_path(path, self.service.host_path_bytes()).is_none() {
+                    self.service.root_opened(Err(()), Box::new([]));
+                    continue;
+                }
+                self.submissions.push(Submit {
+                    op: Token::new(u64::MAX),
+                    kind: Op::Open { root, path: relative.into(), how: OpenHow::Directory },
+                });
+                self.opening = Some(path.into());
+            } else {
+                let (root, host) = open_root(path, self.service.host_path_bytes());
+                self.service.root_opened(root, host);
+            }
         }
-        if let Some(answered) = service::done(&self.service) {
+        if self.opening.is_none()
+            && let Some(answered) = service::done(&self.service)
+        {
             self.finish(answered);
-            while let Some(fd) = self.roots.as_mut().and_then(Iterator::next) {
-                self.close(fd);
+            if let Some(roots) = self.roots.take() {
+                for (_, fd) in roots {
+                    self.close(fd);
+                }
             }
             if let Some(fd) = self.error.take() {
                 self.close(fd);
