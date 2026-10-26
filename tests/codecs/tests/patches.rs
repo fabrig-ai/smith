@@ -78,7 +78,7 @@ fn found_hits_holds_pieces_of_hit_read_from_the_schema() {
                         | Type::Bool
                         | Type::Duration
                         | Type::Fixed(_)
-                        | Type::Secret(_)
+                        | Type::Secret { .. }
                         | Type::Text(_)
                         | Type::Bytes { .. }
                         | Type::Named(_) => break,
