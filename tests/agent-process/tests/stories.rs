@@ -309,16 +309,16 @@ fn a_reasoning_turn_that_stops_after_a_read_is_told_and_nudged() {
 }
 
 #[test]
-fn a_hosted_agent_adopts_a_root_by_its_path_as_given() {
+fn a_hosted_agent_opens_a_root_beneath_a_supplied_one() {
     use skein_fake_llm_domain::api;
     let mut world = World::new(42, &charter());
     world.configured_environment();
-    world.root_path(b"/host/supplied");
+    world.root_path(b"/host/supplied/sub");
     world.script(Box::new([
         api::Turn {
             lines: Box::new([api::Line::Call {
                 name: b"read".as_slice().into(),
-                arguments: br#"{"path":"/host/supplied/problem.txt"}"#.as_slice().into(),
+                arguments: br#"{"path":"/host/supplied/sub/problem.txt"}"#.as_slice().into(),
             }]),
             finish: api::Finish::ToolCalls,
             tokens: 1,
@@ -329,13 +329,14 @@ fn a_hosted_agent_adopts_a_root_by_its_path_as_given() {
             tokens: 1,
         },
     ]));
-    assert!(world.settle(), "the hosted root is adopted");
+    assert!(world.settle(), "the hosted root opens beneath the base");
     assert!(world.observed().iter().any(|frame| frame.kind == 0x0106), "the Start was admitted");
+    assert_eq!(world.directory_opens().first().map(AsRef::as_ref), Some(b"sub".as_slice()));
     let queries = world.peer_queries();
     assert!(queries.len() >= 2, "the root-backed read reaches its next provider turn");
     assert!(queries[1].messages.iter().flat_map(|message| &message.parts).any(|part| {
-        matches!(part, api::Part::ToolOutput { output, is_error: false, .. } if output.windows(b"problem".len()).any(|bytes| bytes == b"problem"))
-    }), "the run retained the host path as an alias for the supplied descriptor");
+        matches!(part, api::Part::ToolOutput { output, is_error: false, .. } if output.windows(b"beneath the base".len()).any(|bytes| bytes == b"beneath the base"))
+    }), "the read found the file under sub through its requested host path");
     world.assert_agent_clean();
 }
 
@@ -350,6 +351,35 @@ fn a_hosted_agent_refuses_a_relative_root() {
     assert!(
         matches!(answer.result(), RunResult::Refused(refused) if matches!(refused.reason(), smith_channel::StartRefusal::Invalid(invalid) if invalid.value() == &smith_channel::InvalidStart::Workspace)),
         "the Start's workspace was refused: {answer:?}"
+    );
+    assert_eq!(world.exit(), Some(skein_io::kernel::Exit::Code(0)));
+    world.assert_agent_clean();
+}
+
+#[test]
+fn a_hosted_agent_refuses_a_root_beneath_none() {
+    assert_hosted_root_refused(b"/elsewhere");
+}
+
+#[test]
+fn a_hosted_agent_refuses_a_root_climbing_out_of_its_base() {
+    assert_hosted_root_refused(b"/host/supplied/../other");
+}
+
+fn assert_hosted_root_refused(path: &[u8]) {
+    let mut world = World::new(42, &charter());
+    world.root_path(path);
+    assert!(world.settle(), "a refused Start still answers and settles");
+    assert!(!world.observed().iter().any(|frame| frame.kind == 0x0106), "the root is never admitted");
+    assert!(world.peer_queries().is_empty(), "a root refusal precedes the provider");
+    assert!(world.directory_opens().is_empty(), "a refused path submits no directory open");
+    let errors = String::from_utf8(world.errors()).expect("diagnostic UTF-8");
+    assert!(
+        errors.contains(&format!("the root {} is beneath no root the host supplied", String::from_utf8_lossy(path)))
+    );
+    let answer = world.answer().expect("the host receives the refusal");
+    assert!(
+        matches!(answer.result(), RunResult::Refused(refused) if matches!(refused.reason(), smith_channel::StartRefusal::Invalid(invalid) if invalid.value() == &smith_channel::InvalidStart::Workspace))
     );
     assert_eq!(world.exit(), Some(skein_io::kernel::Exit::Code(0)));
     world.assert_agent_clean();
