@@ -5,7 +5,7 @@
 doc-valid-idents = ["io_uring", ".."]
 
 disallowed-types = [
-    { path = "std::os::fd::OwnedFd", reason = "a descriptor is closed by a Close record, not on drop" },
+    { path = "std::os::fd::OwnedFd", reason = "a descriptor is closed by a Close record, not on drop", allow-invalid = true },
     { path = "std::fs::File", reason = "a descriptor is closed by a Close record, not on drop" },
     { path = "std::net::TcpStream", reason = "a descriptor is closed by a Close record, not on drop" },
     { path = "std::net::TcpListener", reason = "a descriptor is closed by a Close record, not on drop" },
