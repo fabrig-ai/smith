@@ -690,7 +690,7 @@ pub(crate) fn cancel() -> skein_channel::Frame {
 }
 
 fn with_transcript(charter: &[u8], value: &smith_channel::GrantValue) -> skein_channel::Frame {
-    let frame = crate::start_workspace_message(charter, 8, false, false, None, value, None);
+    let frame = crate::start_workspace_message(charter, 8, false, None, value, None);
     let mut start = smith_channel::Start::decode(&smith_channel::CEILINGS, &mut Reader::new(&frame.bytes()[8..]))
         .expect("start fixture")
         .into_parts();
@@ -734,7 +734,7 @@ fn redacted_invocations(bytes: &[u8]) -> Vec<smith_fake_claude::Observation> {
 }
 
 fn tools_start(charter: &[u8], value: &smith_channel::GrantValue) -> skein_channel::Frame {
-    let frame = crate::start_workspace_message(charter, 8, false, false, None, value, None);
+    let frame = crate::start_workspace_message(charter, 8, false, None, value, None);
     let mut start = smith_channel::Start::decode(&smith_channel::CEILINGS, &mut Reader::new(&frame.bytes()[8..]))
         .expect("start")
         .into_parts();

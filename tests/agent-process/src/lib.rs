@@ -321,14 +321,13 @@ pub(crate) fn start_window(charter: &[u8], turns: u32) -> skein_channel::Frame {
 }
 
 pub(crate) fn start_workspace(charter: &[u8], turns: u32, workspace: bool) -> skein_channel::Frame {
-    start_workspace_message(charter, turns, workspace, false, None, &withdrawn(b"acc", b"token"), None)
+    start_workspace_message(charter, turns, workspace, None, &withdrawn(b"acc", b"token"), None)
 }
 
 pub(crate) fn start_workspace_message(
     charter: &[u8],
     turns: u32,
     workspace: bool,
-    absolute: bool,
     message: Option<&smith_channel::Message>,
     value: &smith_channel::GrantValue,
     live: Option<smith_channel::LiveAsk>,
@@ -366,9 +365,8 @@ pub(crate) fn start_workspace_message(
             workspace: if workspace {
                 let mut directories = List::with_capacity(2);
                 for (name, path) in
-                    [(b"repo".as_slice(), b"unused-a".as_slice()), (b"other".as_slice(), b"unused-b".as_slice())]
+                    [(b"repo".as_slice(), b"/unused-a".as_slice()), (b"other".as_slice(), b"/unused-b".as_slice())]
                 {
-                    let path = if absolute { [b"/".as_slice(), path].concat() } else { path.into() };
                     directories
                         .push(
                             smith_channel::Directory::new(
@@ -405,6 +403,26 @@ pub(crate) fn start_workspace_message(
     let mut frame = frame_writer(0x0100, u32::try_from(body.len()).expect("body length")).expect("Start frame");
     frame.put(&body).expect("measured frame");
     frame.finish().expect("full frame")
+}
+
+pub(crate) fn start_root(charter: &[u8], path: &[u8]) -> skein_channel::Frame {
+    let frame = start_workspace_message(charter, 8, true, None, &withdrawn(b"acc", b"token"), None);
+    let mut start =
+        smith_channel::Start::decode(&smith_channel::CEILINGS, &mut skein_lib::Reader::new(&frame.bytes()[8..]))
+            .expect("workspace Start")
+            .into_parts();
+    let mut workspace = start.workspace.take().expect("workspace").into_parts();
+    let mut directory = workspace.directories.get(0).expect("first directory").clone().into_parts();
+    directory.path = path.into();
+    *workspace.directories.get_mut(0).expect("first directory") =
+        smith_channel::Directory::new(&smith_channel::CEILINGS, directory).expect("root path");
+    start.workspace = Some(smith_channel::Workspace::new(&smith_channel::CEILINGS, workspace).expect("workspace"));
+    let start = smith_channel::Start::new(&smith_channel::CEILINGS, start).expect("Start with requested root");
+    let mut body = Writer::new(usize::try_from(start.measure()).expect("Start bytes"));
+    start.encode(&mut body).expect("Start body");
+    let mut frame = frame_writer(0x0100, start.measure()).expect("Start frame");
+    frame.put(&body.finish()).expect("Start body");
+    frame.finish().expect("Start frame")
 }
 
 /// Private credential fixture used to check that channel content stays credential-free.

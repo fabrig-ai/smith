@@ -25,9 +25,11 @@ smith-protocol-machine.workspace = true
 smith-channel.workspace = true
 smith-charter.workspace = true
 smith-transcript.workspace = true
-libc = "0.2"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [dev-dependencies]
 skein-scratch.workspace = true

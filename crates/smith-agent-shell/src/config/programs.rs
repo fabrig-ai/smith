@@ -96,6 +96,7 @@ pub(super) fn endpoints(
     clippy::zero_sized_map_values,
     reason = "endpoint selections retain the named adapter as more adapters become available"
 )]
+#[cfg(unix)]
 pub(super) fn backend(
     programs: &BTreeMap<ProgramName, Program>,
     endpoints: &BTreeMap<u32, ProgramName>,
@@ -112,6 +113,15 @@ pub(super) fn backend(
         entropy: skein_lib::Secret::new(Box::new([0; 32])),
         effective_user: skein_shell::effective_user(),
     })
+}
+
+#[cfg(not(unix))]
+#[expect(clippy::zero_sized_map_values, reason = "endpoint selections retain the named adapter")]
+pub(super) fn backend(
+    _programs: &BTreeMap<ProgramName, Program>,
+    _endpoints: &BTreeMap<u32, ProgramName>,
+) -> Option<smith_agent_service::ProgramBackend> {
+    None
 }
 
 /// Charge program declarations to the same startup pool as model declarations.

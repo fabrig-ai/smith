@@ -307,3 +307,50 @@ fn a_reasoning_turn_that_stops_after_a_read_is_told_and_nudged() {
     assert!(!world.signalled());
     world.assert_agent_clean();
 }
+
+#[test]
+fn a_hosted_agent_adopts_a_root_by_its_path_as_given() {
+    use skein_fake_llm_domain::api;
+    let mut world = World::new(42, &charter());
+    world.configured_environment();
+    world.root_path(b"/host/supplied");
+    world.script(Box::new([
+        api::Turn {
+            lines: Box::new([api::Line::Call {
+                name: b"read".as_slice().into(),
+                arguments: br#"{"path":"/host/supplied/problem.txt"}"#.as_slice().into(),
+            }]),
+            finish: api::Finish::ToolCalls,
+            tokens: 1,
+        },
+        api::Turn {
+            lines: Box::new([api::Line::Text { text: b"done".as_slice().into() }]),
+            finish: api::Finish::Stop,
+            tokens: 1,
+        },
+    ]));
+    assert!(world.settle(), "the hosted root is adopted");
+    assert!(world.observed().iter().any(|frame| frame.kind == 0x0106), "the Start was admitted");
+    let queries = world.peer_queries();
+    assert!(queries.len() >= 2, "the root-backed read reaches its next provider turn");
+    assert!(queries[1].messages.iter().flat_map(|message| &message.parts).any(|part| {
+        matches!(part, api::Part::ToolOutput { output, is_error: false, .. } if output.windows(b"problem".len()).any(|bytes| bytes == b"problem"))
+    }), "the run retained the host path as an alias for the supplied descriptor");
+    world.assert_agent_clean();
+}
+
+#[test]
+fn a_hosted_agent_refuses_a_relative_root() {
+    let mut world = World::new(42, &charter());
+    world.root_path(b"relative-root");
+    assert!(world.settle(), "a refused Start still answers and settles");
+    assert!(!world.observed().iter().any(|frame| frame.kind == 0x0106), "the relative root is never admitted");
+    assert!(world.peer_queries().is_empty(), "a root refusal precedes the provider");
+    let answer = world.answer().expect("the host receives the refusal");
+    assert!(
+        matches!(answer.result(), RunResult::Refused(refused) if matches!(refused.reason(), smith_channel::StartRefusal::Invalid(invalid) if invalid.value() == &smith_channel::InvalidStart::Workspace)),
+        "the Start's workspace was refused: {answer:?}"
+    );
+    assert_eq!(world.exit(), Some(skein_io::kernel::Exit::Code(0)));
+    world.assert_agent_clean();
+}

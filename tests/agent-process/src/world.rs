@@ -69,7 +69,6 @@ impl Parent {
                 charter,
                 window,
                 environment || matches!(tracing, Some((TraceCase::StoppedReasoning, _))),
-                matches!(tracing, Some((TraceCase::StoppedReasoning, _))),
                 message,
                 value,
                 live,
@@ -501,6 +500,9 @@ fn make(spawn: &Spawn, inherited: &Inherited) -> Proc {
         )
         .expect("configured command environment");
     }
+    if spawn.args.first().is_some_and(|argument| argument.as_ref() == b"roots") {
+        configuration.limits.machine.file_bytes = configuration.limits.domain.session.tools.file_bytes;
+    }
     let agent = crate::configured(configuration, 7, inherited, errors.clone());
     Proc::Agent(Box::new(capture.host(agent)), errors)
 }
@@ -537,7 +539,10 @@ fn make_tracing(spawn: &Spawn, inherited: &Inherited) -> Proc {
 fn unused_roots(spawn: &Spawn) -> Vec<skein_world::StartupRoot> {
     let mut roots: Vec<_> = [b"unused-a", b"unused-b"]
         .into_iter()
-        .map(|name| skein_world::StartupRoot { name: name.as_slice().into(), path: name.as_slice().into() })
+        .map(|name| skein_world::StartupRoot {
+            name: name.as_slice().into(),
+            path: [b"/", name.as_slice()].concat().into(),
+        })
         .collect();
     if spawn.args.len() >= 4 {
         roots.push(skein_world::StartupRoot {
@@ -558,16 +563,16 @@ struct Machine {
     spawns: Vec<Spawned>,
     next_root: u32,
     trace_root: Option<u32>,
-    stopped_reasoning: bool,
+    problem_file: bool,
 }
 impl skein_world::Machine for Machine {
     fn open_root(&mut self, path: &[u8]) -> Result<skein_sim::Handle, kernel::Error> {
-        assert!(matches!(path, b"unused-a" | b"unused-b" | b"event-trace"), "scenario startup roots");
+        assert!(matches!(path, b"/unused-a" | b"/unused-b" | b"event-trace"), "scenario startup roots");
         if path == b"event-trace" {
             self.trace_root = Some(self.next_root);
         }
         self.next_root += 1;
-        let items = if self.stopped_reasoning && path == b"unused-a" {
+        let items = if self.problem_file && path == b"/unused-a" {
             vec![skein_fake_machine::Item::file(b"problem.txt", b"problem")]
         } else {
             Vec::new()
@@ -671,6 +676,7 @@ struct Referee {
     tracing: Option<(TraceCase, u32)>,
     maximum_queries: usize,
     credential_story: CredentialStory,
+    workspace_refusal: Option<smith_channel::InvalidStart>,
     expected: skein_world::Expectations<Proc, Terminal>,
 }
 impl skein_world::Referee<Proc> for Referee {
@@ -736,7 +742,8 @@ impl skein_world::Referee<Proc> for Referee {
         );
         let peer = procs.iter().find_map(|p| if let Proc::Peer(p, _) = p { Some(p) } else { None }).expect("peer");
         assert!(fake::queries(peer).count() <= self.maximum_queries, "bounded completion scenario");
-        let entrance_refused = (matches!(self.credential_story, CredentialStory::Supplied) && !parent.admitted())
+        let entrance_refused = self.workspace_refusal.is_some()
+            || (matches!(self.credential_story, CredentialStory::Supplied) && !parent.admitted())
             || matches!(self.tracing, Some((TraceCase::Refused, _)));
         if matches!(self.hang_up, HangUp::Never) && parent.status.is_some() {
             if entrance_refused {
@@ -1034,6 +1041,7 @@ pub struct World {
     output: u32,
     release: Option<Release>,
     saved_window: Option<Vec<Box<[u8]>>>,
+    root_path: Option<Box<[u8]>>,
 }
 impl World {
     /// Prepare one Start; the harness owns startup and settlement.
@@ -1068,6 +1076,7 @@ impl World {
             output: 0,
             release: None,
             saved_window: None,
+            root_path: None,
         }
     }
 
@@ -1079,6 +1088,11 @@ impl World {
     /// Restore independently observed turns through the host's Start frame.
     pub fn restore(&mut self, turns: Vec<Box<[u8]>>) {
         self.saved_window = Some(turns);
+    }
+
+    /// Send this root path in Start while adopting the fixture's supplied descriptors.
+    pub fn root_path(&mut self, path: &[u8]) {
+        self.root_path = Some(path.into());
     }
 
     /// Supply the provider's turns in place of the scenario's default script.
@@ -1368,6 +1382,11 @@ impl World {
             full_completion: self.full_completion,
             tracing: self.tracing,
             maximum_queries: self.maximum_queries(),
+            workspace_refusal: self
+                .root_path
+                .as_ref()
+                .filter(|path| path.first() != Some(&b'/'))
+                .map(|_| smith_channel::InvalidStart::Workspace),
             credential_story: if self.refreshing.is_some() {
                 CredentialStory::Refresh
             } else if self.grant.is_some() {
@@ -1394,7 +1413,7 @@ impl World {
             spawns: Vec::new(),
             next_root: 1,
             trace_root: None,
-            stopped_reasoning: matches!(self.tracing, Some((TraceCase::StoppedReasoning, _))),
+            problem_file: self.root_path.is_some() || matches!(self.tracing, Some((TraceCase::StoppedReasoning, _))),
         });
         world.host_roots(
             HostedProgram {
@@ -1426,6 +1445,11 @@ impl World {
                 self.live.clone(),
                 self.output,
             );
+            if let Some(path) = &self.root_path {
+                parent.peer = crate::host();
+                parent.peer.play(crate::start_root(&self.charter, path));
+                parent.program_arguments(Box::new([b"roots".as_slice().into()]), None);
+            }
             if let Some(turns) = &self.saved_window {
                 parent.peer = crate::host();
                 parent.peer.play(crate::program_world::start_with_window(&self.charter, &self.grant_value(), turns));

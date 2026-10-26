@@ -3,7 +3,10 @@
 //! and future trace settings; no credential is read here.
 //! Durations in JSON are milliseconds. Contract: protocol/agent.md, sections 4 and 6.
 
-use std::net::{SocketAddr, ToSocketAddrs};
+use std::net::SocketAddr;
+#[cfg(unix)]
+use std::net::ToSocketAddrs;
+#[cfg(unix)]
 use std::path::Path;
 
 use serde::Deserialize;
@@ -213,7 +216,11 @@ struct Endpoint {
     #[serde(default)]
     trust_der: Option<String>,
     #[serde(default)]
+    #[cfg(unix)]
     trust: Option<TrustDocument>,
+    #[serde(default)]
+    #[cfg(not(unix))]
+    trust: Option<serde_json::Value>,
     #[serde(default)]
     headers: Vec<HeaderField>,
     #[serde(default)]
@@ -229,6 +236,7 @@ struct HeaderField {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg(unix)]
 struct TrustDocument {
     #[serde(default = "system_trust")]
     system: bool,
@@ -238,6 +246,7 @@ struct TrustDocument {
     pem: Vec<String>,
 }
 
+#[cfg(unix)]
 const fn system_trust() -> bool {
     true
 }
@@ -251,6 +260,7 @@ struct Variable {
 
 /// Read one JSON document and reject unknown keys, oversized input and
 /// invalid transport settings before any channel byte is read.
+#[cfg(unix)]
 pub fn read(path: &Path) -> Result<Configuration, String> {
     let bytes = skein_shell::read_file(path, u32::try_from(CONFIG_BYTES).expect("configuration bound fits u32"))
         .map_err(|why| match why {
@@ -482,6 +492,10 @@ fn build_endpoints(
         if !names.insert(endpoint.name.clone()) || !numbers.insert(endpoint.number) {
             return Err("duplicate endpoint name or number".into());
         }
+        #[cfg(not(unix))]
+        if endpoint.transport == "tls" {
+            return Err(format!("endpoint {}: TLS requires a native shell", endpoint.name).into());
+        }
         let address = resolve(&endpoint.address)?;
         let transport = endpoint_transport(&endpoint, address)?;
         let mut llm_endpoint = match endpoint.provider.as_str() {
@@ -552,6 +566,9 @@ fn build_endpoints(
 
 fn endpoint_transport(endpoint: &Endpoint, address: SocketAddr) -> Result<connection::Transport, ConfigurationRefusal> {
     match endpoint.transport.as_str() {
+        #[cfg(not(unix))]
+        "tls" => Err(format!("endpoint {}: TLS requires a native shell", endpoint.name).into()),
+        #[cfg(unix)]
         "tls" => Ok(connection::Transport::Tls {
             server_name: tls::Name::new(endpoint.server_name.as_deref().ok_or("TLS endpoint requires server_name")?)
                 .ok_or("invalid TLS server name")?,
@@ -690,9 +707,15 @@ fn tls_transport() -> String {
     "tls".into()
 }
 
+#[cfg(unix)]
 fn resolve(address: &str) -> Result<SocketAddr, ConfigurationRefusal> {
     let mut resolved = address.to_socket_addrs().map_err(|error| format!("endpoint address {address:?}: {error}"))?;
     resolved.next().ok_or_else(|| ConfigurationRefusal::Input(format!("endpoint address {address:?} has no result")))
+}
+
+#[cfg(not(unix))]
+fn resolve(address: &str) -> Result<SocketAddr, ConfigurationRefusal> {
+    address.parse().map_err(|error| format!("endpoint address {address:?}: {error}; no name resolution").into())
 }
 
 // Startup trust material and decoded configuration are bounded together.
@@ -700,6 +723,7 @@ fn resolve(address: &str) -> Result<SocketAddr, ConfigurationRefusal> {
 pub const TRUST_BYTES: u64 = 16_777_216;
 
 /// Load the bounded startup trust roots used by agent and local endpoints.
+#[cfg(unix)]
 pub fn trust(der: Option<&str>) -> Result<tls::Config, String> {
     let source = match der {
         Some(path) => skein_shell::Trust::Der(path.into()),
@@ -709,14 +733,17 @@ pub fn trust(der: Option<&str>) -> Result<tls::Config, String> {
 }
 
 /// Load account trust arrays through the existing bounded root owner.
+#[cfg(unix)]
 pub fn configured_trust(sources: &[skein_shell::Trust]) -> Result<tls::Config, String> {
     trust_sources(sources).map_err(ConfigurationRefusal::detail)
 }
 
+#[cfg(unix)]
 fn trust_source(source: &skein_shell::Trust) -> Result<tls::Config, String> {
     trust_sources(std::slice::from_ref(source)).map_err(ConfigurationRefusal::detail)
 }
 
+#[cfg(unix)]
 fn endpoint_trust(endpoint: &Endpoint) -> Result<tls::Config, ConfigurationRefusal> {
     let Some(document) = &endpoint.trust else {
         return trust(endpoint.trust_der.as_deref()).map_err(ConfigurationRefusal::Input);
@@ -733,6 +760,7 @@ fn endpoint_trust(endpoint: &Endpoint) -> Result<tls::Config, ConfigurationRefus
     trust_sources(&sources)
 }
 
+#[cfg(unix)]
 fn trust_sources(sources: &[skein_shell::Trust]) -> Result<tls::Config, ConfigurationRefusal> {
     let mut certificates = Vec::new();
     let mut bytes = 0_u64;

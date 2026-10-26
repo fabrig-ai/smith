@@ -6,12 +6,15 @@
 //! the binary and worlds. `run` supplies the binary's kernel and clock.
 
 use std::io::Write;
+#[cfg(unix)]
 use std::path::Path;
 
 use service::profile::{Layer, LimitName, Refusal};
 use skein_io::kernel::{Complete, Exit, Fd, Op, Submit};
 use skein_lib::{List, Queue, Secret, Time, Token, Wall};
-use skein_shell::{Clock, Config as KernelConfig, Host, Kernel, drive};
+use skein_shell::Host;
+#[cfg(unix)]
+use skein_shell::{Clock, Config as KernelConfig, Kernel, drive};
 use smith_agent_service as service;
 
 use crate::config;
@@ -75,6 +78,7 @@ struct Prepared {
 impl Agent {
     /// Read the binary's configuration and build the same invocation worlds host.
     /// Every startup refusal is written once to the supplied error output.
+    #[cfg(unix)]
     pub fn read(path: &Path, resources: Resources, mut errors: Box<dyn Write>) -> Result<Self, String> {
         let configuration = read_configuration(path, errors.as_mut())?;
         Self::new(configuration, resources, errors)
@@ -165,6 +169,7 @@ fn effective_header(configuration: &config::Configuration) -> Result<List<smith_
     Ok(header_limits)
 }
 
+#[cfg(unix)]
 fn prepare_program(configuration: &mut service::Config, resources: Option<&ProgramResources>) -> Result<(), String> {
     if let Some(program) = &mut configuration.program {
         let resources = resources.ok_or("a configured program requires its shell resources")?;
@@ -182,6 +187,7 @@ fn prepare_program(configuration: &mut service::Config, resources: Option<&Progr
     Ok(())
 }
 
+#[cfg(unix)]
 fn adopt_program_root(service: &mut service::Service, resources: &Resources) -> Result<Option<Fd>, String> {
     if let Some(root) = resources.programs.as_ref().and_then(|programs| programs.directory) {
         match service.adopt_program_root(root) {
@@ -193,6 +199,72 @@ fn adopt_program_root(service: &mut service::Service, resources: &Resources) -> 
         }
     }
     Ok(None)
+}
+
+#[cfg(not(unix))]
+fn validate_hosted(configuration: &config::Configuration, resources: &Resources) -> Result<(), String> {
+    if resources.roots.is_none() {
+        return Err("a hosted agent's roots are its host's to supply".into());
+    }
+    if let Some(trace) = &configuration.trace
+        && resources.trace.is_none()
+    {
+        return Err(format!("the trace at {} is not supplied by the host", trace.path.display()));
+    }
+    if resources.programs.is_some() || !configuration.programs.is_empty() || configuration.service.program.is_some() {
+        return Err("program claude_code requires a native shell".into());
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn prepare_program(configuration: &mut service::Config, resources: Option<&ProgramResources>) -> Result<(), String> {
+    if configuration.program.is_some() || resources.is_some() {
+        return Err("program claude_code requires a native shell".into());
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn adopt_program_root(_service: &mut service::Service, _resources: &Resources) -> Result<Option<Fd>, String> {
+    Ok(None)
+}
+
+#[cfg(unix)]
+fn open_trace(path: &Path) -> Result<(Fd, Fd), String> {
+    let path = std::path::absolute(path).map_err(|error| format!("trace path: {error}"))?;
+    let parent = path.parent().ok_or("trace path has no parent")?;
+    let file = path.file_name().ok_or("trace path has no filename")?;
+    let root = skein_shell::open_root(parent).map_err(|error| format!("trace root: {error:?}"))?;
+    let fd = skein_shell::open_append(root, file.as_encoded_bytes(), 0o600)
+        .map_err(|error| format!("trace append: {error:?}"))?;
+    Ok((fd, root))
+}
+
+#[cfg(not(unix))]
+fn open_trace(path: &std::path::Path) -> Result<(Fd, Fd), String> {
+    Err(format!("the trace at {} is not supplied by the host", path.display()))
+}
+
+#[cfg(unix)]
+fn open_root(path: &[u8], maximum: u32) -> (Result<Fd, ()>, Box<[u8]>) {
+    let host = std::str::from_utf8(path)
+        .ok()
+        .and_then(|path| std::path::absolute(Path::new(path)).ok())
+        .and_then(|path| smith_protocol_channel::host_path(path.as_os_str().as_encoded_bytes(), maximum));
+    let Some(host) = host else {
+        return (Err(()), Box::new([]));
+    };
+    let root = match std::str::from_utf8(path) {
+        Ok(path) => skein_shell::open_root(Path::new(path)).map_err(|_| ()),
+        Err(_) => Err(()),
+    };
+    (root, host)
+}
+
+#[cfg(not(unix))]
+fn open_root(_path: &[u8], _maximum: u32) -> (Result<Fd, ()>, Box<[u8]>) {
+    (Err(()), Box::new([]))
 }
 
 fn extra_operations(configuration: &config::Configuration, resources: &Resources, root_count: usize) -> Option<u32> {
@@ -210,6 +282,8 @@ fn extra_operations(configuration: &config::Configuration, resources: &Resources
 }
 
 fn prepare(mut configuration: config::Configuration, resources: &Resources) -> Result<Prepared, String> {
+    #[cfg(not(unix))]
+    validate_hosted(&configuration, resources)?;
     prepare_program(&mut configuration.service, resources.programs.as_ref())?;
     let root_count = resources.roots.as_ref().map_or(0, |roots| roots.len());
     if root_count > usize::try_from(configuration.service.limits.domain.run.directories).expect("directory bound") {
@@ -287,13 +361,9 @@ fn prepare(mut configuration: config::Configuration, resources: &Resources) -> R
         let fd = if let Some(fd) = resources.trace {
             fd
         } else {
-            let path = std::path::absolute(&trace.path).map_err(|error| format!("trace path: {error}"))?;
-            let parent = path.parent().ok_or("trace path has no parent")?;
-            let file = path.file_name().ok_or("trace path has no filename")?;
-            let root = skein_shell::open_root(parent).map_err(|error| format!("trace root: {error:?}"))?;
+            let (fd, root) = open_trace(&trace.path)?;
             trace_root = Some(root);
-            skein_shell::open_append(root, file.as_encoded_bytes(), 0o600)
-                .map_err(|error| format!("trace append: {error:?}"))?
+            fd
         };
         service
             .adopt_destination(fd, service::Destination::Trace, trace.delivery, true)
@@ -374,25 +444,15 @@ impl Host for Agent {
             diagnostic(self.errors.as_mut(), "process resource usage is unavailable");
         }
         while let Some(path) = self.service.root_to_open() {
-            let host = std::str::from_utf8(path)
-                .ok()
-                .and_then(|path| std::path::absolute(Path::new(path)).ok())
-                .and_then(|path| {
-                    smith_protocol_channel::host_path(
-                        path.as_os_str().as_encoded_bytes(),
-                        self.service.host_path_bytes(),
-                    )
-                });
-            let Some(host) = host else {
-                self.service.root_opened(Err(()), Box::new([]));
-                continue;
-            };
-            let root = match &mut self.roots {
-                Some(roots) => roots.next().ok_or(()),
-                None => match std::str::from_utf8(path) {
-                    Ok(path) => skein_shell::open_root(Path::new(path)).map_err(|_| ()),
-                    Err(_) => Err(()),
-                },
+            let (root, host) = match &mut self.roots {
+                Some(roots) => {
+                    let Some(host) = smith_protocol_channel::host_path(path, self.service.host_path_bytes()) else {
+                        self.service.root_opened(Err(()), Box::new([]));
+                        continue;
+                    };
+                    (roots.next().ok_or(()), host)
+                }
+                None => open_root(path, self.service.host_path_bytes()),
             };
             self.service.root_opened(root, host);
         }
@@ -449,6 +509,7 @@ impl Host for Agent {
     }
 }
 
+#[cfg(unix)]
 fn read_configuration(path: &Path, errors: &mut dyn Write) -> Result<config::Configuration, String> {
     config::read(path).inspect_err(|why| diagnostic(errors, why))
 }
@@ -477,6 +538,7 @@ fn diagnostic(errors: &mut dyn Write, line: &str) {
 }
 
 /// Run the shipped agent command; startup and final failures are already logged.
+#[cfg(unix)]
 pub fn run(path: &Path, mut errors: Box<dyn Write>) -> Result<Exit, String> {
     let configuration = read_configuration(path, errors.as_mut())?;
     let seed = skein_shell::seed()
