@@ -79,6 +79,7 @@ pub(super) fn resume(
             &backend.ledger,
             &backend.settings.adapter,
             backend.settings.input_bytes,
+            b"",
             capture,
         )?;
         return Some(Resumed { line: Some(rendered.line), observed: rendered.text });

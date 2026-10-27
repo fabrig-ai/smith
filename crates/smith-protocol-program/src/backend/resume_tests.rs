@@ -67,7 +67,10 @@ fn the_tail_goes_as_one_user_message() {
     let mut backend = launchable();
     backend.launch_spec().expect("resume spawn");
     let value: serde_json::Value = serde_json::from_slice(backend.outgoing.as_ref().expect("tail")).expect("line");
-    assert_eq!(value["message"]["content"], "result of wait-id: wait result\nnew instruction\n");
+    assert_eq!(
+        value["message"]["content"],
+        "(The agent paused your last turn: the run was parked and has resumed.)\nresult of wait-id: wait result\nnew instruction\n"
+    );
     assert!(!value.to_string().contains("task"));
 }
 

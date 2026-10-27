@@ -1,5 +1,6 @@
 //! Resume admission and recoverable teardown (protocol/programs.md 5.8).
 //! Reuses the stopped invocation's storage; never reads the session database.
+//! A resumed assistant wait identifies a parked held turn (programs.md 5.9).
 use super::{Backend, Phase, tail};
 use smith_domain::llm;
 use smith_protocol_llm::FromDomain;
@@ -31,12 +32,26 @@ pub(super) fn restartable(failure: llm::Failure) -> bool {
 
 impl Backend {
     pub(super) fn resume_input(&mut self) -> Option<()> {
+        // A retry of an already recorded invocation has consumed this tail.
+        // Only a newly restored window needs the parked-wait explanation.
+        let restored = self.recorded.is_none() || self.recorded != self.running;
         let (prompt, capture) = match self.request.as_mut()? {
             FromDomain::Complete { prompt, observation, .. } => (prompt, observation.is_some()),
             FromDomain::Cancel { .. } | FromDomain::Yield { .. } => return None,
         };
-        let rendered =
-            tail::render_observed(prompt, &self.ledger, &self.settings.adapter, self.settings.input_bytes, capture)?;
+        let prefix = if restored && parked_wait(prompt) {
+            b"(The agent paused your last turn: the run was parked and has resumed.)\n".as_slice()
+        } else {
+            b"".as_slice()
+        };
+        let rendered = tail::render_observed(
+            prompt,
+            &self.ledger,
+            &self.settings.adapter,
+            self.settings.input_bytes,
+            prefix,
+            capture,
+        )?;
         self.outgoing = Some(rendered.line);
         if let Some(text) = rendered.text {
             self.prompt_text_measure(skein_lib::Time::ZERO, text);
@@ -54,4 +69,25 @@ impl Backend {
         }
         llm::Failure::Program { exit: self.exit }
     }
+}
+
+// Session restoration supplies the withheld wait's result in the user tail.
+// Older waits are irrelevant once a later assistant message has been saved.
+fn parked_wait(prompt: &llm::Prompt) -> bool {
+    for message in prompt.messages.iter().rev() {
+        if message.role == llm::Role::Assistant {
+            for block in &message.content {
+                match block {
+                    llm::Block::ToolCall { name, .. } if name.as_ref() == b"wait" => return true,
+                    llm::Block::ToolCall { .. }
+                    | llm::Block::ToolResult { .. }
+                    | llm::Block::Text { .. }
+                    | llm::Block::Opaque { .. }
+                    | llm::Block::Refusal { .. } => {}
+                }
+            }
+            return false;
+        }
+    }
+    false
 }

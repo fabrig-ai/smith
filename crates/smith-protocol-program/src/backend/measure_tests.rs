@@ -171,7 +171,7 @@ fn a_wind_down_measures_the_encoded_user_text() {
     let sent: serde_json::Value = serde_json::from_slice(backend.outgoing.as_ref().unwrap()).unwrap();
     let Block::Text { text } = prompt.messages.get(0).unwrap().blocks.get(0).unwrap() else { panic!("text") };
     assert_eq!(text.as_ref(), sent["message"]["content"].as_str().unwrap().as_bytes());
-    assert_eq!(text.as_ref(), b"finish \"now\"\n\n");
+    assert_eq!(text.as_ref(), b"(The agent paused your last turn to send the finishing note.)\nfinish \"now\"\n\n");
 }
 
 #[test]
