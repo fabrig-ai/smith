@@ -58,7 +58,11 @@ impl Backend {
             }
             return Some(b"smith: summary program offered tools".as_slice().into());
         }
-        let error = init_error(bytes, self.grants(), depth, tokens);
+        let result_contract = match &self.request {
+            Some(FromDomain::Complete { prompt, .. }) => prompt.served.contains(&llm::Served::Finish),
+            Some(FromDomain::Cancel { .. } | FromDomain::Yield { .. }) | None => false,
+        };
+        let error = init_error(bytes, self.grants(), result_contract, depth, tokens);
         if error.is_none() && stream::checked_init(bytes, &self.tools(), depth, tokens).is_some() {
             None
         } else {
@@ -174,10 +178,17 @@ impl Backend {
     }
 }
 
-pub(super) fn init_error(bytes: &[u8], grants: Grants, depth: u32, tokens: u32) -> Option<Box<[u8]>> {
+pub(super) fn init_error(
+    bytes: &[u8],
+    grants: Grants,
+    result_contract: bool,
+    depth: u32,
+    tokens: u32,
+) -> Option<Box<[u8]>> {
     let document = stream::collect(bytes, depth, tokens)?;
     let listed = json::field(&document, 0, b"tools")?;
     let mut seen = [false; 6];
+    let mut structured_output = false;
     let mut index = listed.checked_add(1)?;
     for _ in 0..document.len() {
         if document.token(index)?.kind == Kind::ArrayEnd {
@@ -186,6 +197,12 @@ pub(super) fn init_error(bytes: &[u8], grants: Grants, depth: u32, tokens: u32) 
         let name = json::text(&document, index)?;
         if !name.starts_with(b"mcp__") {
             let mut granted = false;
+            // --json-schema adds the program's own result tool, independently
+            // of --tools. Versions that omit it from init remain admissible.
+            if name == b"StructuredOutput" && result_contract && !structured_output {
+                structured_output = true;
+                granted = true;
+            }
             for (slot, tool) in policy::BUILTINS.iter().enumerate() {
                 if tool.name() == name && tool.granted(grants) && !seen.get(slot).expect("six built-ins") {
                     *seen.get_mut(slot).expect("six built-ins") = true;

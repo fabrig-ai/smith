@@ -44,6 +44,7 @@ pub(super) fn init(bytes: &[u8], tools: &[mcp::Tool], depth: u32, tokens: u32) -
     super::builtins::init_error(
         bytes,
         smith_domain::tools::Grants { inspect: false, modify: false, shell: false },
+        false,
         depth,
         tokens,
     )
