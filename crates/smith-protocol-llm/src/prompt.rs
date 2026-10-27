@@ -28,8 +28,42 @@ pub fn prepare_prompt(
     Ok((translated, Context { owner, asker, grants, served, application, receiving, limits: *limits }))
 }
 
-/// Prepare the translated prompt and retained context for the connection
-/// component, which prepares the sole shared Client when it admits Start.
+/// One activation's exact declarations and their admitted neutral documents.
+/// History and tool choice are checked anew for each completion.
+#[derive(Debug)]
+pub(crate) struct Declarations {
+    grants: tools::Grants,
+    namespace: tools::Namespace,
+    served: Box<[llm::Served]>,
+    outcome: run::outcome::OutcomeSpec,
+    deliver: Option<run::outcome::ChangeSpec>,
+    limits: Limits,
+    application: Box<[ToolSchema]>,
+    offered: Box<[shared::Tool]>,
+}
+
+impl Declarations {
+    fn accepts(
+        &self,
+        prompt: &llm::Prompt,
+        outcome: &run::outcome::OutcomeSpec,
+        deliver: Option<&run::outcome::ChangeSpec>,
+        limits: &Limits,
+    ) -> bool {
+        self.grants == prompt.tools
+            && self.namespace == prompt.namespace
+            && self.served == prompt.served
+            && self.outcome == *outcome
+            && self.deliver.as_ref() == deliver
+            && self.limits.stated == limits.stated
+            && self.limits.tool_bytes == limits.tool_bytes
+            && self.limits.client.tools == limits.client.tools
+            && self.limits.client.request == limits.client.request
+            && self.limits.client.depth == limits.client.depth
+    }
+}
+
+/// Prepare a call using only an exactly matching admitted declaration set.
 pub(crate) fn prepare_component(
     owner: skein_lib::Token,
     prompt: llm::Prompt,
@@ -37,11 +71,40 @@ pub(crate) fn prepare_component(
     deliver: Option<&run::outcome::ChangeSpec>,
     receiving: crate::Receiving,
     limits: &Limits,
+    retained: &mut Option<Declarations>,
 ) -> Result<(shared::Prompt, Context), Error> {
     worst_case(limits, &receiving).ok_or(Error::Limit)?;
-    let application =
-        crate::tools::schemas_for_contract(&prompt, &limits.stated, outcome, deliver, limits.client.request)?;
-    prepare_prompt(owner, prompt, application, receiving, limits)
+    let hit = match retained.as_ref() {
+        Some(previous) => previous.accepts(&prompt, outcome, deliver, limits),
+        None => false,
+    };
+    if hit {
+        let declarations = retained.as_ref().expect("matching declarations");
+        inventory(&prompt, &declarations.application, limits)?;
+    } else {
+        // Release the previous set before rendering or attesting its replacement.
+        *retained = None;
+        let application =
+            crate::tools::schemas_for_contract(&prompt, &limits.stated, outcome, deliver, limits.client.request)?;
+        inventory(&prompt, &application, limits)?;
+        let offered = attest(&prompt, &application, limits)?;
+        *retained = Some(Declarations {
+            grants: prompt.tools,
+            namespace: prompt.namespace.clone(),
+            served: prompt.served.clone(),
+            outcome: outcome.clone(),
+            deliver: deliver.cloned(),
+            limits: *limits,
+            application,
+            offered,
+        });
+    }
+    let declarations = retained.as_ref().expect("this entrance admitted its declarations");
+    let asker = prompt.asker;
+    let grants = prompt.tools;
+    let application = declarations.application.clone();
+    let (translated, served) = translate_attested(prompt, declarations.offered.clone(), limits)?;
+    Ok((translated, Context { owner, asker, grants, served, application, receiving, limits: *limits }))
 }
 
 /// Pure application prompt translation, including whole supplied tool schemas.
@@ -60,25 +123,15 @@ fn translate(
     limits: &Limits,
 ) -> Result<(shared::Prompt, Box<[llm::Served]>), Error> {
     inventory(&input, application, limits)?;
-    let llm::Prompt {
-        asker: _,
-        endpoint: _,
-        affinity,
-        model,
-        effort,
-        system,
-        tools: _,
-        namespace,
-        served,
-        choice,
-        messages,
-        max_tokens,
-        purpose,
-    } = input;
+    let offered = attest(&input, application, limits)?;
+    translate_attested(input, offered, limits)
+}
+
+fn attest(input: &llm::Prompt, application: &[ToolSchema], limits: &Limits) -> Result<Box<[shared::Tool]>, Error> {
     let mut offered = List::with_capacity(
-        u32::try_from(application.len().checked_add(served.len()).ok_or(Error::Limit)?).or(Err(Error::Limit))?,
+        u32::try_from(application.len().checked_add(input.served.len()).ok_or(Error::Limit)?).or(Err(Error::Limit))?,
     );
-    for descriptor in &served {
+    for descriptor in &input.served {
         match descriptor {
             llm::Served::Host(tool) => {
                 let schema = object(&tool.schema, limits)?;
@@ -95,6 +148,29 @@ fn translate(
             .push(shared::Tool { name: descriptor.name.clone(), description: descriptor.description.clone(), schema })
             .or(Err(Error::Limit))?;
     }
+    Ok(offered.into_boxed())
+}
+
+fn translate_attested(
+    input: llm::Prompt,
+    offered: Box<[shared::Tool]>,
+    limits: &Limits,
+) -> Result<(shared::Prompt, Box<[llm::Served]>), Error> {
+    let llm::Prompt {
+        asker: _,
+        endpoint: _,
+        affinity,
+        model,
+        effort,
+        system,
+        tools: _,
+        namespace,
+        served,
+        choice,
+        messages,
+        max_tokens,
+        purpose,
+    } = input;
     let shared_choice = match &choice {
         llm::ToolChoice::Auto => shared::ToolChoice::Auto,
         llm::ToolChoice::None => shared::ToolChoice::None,
@@ -130,7 +206,7 @@ fn translate(
         shared::Prompt {
             model,
             instructions: system,
-            tools: offered.into_boxed(),
+            tools: offered,
             choice: shared_choice,
             messages: translated.into_boxed(),
             reasoning_effort: effort,
@@ -563,3 +639,6 @@ pub(crate) fn object(data: &[u8], limits: &Limits) -> Result<shared::Json, Error
 fn size(value: usize) -> Result<u64, Error> {
     u64::try_from(value).or(Err(Error::Limit))
 }
+
+#[cfg(test)]
+mod tests;

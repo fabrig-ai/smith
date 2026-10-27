@@ -1,7 +1,8 @@
 //! A bounded LLM component over skein's connection pool.
 //! It keeps endpoint names, the last charter's account-to-endpoint bindings,
 //! two grant generations per account, and a context
-//! for each accepted call, plus one exact request awaiting its prompt record.
+//! for each accepted call, one activation's attested declarations,
+//! and one exact request awaiting its prompt record.
 //! It never knows retry policy, host credentials, or
 //! provider wire grammar. `from_domain`, `from_below`, `fire` and `reclaim`
 //! route one bounded pass; `close` ends the owner's retained connection pool.
@@ -21,6 +22,7 @@ use smith_domain::{Event as DomainEvent, GrantName, llm, run};
 
 use crate::IdentityProfile;
 use crate::boundary::{FromDomain, ToDomain};
+use crate::prompt::prepare_component;
 use crate::{Context, EndpointOptions, Endpoints, Error, GrantError, Grants, Receiving};
 
 /// Startup receiving and capacity bounds for the LLM component.
@@ -83,6 +85,7 @@ pub struct Component {
     events: Queue<connection::Event>,
     measures: Queue<crate::Measure>,
     prepared: Option<Prepared>,
+    declarations: Option<crate::prompt::Declarations>,
     closed: bool,
 }
 
@@ -141,7 +144,22 @@ pub fn component_worst_case(limits: &ComponentLimits, endpoints: &Endpoints) -> 
         .tool_bytes
         .checked_add(limits.contract_bytes)?
         .checked_mul(u64::from(limits.connection.connections))?;
-    base.checked_add(retained)?.checked_add(entrance)?.checked_add(capture_worst_case(limits)?)
+    // One activation retains raw declarations, names/descriptions and attested
+    // records beside each call's neutral prompt. Contract and namespace bounds
+    // are the same admitted root bounds used by Active.
+    let compact = u64::try_from(size_of::<skein_json::document::Compact>()).ok()?;
+    let declarations = limits
+        .adapter
+        .tool_bytes
+        .checked_mul(compact.checked_add(3)?)?
+        .checked_add(limits.contract_bytes)?
+        .checked_add(u64::from(limits.adapter.stated.path_bytes))?
+        .checked_add(List::<shared::Tool>::worst_case(limits.adapter.client.tools)?)?
+        .checked_add(u64::try_from(size_of::<crate::prompt::Declarations>()).ok()?)?;
+    base.checked_add(retained)?
+        .checked_add(declarations)?
+        .checked_add(entrance)?
+        .checked_add(capture_worst_case(limits)?)
 }
 
 fn capture_worst_case(limits: &ComponentLimits) -> Option<u64> {
@@ -206,6 +224,7 @@ impl Component {
             events: Queue::with_capacity(MAX_OUT.above),
             measures: Queue::with_capacity(MEASURES),
             prepared: None,
+            declarations: None,
             closed: false,
         })
     }
@@ -248,6 +267,7 @@ impl Component {
 
     /// Replace the last start's account-to-endpoint bindings before installing its grants.
     pub fn bind_grants(&mut self, charter: &run::Charter) -> Result<(), GrantError> {
+        self.declarations = None;
         self.bindings = Map::with_capacity(self.limits.llms);
         for llm in core::iter::once(&charter.llm).chain(charter.models.iter()) {
             if let Some(account) = llm.account {
@@ -364,6 +384,7 @@ impl Component {
     /// The owner has ended its run; close every retained physical connection.
     pub fn close(&mut self, env: &Env<ComponentLimits>, to_domain: &mut Queue<ToDomain>, io: &mut Queue<IoRequest>) {
         assert!(self.measures.is_empty(), "the owner drains observations before another entrance");
+        self.declarations = None;
         let child_env = self.child_env(env);
         self.connection.down(&child_env, connection::Request::Close, &mut self.events, io);
         self.route(env.now, to_domain);
@@ -372,6 +393,7 @@ impl Component {
     /// The owner interrupts teardown; abort every retained call and physical connection.
     pub fn abort(&mut self, env: &Env<ComponentLimits>, to_domain: &mut Queue<ToDomain>, io: &mut Queue<IoRequest>) {
         assert!(self.measures.is_empty(), "the owner drains observations before another entrance");
+        self.declarations = None;
         let child_env = self.child_env(env);
         self.connection.down(&child_env, connection::Request::Abort, &mut self.events, io);
         self.route(env.now, to_domain);
@@ -436,14 +458,21 @@ impl Component {
         };
         let purpose = prompt.purpose;
         let adapter = crate::Limits { client: options.client, ..self.limits.adapter };
-        let (mut translated, context) =
-            match crate::prompt::prepare_component(owner, prompt, &outcome, deliver.as_ref(), bounds, &adapter) {
-                Ok(prepared) => prepared,
-                Err(error) => {
-                    Self::refusal(owner, error, bounds.max_failure_bytes, to_domain);
-                    return;
-                }
-            };
+        let (mut translated, context) = match prepare_component(
+            owner,
+            prompt,
+            &outcome,
+            deliver.as_ref(),
+            bounds,
+            &adapter,
+            &mut self.declarations,
+        ) {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                Self::refusal(owner, error, bounds.max_failure_bytes, to_domain);
+                return;
+            }
+        };
         match options.identity {
             IdentityProfile::Plain => {}
             IdentityProfile::ClaudeCode => match shared::anthropic::identity::instructions(&translated.instructions) {
@@ -483,13 +512,7 @@ impl Component {
             None => {}
         }
         let whole = deadlines.whole;
-        let deadlines = connection::Deadlines {
-            connect: Some(options.connect),
-            handshake: Some(options.handshake),
-            head: Some(deadlines.head),
-            idle: Some(deadlines.idle),
-            whole: Some(deadlines.whole.saturating_since(env.now)),
-        };
+        let deadlines = connection_deadlines(env.now, options, deadlines);
         let request = connection::Request::Start {
             call: owner,
             endpoint: options.index,
@@ -781,5 +804,19 @@ fn observed_prompt(
             Ok(Some(prompt))
         }
         None => Ok(None),
+    }
+}
+
+fn connection_deadlines(
+    now: Time,
+    options: &EndpointOptions,
+    deadlines: smith_domain::session::Deadlines,
+) -> connection::Deadlines {
+    connection::Deadlines {
+        connect: Some(options.connect),
+        handshake: Some(options.handshake),
+        head: Some(deadlines.head),
+        idle: Some(deadlines.idle),
+        whole: Some(deadlines.whole.saturating_since(now)),
     }
 }
