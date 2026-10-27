@@ -19,7 +19,7 @@ pub(crate) enum Effect {
     DelayedInit { after_ms: u64, bytes: Vec<u8> },
     Seen(crate::Seen),
     Received(serde_json::Value),
-    McpStart(serde_json::Value),
+    McpStart { configuration: serde_json::Value, directory: String },
     McpCall { tool: String, input: serde_json::Value },
     McpCancel,
     End(u8),

@@ -22,16 +22,36 @@ pub fn config_root(spawn: &Spawn) -> Option<StartupRoot> {
     config_path(&spawn.env).map(|path| StartupRoot { name: b"config".as_slice().into(), path: path.into() })
 }
 
-/// Declares the startup root containing `--mcp-config`, named `mcp`.
+/// Declares the common directory of the prompt and MCP files, named `mcp`.
 pub fn mcp_root(spawn: &Spawn) -> Option<StartupRoot> {
-    mcp_path(&spawn.args).map(|path| StartupRoot { name: b"mcp".as_slice().into(), path: path.into_boxed_slice() })
+    file_arguments(&spawn.args, Path::new(std::ffi::OsStr::from_bytes(&spawn.dir)))
+        .map(|files| StartupRoot { name: b"mcp".as_slice().into(), path: files.root.into() })
 }
 
-fn mcp_path(arguments: &[Box<[u8]>]) -> Option<Vec<u8>> {
-    let path = arguments.windows(2).find(|pair| pair[0].as_ref() == b"--mcp-config")?;
-    let path = Path::new(std::ffi::OsStr::from_bytes(&path[1]));
-    let parent = path.parent().filter(|parent| !parent.as_os_str().is_empty()).unwrap_or(Path::new("."));
-    Some(parent.as_os_str().as_bytes().to_vec())
+/// Startup's containing directory and flag paths relative to it.
+#[derive(Debug)]
+pub(crate) struct FileArguments {
+    pub root: Vec<u8>,
+    pub arguments: Vec<Box<[u8]>>,
+}
+
+// Startup and the command agree on a common root and paths beneath it. Kernel
+// file effects deliberately refuse absolute names and paths escaping a root.
+pub(crate) fn file_arguments(arguments: &[Box<[u8]>], directory: &Path) -> Option<FileArguments> {
+    let paths: Vec<_> = arguments
+        .windows(2)
+        .enumerate()
+        .filter(|(_, pair)| matches!(pair[0].as_ref(), b"--mcp-config" | b"--append-system-prompt-file"))
+        .map(|(index, pair)| (index + 1, directory.join(std::ffi::OsStr::from_bytes(&pair[1]))))
+        .collect();
+    let first = paths.first()?.1.parent()?;
+    let root = first.ancestors().find(|root| paths.iter().all(|(_, path)| path.starts_with(root)))?;
+    let mut relative = arguments.to_vec();
+    for (index, path) in &paths {
+        relative[*index] = path.strip_prefix(root).ok()?.as_os_str().as_bytes().into();
+    }
+    let root = if root.as_os_str().is_empty() { Path::new(".") } else { root };
+    Some(FileArguments { root: root.as_os_str().as_bytes().to_vec(), arguments: relative })
 }
 
 /// Declares the observations append file for `World::host_startup`, alongside
@@ -53,7 +73,7 @@ pub fn hosted(program: &[u8]) -> HostedProgram<Fake> {
 
 fn make(spawn: &Spawn, inherited: &Inherited) -> Fake {
     let pipe = |number| inherited.pipes.iter().find(|(child, _)| *child == number).expect("standard pipe").1;
-    Fake::new(
+    Fake::new_in(
         &spawn.args,
         &spawn.env,
         Faces {
@@ -69,6 +89,7 @@ fn make(spawn: &Spawn, inherited: &Inherited) -> Fake {
                 .find(|(name, _)| name.as_ref() == b"observations")
                 .map(|(_, fd)| *fd),
         },
+        Path::new(std::ffi::OsStr::from_bytes(&spawn.dir)),
     )
 }
 
@@ -111,12 +132,14 @@ pub fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let mcp = mcp_path(&arguments)
-        .and_then(|path| skein_shell::open_root(Path::new(std::ffi::OsStr::from_bytes(&path))).ok());
-    let mut fake = Fake::new(
+    let directory = std::env::current_dir().expect("invocation working directory");
+    let mcp = file_arguments(&arguments, &directory)
+        .and_then(|files| skein_shell::open_root(Path::new(std::ffi::OsStr::from_bytes(&files.root))).ok());
+    let mut fake = Fake::new_in(
         &arguments,
         &environment,
         Faces { stdin: Some(Fd::new(0)), stdout: Fd::new(1), stderr: Fd::new(2), signal, config, observations, mcp },
+        &directory,
     );
     fake.record_process(skein_shell::process_id());
     let mut kernel = match skein_shell::Kernel::open(Config { operations: fake.operations() }) {

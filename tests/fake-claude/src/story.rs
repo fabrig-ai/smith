@@ -11,8 +11,15 @@ pub struct Story {
     pub logout: Logout,
     #[serde(default)]
     pub init: Init,
+    /// Legacy fallback turns, counted from this process's first user message.
     #[serde(default)]
     pub turns: Vec<Turn>,
+    /// System-cued conversations; turns count every user message, including resumes.
+    #[serde(default)]
+    pub cued: Vec<Script>,
+    /// Request-cued conversations; turns restart at the latest message holding a cue.
+    #[serde(default)]
+    pub asked: Vec<Script>,
     #[serde(default)]
     pub usage: Usage,
     #[serde(default)]
@@ -20,6 +27,25 @@ pub struct Story {
     /// Text returned by the tool-free summary invocation.
     #[serde(default)]
     pub summary: String,
+}
+
+/// One conversation selected by a cue in the system prompt or a user message.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Script {
+    /// Earliest position wins, then the first listed; a cue never spans text parts.
+    pub cue: String,
+    pub turns: Vec<Turn>,
+}
+
+/// The script selected for a user turn, recorded by the fake for its test.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Selection {
+    /// The system prompt selected this zero-based index in `Story::cued`.
+    Cued(usize),
+    /// A user message selected this zero-based index in `Story::asked`.
+    Asked(usize),
+    /// Neither cue selected a script, so `Story::turns` answers.
+    Otherwise,
 }
 
 /// A status answer selected by the story, ending on output or a signal.
@@ -212,9 +238,11 @@ pub enum Resume {
     Missing,
 }
 
-/// Settings names and permission rules recorded without other settings values.
+/// Turn selections, signals and settings recorded by the fake for its test.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Seen {
+    /// The script answering this user message and its zero-based turn index.
+    Selected { script: Selection, turn: usize },
     /// The parent interrupted the program.
     Interrupted,
     /// The parent terminated the program.
@@ -229,7 +257,8 @@ pub enum Seen {
     Prompted { tool: String, decision: Decision },
 }
 
-/// Reads only the appended observations, skipping invocation records.
+/// Reads control and settings observations, skipping invocations and selections.
+/// Use [`selections`] for the per-turn script observations.
 pub fn seen(bytes: &[u8]) -> Vec<Seen> {
     bytes
         .split(|byte| *byte == b'\n')
@@ -237,6 +266,17 @@ pub fn seen(bytes: &[u8]) -> Vec<Seen> {
         .map(|line| serde_json::from_slice::<serde_json::Value>(line).expect("observation JSON"))
         .filter_map(|value| value.get("seen").cloned())
         .map(|value| serde_json::from_value(value).expect("seen record"))
+        .collect()
+}
+
+/// Reads per-turn script selections, skipping invocation and control records.
+pub fn selections(bytes: &[u8]) -> Vec<Seen> {
+    bytes
+        .split(|byte| *byte == b'\n')
+        .filter(|line| !line.is_empty())
+        .map(|line| serde_json::from_slice::<serde_json::Value>(line).expect("observation JSON"))
+        .filter_map(|value| value.get("selection").cloned())
+        .map(|value| serde_json::from_value(value).expect("selection record"))
         .collect()
 }
 

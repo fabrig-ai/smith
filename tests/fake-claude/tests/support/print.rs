@@ -105,10 +105,11 @@ pub fn with_server(story: Story, invocation: Invocation, script: smith_fake_clau
 }
 
 pub fn sequence(story: Story, invocations: Vec<Invocation>) -> Run {
-    super::run_files(
-        Some(story),
-        Some(b"claude.ai"),
-        invocations,
-        vec![Item::directory(b"run"), Item::file(b"run/mcp.json", MCP)],
-    )
+    sequence_files(story, invocations, Vec::new())
+}
+
+pub fn sequence_files(story: Story, invocations: Vec<Invocation>, extra: Vec<Item>) -> Run {
+    let mut files = vec![Item::directory(b"run"), Item::file(b"run/mcp.json", MCP)];
+    files.extend(extra);
+    super::run_files(Some(story), Some(b"claude.ai"), invocations, files)
 }

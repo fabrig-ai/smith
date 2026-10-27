@@ -113,6 +113,7 @@ fn print_scripted_child(story: Story, script: ServerScript) -> (Scratch, Child) 
     fs::create_dir(&run).expect("run directory");
     fs::write(config.join(LOGIN_FILE), b"claude.ai").expect("login");
     fs::write(config.join(STORY_FILE), story.encode()).expect("story");
+    fs::write(scratch.path().join("unread"), b"test system prompt").expect("system prompt");
     let configuration = serde_json::json!({"mcpServers":{"smith":{"type":"stdio", "command":skein_scratch::paths::binary("fake-claude-server"),"args":[script.encode()],"env":{}}}});
     fs::write(run.join("mcp.json"), serde_json::to_vec(&configuration).expect("configuration JSON"))
         .expect("MCP configuration");
@@ -228,6 +229,25 @@ fn the_binary_connects_to_its_server() {
     assert_eq!(read_message(&mut reader)["message"]["content"][0]["name"], "mcp__smith__finish");
     assert_eq!(read_message(&mut reader)["message"]["content"][0]["content"], "accepted");
     assert_eq!(read_message(&mut reader)["subtype"], "success");
+    child.stdin.take();
+    assert_eq!(child.wait().expect("exit").code(), Some(0));
+}
+
+#[test]
+fn the_binary_uses_its_system_prompt_to_select() {
+    let story = Story {
+        cued: vec![smith_fake_claude::Script {
+            cue: "test system prompt".into(),
+            turns: vec![Turn { steps: vec![Step::Text("matched".into())], ..Turn::default() }],
+        }],
+        ..Story::default()
+    };
+    let (_scratch, mut child) = print_child(story);
+    let mut reader = BufReader::new(child.stdout.take().expect("output"));
+    read_message(&mut reader);
+    send_user(&mut child);
+    read_message(&mut reader);
+    assert_eq!(read_message(&mut reader)["result"], "matched");
     child.stdin.take();
     assert_eq!(child.wait().expect("exit").code(), Some(0));
 }

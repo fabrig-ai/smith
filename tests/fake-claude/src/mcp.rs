@@ -61,7 +61,14 @@ impl Mcp {
         }
     }
 
-    pub fn start(&mut self, configuration: Value, root: Fd, environment: &[Box<[u8]>], requests: &mut Queue<Request>) {
+    pub fn start(
+        &mut self,
+        configuration: Value,
+        root: Fd,
+        directory: &[u8],
+        environment: &[Box<[u8]>],
+        requests: &mut Queue<Request>,
+    ) {
         let mut env: BTreeMap<Vec<u8>, Vec<u8>> = environment
             .iter()
             .filter_map(|entry| {
@@ -90,7 +97,7 @@ impl Mcp {
                     .map(|(name, value)| [name.as_slice(), b"=", value.as_slice()].concat().into_boxed_slice())
                     .collect(),
                 root,
-                dir: Box::new([]),
+                dir: directory.into(),
                 pipes: vec![
                     Pipe { child: 0, way: Way::In, parent: None },
                     Pipe { child: 1, way: Way::Out, parent: None },

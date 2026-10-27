@@ -1,5 +1,6 @@
 //! One print conversation (protocol/programs.md, sections 5 and 8). Keeps
-//! parsed flags, a turn cursor and file phase; never reads prompt contents.
+//! parsed flags, session and request cursors, a system-cue selection and file
+//! phase; never retains prompt text. Session state survives a process resume.
 //! The shared driver supplies file/input completions and service signals.
 
 use std::collections::BTreeMap;
@@ -8,7 +9,7 @@ use serde_json::{Value, json};
 use skein_io::file;
 
 use crate::{
-    Decision, End, LOGIN_FILE, Resume, SETTINGS_FILE, Seen, Step, Story, Turn,
+    Decision, End, LOGIN_FILE, Resume, SETTINGS_FILE, Script, Seen, Selection, Step, Story, Turn,
     commands::{Config, Effect, FILE_OWNER, error},
     stream,
 };
@@ -113,6 +114,7 @@ impl Flags {
 #[derive(Debug)]
 enum Phase {
     Session,
+    Prompt,
     Saving,
     Configuration,
     Settings,
@@ -134,13 +136,14 @@ pub(crate) struct Print {
     phase: Phase,
     server: String,
     input: Vec<u8>,
+    session: Session,
     next_turn: usize,
+    cued: Option<usize>,
     turn: Turn,
     step: usize,
     texts: u64,
     last_text: String,
     interrupted: bool,
-    recorded: bool,
     server_config: Value,
     pending: Option<ToolCall>,
     next_tool: u64,
@@ -168,13 +171,14 @@ impl Print {
             phase: Phase::Session,
             server: String::new(),
             input: Vec::new(),
+            session: Session::default(),
             next_turn: 0,
+            cued: None,
             turn: Turn::default(),
             step: 0,
             texts: 0,
             last_text: String::new(),
             interrupted: false,
-            recorded: false,
             server_config: Value::Null,
             pending: None,
             next_tool: 0,
@@ -183,13 +187,22 @@ impl Print {
         };
         let effects = match config.root {
             Some(root) => vec![load(root, &state.session_file())],
-            None => state.begin(),
+            None => state.prompt(),
         };
         Ok((state, effects))
     }
 
     fn session_file(&self) -> String {
         format!("fake-claude.session.{}", self.flags.session)
+    }
+
+    fn prompt(&mut self) -> Vec<Effect> {
+        if self.story.cued.is_empty() {
+            return self.begin();
+        }
+        let Some(root) = self.config.mcp else { return error("cannot read system prompt", 1) };
+        self.phase = Phase::Prompt;
+        vec![load(root, &self.flags.values["--append-system-prompt-file"])]
     }
 
     fn begin(&mut self) -> Vec<Effect> {
@@ -199,13 +212,9 @@ impl Print {
             init["mcp_servers"] = json!([]);
             vec![self.emit(init), Effect::ReadCode]
         } else {
-            let path = std::path::Path::new(&self.flags.values["--mcp-config"]);
-            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-                return error("invalid MCP path", 1);
-            };
             let Some(root) = self.config.mcp else { return error("cannot read MCP configuration", 1) };
             self.phase = Phase::Configuration;
-            vec![load(root, name)]
+            vec![load(root, &self.flags.values["--mcp-config"])]
         }
     }
 
@@ -233,16 +242,36 @@ impl Print {
                             Effect::End(1),
                         ];
                     }
-                    file::Event::Loaded { .. } => self.recorded = true,
+                    file::Event::Loaded { bytes, .. } => {
+                        // The original marker meant only that this ID was used.
+                        self.session = if bytes.len() == 1 {
+                            Session::default()
+                        } else {
+                            match serde_json::from_slice(&bytes) {
+                                Ok(session) => session,
+                                Err(_) => return error("invalid session state", 1),
+                            }
+                        };
+                    }
                     file::Event::Failed { error: skein_io::kernel::Error::NotFound, .. } => {}
                     _ => return error("cannot read session marker", 1),
                 }
-                self.begin()
+                self.prompt()
             }
+            Phase::Prompt => match event {
+                file::Event::Loaded { bytes, .. } => {
+                    self.cued = select(&self.story.cued, &[&bytes]);
+                    self.begin()
+                }
+                _ => error("cannot read system prompt", 1),
+            },
             Phase::Saving => match event {
                 file::Event::Stored { .. } => {
-                    self.recorded = true;
-                    if self.interrupted { self.interrupt_result() } else { self.login() }
+                    if self.interrupted {
+                        self.interrupt_result()
+                    } else {
+                        self.login()
+                    }
                 }
                 _ => error("cannot record session", 1),
             },
@@ -293,7 +322,13 @@ impl Print {
 
     fn initialized(&mut self, seen: Seen) -> Vec<Effect> {
         self.phase = Phase::Connecting;
-        vec![Effect::Seen(seen), Effect::McpStart(self.server_config.take())]
+        let directory = std::path::Path::new(&self.flags.values["--mcp-config"])
+            .parent()
+            .filter(|path| !path.as_os_str().is_empty())
+            .unwrap_or(std::path::Path::new("."))
+            .to_string_lossy()
+            .into_owned();
+        vec![Effect::Seen(seen), Effect::McpStart { configuration: self.server_config.take(), directory }]
     }
 
     pub fn input(&mut self, bytes: Option<&[u8]>) -> Vec<Effect> {
@@ -327,28 +362,26 @@ impl Print {
                 if !stream::user(&self.input) {
                     return error("invalid user message", 1);
                 }
-                let received = serde_json::from_slice(&self.input).expect("validated user message");
+                let received: Value = serde_json::from_slice(&self.input).expect("validated user message");
                 self.input.clear();
-                self.turn = if self.flags.values.contains_key("--mcp-config") {
-                    self.story.turns.get(self.next_turn).cloned().unwrap_or_default()
-                } else {
-                    Turn { steps: vec![Step::Text(self.story.summary.clone())], ..Turn::default() }
-                };
+                let selection = self.select_turn(&received);
+                self.session.messages = self.session.messages.checked_add(1).expect("session count fits");
                 self.next_turn = self.next_turn.checked_add(1).expect("turn count fits");
                 self.step = 0;
                 self.texts = 0;
                 self.last_text.clear();
                 self.interrupted = false;
                 let mut effects = vec![Effect::Received(received)];
-                if !self.recorded
-                    && let Some(root) = self.config.root
-                {
+                if let Some(selection) = selection {
+                    effects.push(Effect::Seen(selection));
+                }
+                if let Some(root) = self.config.root {
                     self.phase = Phase::Saving;
                     effects.push(Effect::File(file::Request::Store {
                         owner: FILE_OWNER,
                         root,
                         path: self.session_file().as_bytes().into(),
-                        bytes: Box::new([1]),
+                        bytes: serde_json::to_vec(&self.session).expect("session is JSON data").into(),
                         expected: file::Expect::Any,
                         no_follow: true,
                     }));
@@ -360,6 +393,39 @@ impl Print {
         }
     }
 
+    fn select_turn(&mut self, received: &Value) -> Option<Seen> {
+        if !self.flags.values.contains_key("--mcp-config") {
+            self.turn = Turn { steps: vec![Step::Text(self.story.summary.clone())], ..Turn::default() };
+            return None;
+        }
+        let content = &received["message"]["content"];
+        let parts: Vec<&[u8]> = match content {
+            Value::String(text) => vec![text.as_bytes()],
+            Value::Array(blocks) => {
+                blocks.iter().filter_map(|block| block["text"].as_str().map(str::as_bytes)).collect()
+            }
+            _ => unreachable!("validated user content"),
+        };
+        if let Some(index) = select(&self.story.asked, &parts) {
+            self.session.asked = Some(RequestCue { index, start: self.session.messages });
+        }
+        let (script, turns, turn) = if let Some(index) = self.cued {
+            (Selection::Cued(index), &self.story.cued[index].turns[..], self.session.messages)
+        } else if let Some(request) = &self.session.asked {
+            let turns = self.story.asked.get(request.index).map(|script| script.turns.as_slice()).unwrap_or_default();
+            (
+                Selection::Asked(request.index),
+                turns,
+                self.session.messages.checked_sub(request.start).expect("request precedes turn"),
+            )
+        } else {
+            // Legacy stories restarted their positional turns in each process.
+            (Selection::Otherwise, &self.story.turns[..], self.next_turn)
+        };
+        self.turn = turns.get(turn).cloned().unwrap_or_default();
+        Some(Seen::Selected { script, turn })
+    }
+
     fn steps(&mut self) -> Vec<Effect> {
         let mut effects = Vec::new();
         while let Some(step) = self.turn.steps.get(self.step).cloned() {
@@ -369,7 +435,7 @@ impl Print {
                 Step::Text(text) => {
                     self.texts = self.texts.checked_add(1).expect("text count fits");
                     let id = self
-                        .next_turn
+                        .session.messages
                         .checked_mul(super::fake::FILE_BYTES as usize)
                         .and_then(|base| base.checked_add(self.step))
                         .expect("message id fits");
@@ -473,7 +539,8 @@ impl Print {
         let bare = tool.strip_prefix(&format!("mcp__{}__", self.server)).unwrap_or(&tool).to_owned();
         let name = if result.is_some() { tool.clone() } else { format!("mcp__{}__{}", self.server, bare) };
         let message_id = self
-            .next_turn
+            .session
+            .messages
             .checked_mul(super::fake::FILE_BYTES as usize)
             .and_then(|base| base.checked_add(self.step))
             .expect("message ID fits");
@@ -654,6 +721,7 @@ impl Print {
                 Vec::new()
             }
             Phase::Session
+            | Phase::Prompt
             | Phase::Configuration
             | Phase::Settings
             | Phase::Connecting
@@ -742,4 +810,34 @@ fn decision(text: &str, input: &Value) -> Decision {
         },
         _ => Decision::Unreadable,
     }
+}
+
+/// Only selection state is saved; message and prompt contents are not retained.
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
+struct Session {
+    messages: usize,
+    asked: Option<RequestCue>,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct RequestCue {
+    index: usize,
+    start: usize,
+}
+
+// Positions are ordered by text part, then byte offset, then script index.
+fn select(scripts: &[Script], parts: &[&[u8]]) -> Option<usize> {
+    parts.iter().find_map(|part| {
+        scripts
+            .iter()
+            .enumerate()
+            .filter_map(|(index, script)| {
+                let cue = script.cue.as_bytes();
+                let offset =
+                    if cue.is_empty() { Some(0) } else { part.windows(cue.len()).position(|window| window == cue) };
+                offset.map(|offset| (offset, index))
+            })
+            .min()
+            .map(|(_, index)| index)
+    })
 }
