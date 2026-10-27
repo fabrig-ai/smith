@@ -100,9 +100,17 @@ impl Backend {
             return;
         };
         let kind = json::text_in(&document, json::field(&document, 0, b"type"));
+        if kind == Some(b"control_response") {
+            if !self.control_response(&document) {
+                self.fail(env, llm::Failure::Invalid, b"smith: the program refused the interrupt", up, below);
+            }
+            return;
+        }
         if self.stop != super::stop::Stop::None {
             if kind == Some(b"result") {
-                self.stopped_result(env);
+                // Note rendering reuses the parser's workspace term.
+                drop(document);
+                self.stopped_result(env, up, below);
                 self.deliver(env, up, below);
             }
             return;
@@ -380,7 +388,7 @@ impl Backend {
         self.flush_builtins(up);
         if self.compaction() {
             self.switching = true;
-            self.stop(env.now, false, false);
+            self.stop(env, false, false, up, below);
         }
     }
 

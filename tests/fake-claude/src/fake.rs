@@ -53,6 +53,7 @@ pub struct Fake {
     // At most one FILE_BYTES delivery, consumed only when the command asks.
     input_bytes: VecDeque<u8>,
     input_requested: bool,
+    input_demanding: bool,
     signal: Token,
     stdout: Output,
     stderr: Output,
@@ -204,6 +205,7 @@ impl Fake {
             input_ended: input.is_none(),
             input_bytes: VecDeque::new(),
             input_requested: false,
+            input_demanding: false,
             signal,
             stdout,
             stderr,
@@ -369,6 +371,7 @@ impl Fake {
                 }
             }
             Event::Stream { owner, up } if Some(owner) == self.input && self.code.is_none() => {
+                self.input_demanding = false;
                 if matches!(up, Up::End | Up::Failed(_)) {
                     self.input_ended = true;
                 }
@@ -396,6 +399,9 @@ impl Fake {
             return;
         }
         self.input_requested = false;
+        if self.input_demanding {
+            return;
+        }
         if let Some(bytes) = take_input(&mut self.input_bytes) {
             let effects =
                 self.command.as_mut().map(|command| command.input(Some(&bytes), self.config)).unwrap_or_default();
@@ -404,6 +410,7 @@ impl Fake {
             let effects = self.command.as_mut().map(|command| command.input(None, self.config)).unwrap_or_default();
             self.effects(effects);
         } else {
+            self.input_demanding = true;
             self.io_requests.push(Request::Stream {
                 stream: self.input.expect("code input is present"),
                 down: Down::Demand {

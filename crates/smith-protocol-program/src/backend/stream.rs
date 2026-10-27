@@ -1,9 +1,10 @@
 //! Startup stream admission (programs.md, sections 5.1 and 5.5).
-//! Retains no stream state; checks complete init lines and encodes the first user input.
+//! Retains no stream state; checks complete init lines and encodes user and control input.
 
 use crate::mcp::{self, json};
 use alloc::boxed::Box;
 use skein_json::{Kind, collector, tokenizer, writer::Encoder};
+use skein_lib::{Decimal, Writer};
 use smith_domain::llm;
 
 pub(super) fn limits(bound: u32, depth: u32, tokens: u32) -> collector::Limits {
@@ -161,6 +162,43 @@ fn user(json: &mut Encoder, prompt: &llm::Prompt) {
         }
     }
     json.array_end();
+    json.object_end();
+    json.object_end();
+}
+
+// The compact request with "smith-" and twenty digits, including its newline.
+pub(super) const INTERRUPT_BYTES: u64 = 103;
+
+// "smith-" and the largest u64's twenty decimal digits.
+pub(super) fn interrupt_id(sequence: u64) -> Box<[u8]> {
+    let digits = Decimal::of(sequence);
+    let mut writer = Writer::new(6_usize.checked_add(digits.as_bytes().len()).expect("interrupt id"));
+    writer.put(b"smith-").expect("id prefix");
+    writer.put(digits.as_bytes()).expect("id digits");
+    writer.finish()
+}
+
+pub(super) fn interrupt_request(sequence: u64, maximum: u32) -> Option<Box<[u8]>> {
+    let id = interrupt_id(sequence);
+    let limits = skein_json::writer::Limits { depth: 8, length: maximum.checked_sub(1)? };
+    let mut measure = Encoder::measure(&limits);
+    interrupt(&mut measure, &id);
+    let length = measure.measured().ok()?;
+    let mut write = Encoder::write(length, &limits);
+    interrupt(&mut write, &id);
+    Some(json::join(&[&write.finish(), b"\n"]))
+}
+
+fn interrupt(json: &mut Encoder, id: &[u8]) {
+    json.object_start();
+    json.key(b"type");
+    json.string(b"control_request");
+    json.key(b"request_id");
+    json.string(id);
+    json.key(b"request");
+    json.object_start();
+    json.key(b"subtype");
+    json.string(b"interrupt");
     json.object_end();
     json.object_end();
 }
