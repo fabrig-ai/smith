@@ -21,6 +21,9 @@ use skein_world::{HostedProgram, Inherited};
 pub struct ServerScript {
     #[serde(default)]
     pub tools: Vec<Tool>,
+    /// Test-supplied schemas by tool name; unlisted tools use an object schema.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub input_schemas: std::collections::BTreeMap<String, Value>,
     #[serde(default = "prompt")]
     pub prompt: String,
     #[serde(default)]
@@ -39,7 +42,13 @@ fn connects() -> bool {
 
 impl Default for ServerScript {
     fn default() -> Self {
-        Self { tools: Vec::new(), prompt: prompt(), verdicts: Vec::new(), connects: true }
+        Self {
+            tools: Vec::new(),
+            input_schemas: std::collections::BTreeMap::new(),
+            prompt: prompt(),
+            verdicts: Vec::new(),
+            connects: true,
+        }
     }
 }
 
@@ -170,7 +179,7 @@ impl Server {
                     .iter()
                     .map(|tool| tool.name.as_str())
                     .chain([self.script.prompt.as_str()])
-                    .map(|name| json!({"name":name, "inputSchema":{"type":"object"}}))
+                    .map(|name| json!({"name":name, "inputSchema":self.script.input_schemas.get(name).cloned().unwrap_or_else(|| json!({"type":"object"}))}))
                     .collect();
                 json!({"tools":tools})
             }

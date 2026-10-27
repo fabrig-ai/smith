@@ -5,6 +5,7 @@
 )]
 use super::lifecycle_tests::{backend, env, request};
 use super::*;
+use alloc::vec;
 use smith_domain::tools::{Effect, Grants};
 
 const READ: &[u8] = br#"{"type":"assistant","message":{"id":"one","content":[{"type":"tool_use","id":"r","name":"Read","input":{"file_path":"a"}}]}}"#;
@@ -236,6 +237,89 @@ fn the_server_lists_no_workspace_tool() {
     let tools = backend.tools();
     assert_eq!(tools.len(), 2);
     assert!(tools.iter().all(|tool| [b"finish".as_slice(), b"wait"].contains(&tool.name.as_ref())));
+}
+
+fn host_tool(schema: &[u8]) -> llm::Served {
+    llm::Served::Host(smith_domain::run::HostTool {
+        name: b"host_action".as_slice().into(),
+        description: b"Host action".as_slice().into(),
+        schema: schema.into(),
+        effect: smith_domain::run::HostEffect::Write,
+        timeout: Duration::from_secs(1),
+    })
+}
+
+#[test]
+fn every_charter_inventory_serves_only_object_input_schemas() {
+    use smith_domain::run::outcome::{ChangeSpec, FieldRule, ItemSpec, OutcomeSpec, TextSpec, VerdictRule};
+    // Same text/field cap as the backend harness's max_tokens.
+    const CONTRACT_VALUE_BYTES: u32 = 128;
+    let empty = OutcomeSpec { change: None, verdicts: Box::default(), report: None, failure: None };
+    // Exercise every final form, including the nested verdict oneOf.
+    let contract = OutcomeSpec {
+        change: Some(ChangeSpec {
+            checks_must_pass: true,
+            fields: Box::new([FieldRule { name: b"title".as_slice().into(), max: CONTRACT_VALUE_BYTES }]),
+        }),
+        verdicts: Box::new([VerdictRule {
+            name: b"approved".as_slice().into(),
+            text_max: CONTRACT_VALUE_BYTES,
+            fields: Box::default(),
+            items: ItemSpec { min: 0, max: 0, kinds: Box::default() },
+        }]),
+        report: Some(TextSpec { max: CONTRACT_VALUE_BYTES, fields: Box::default() }),
+        failure: Some(TextSpec { max: CONTRACT_VALUE_BYTES, fields: Box::default() }),
+    };
+    let delivery = Some(ChangeSpec { checks_must_pass: true, fields: Box::default() });
+    // Open does not offer finish; Finite does. A delivery grant is independent.
+    for (served, outcome, deliver) in [
+        (vec![llm::Served::Wait, host_tool(br#"{"anyOf":[{"type":"object"}]}"#)], empty.clone(), None),
+        (vec![llm::Served::Wait, llm::Served::Deliver], empty.clone(), delivery.clone()),
+        (vec![llm::Served::Wait], contract.clone(), None),
+        (vec![llm::Served::Finish, llm::Served::Wait], empty, None),
+        (vec![llm::Served::Finish, llm::Served::Wait], contract.clone(), None),
+        (vec![llm::Served::Finish, llm::Served::Deliver, host_tool(b"{}")], contract, delivery),
+    ] {
+        let mut backend = active();
+        let Some(FromDomain::Complete { prompt, outcome: result, deliver: grant, .. }) = &mut backend.request else {
+            panic!("request")
+        };
+        prompt.served = served.into_boxed_slice();
+        *result = outcome.clone();
+        *grant = deliver;
+        let tools = backend.tools();
+        let list = mcp::json::tool_list(&tools, backend.settings.mcp.answer_bytes, backend.settings.mcp.schema_bytes)
+            .expect("inventory");
+        let list: serde_json::Value = serde_json::from_slice(&list).expect("MCP list");
+        for tool in list["tools"].as_array().expect("tools") {
+            assert!(tool["inputSchema"].is_object());
+            assert_eq!(tool["inputSchema"]["type"], "object", "{}", tool["name"]);
+        }
+        let expected: serde_json::Value = serde_json::from_slice(
+            &protocol::finish_schema(&outcome, backend.settings.contract_bytes).expect("finish schema"),
+        )
+        .expect("schema JSON");
+        for tool in list["tools"].as_array().expect("tools").iter().filter(|tool| tool["name"] == "finish") {
+            assert_eq!(tool["inputSchema"]["oneOf"], expected["oneOf"]);
+        }
+    }
+}
+
+#[test]
+fn a_host_schema_refusal_names_the_tool_at_startup() {
+    let mut backend = active();
+    let Some(FromDomain::Complete { prompt, .. }) = &mut backend.request else { panic!("request") };
+    prompt.served = Box::new([host_tool(br#"{"type":"string"}"#)]);
+    let mut up = Queue::with_capacity(32);
+    let mut below = Queue::with_capacity(64);
+    backend.prepare_invocation(&env(0), &mut up, &mut below);
+    failed(up.pop(), b"smith: MCP tool input schema is not an object: host_action");
+    assert!(backend.server.is_none());
+    for request in &below {
+        if let Below::Io(io::Request::Listen { .. }) = request {
+            panic!("schema refusal starts no listener");
+        }
+    }
 }
 
 #[test]

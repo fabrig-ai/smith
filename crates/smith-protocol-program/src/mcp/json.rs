@@ -2,7 +2,7 @@
 //! The collector retains complete values; subtree spelling preserves numbers
 //! and decoded strings without guessing spans in escaped source text.
 
-use super::{Call, CallId, PROMPT_TOOL, PROTOCOL_VERSIONS, Tool, Up};
+use super::{Call, CallId, PROMPT_TOOL, PROTOCOL_VERSIONS, Refused, Tool, Up};
 use alloc::boxed::Box;
 use skein_json::{Document, Kind, collector, tokenizer, writer::Encoder};
 use skein_lib::{Env, Intake, List, Queue, Time, Wall, Writer, stream};
@@ -193,44 +193,104 @@ pub(crate) fn text_in(document: &Document, index: Option<u32>) -> Option<&[u8]> 
     text(document, index?)
 }
 
-pub(crate) fn tool_list(tools: &[Tool], bound: u32, schema_bytes: u32) -> Option<Box<[u8]>> {
+// An absent type is narrowed to the object inputs smith already accepts.
+// Explicit non-object types (including type arrays) are refused, not overwritten.
+fn object_type(document: &Document) -> Option<bool> {
+    if document.token(0)?.kind != Kind::ObjectStart {
+        return None;
+    }
+    let mut typed = false;
+    let mut next = 1;
+    for _ in 0..document.len() {
+        let key = document.token(next)?;
+        if key.kind == Kind::ObjectEnd {
+            return Some(typed);
+        }
+        let value = next.checked_add(1)?;
+        if document.text(key)? == b"type" {
+            if typed || text(document, value) != Some(b"object".as_slice()) {
+                return None;
+            }
+            typed = true;
+        }
+        next = after(document, value)?;
+    }
+    None
+}
+
+fn spell_object(encoder: &mut Encoder, document: &Document) {
+    encoder.object_start();
+    encoder.key(b"type");
+    encoder.string(b"object");
+    spell(encoder, document, 1, document.len().checked_sub(1).expect("schema object end"));
+    encoder.object_end();
+}
+
+fn object_schema(document: &Document, bound: u32) -> Option<Box<[u8]>> {
+    let limits = skein_json::writer::Limits { depth: document.len(), length: bound };
+    let mut measure = Encoder::measure(&limits);
+    spell_object(&mut measure, document);
+    let length = measure.measured().ok()?;
+    let mut write = Encoder::write(length, &limits);
+    spell_object(&mut write, document);
+    Some(write.finish())
+}
+
+pub(crate) fn tool_list(tools: &[Tool], bound: u32, schema_bytes: u32) -> Result<Box<[u8]>, Refused> {
     let mut bytes = List::with_capacity(bound);
     for byte in b"{\"tools\":[" {
-        bytes.push(*byte).ok()?;
+        match bytes.push(*byte) {
+            Ok(()) => {}
+            Err(_) => return Err(Refused::TooLarge),
+        }
     }
     for tool in tools {
-        let name = quote(&tool.name, bound)?;
-        let description = quote(&tool.description, bound)?;
-        if tool.input_schema.len() > usize::try_from(schema_bytes.min(bound)).ok()? {
-            return None;
+        let name = quote(&tool.name, bound).ok_or(Refused::TooLarge)?;
+        let description = quote(&tool.description, bound).ok_or(Refused::TooLarge)?;
+        if tool.input_schema.len() > usize::try_from(schema_bytes.min(bound)).expect("u32 schema bound") {
+            return Err(Refused::TooLarge);
         }
-        let schema = collect(&tool.input_schema)?;
-        if schema.token(0)?.kind != Kind::ObjectStart || tool.name.as_ref() == PROMPT_TOOL {
-            return None;
+        let schema = collect(&tool.input_schema).ok_or(Refused::Schema { tool: tool.name.clone() })?;
+        let typed = object_type(&schema).ok_or(Refused::Schema { tool: tool.name.clone() })?;
+        if tool.name.as_ref() == PROMPT_TOOL {
+            return Err(Refused::Schema { tool: tool.name.clone() });
         }
+        let normalized;
+        let input_schema = if typed {
+            tool.input_schema.as_ref()
+        } else {
+            normalized = object_schema(&schema, schema_bytes.min(bound)).ok_or(Refused::TooLarge)?;
+            &normalized
+        };
         let record = join(&[
             b"{\"name\":",
             &name,
             b",\"description\":",
             &description,
             b",\"inputSchema\":",
-            &tool.input_schema,
+            input_schema,
             b"},",
         ]);
         for byte in &record {
-            bytes.push(*byte).ok()?;
+            match bytes.push(*byte) {
+                Ok(()) => {}
+                Err(_) => return Err(Refused::TooLarge),
+            }
         }
     }
     let prompt = b"{\"name\":\"permission_prompt\",\"description\":\"Ask smith before a built-in tool\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"tool_name\":{\"type\":\"string\"},\"input\":{\"type\":\"object\"},\"tool_use_id\":{\"type\":\"string\"}},\"required\":[\"tool_name\",\"input\"]}}]}";
     for byte in prompt {
-        bytes.push(*byte).ok()?;
+        match bytes.push(*byte) {
+            Ok(()) => {}
+            Err(_) => return Err(Refused::TooLarge),
+        }
     }
     let result = bytes.into_boxed();
     // Every legal ID (including a 64-byte one) must fit at startup.
-    if reply(&[b'0'; 64], &result).len() > usize::try_from(bound).ok()? {
-        return None;
+    if reply(&[b'0'; 64], &result).len() > usize::try_from(bound).expect("u32 answer bound") {
+        return Err(Refused::TooLarge);
     }
-    Some(result)
+    Ok(result)
 }
 
 impl super::Server {

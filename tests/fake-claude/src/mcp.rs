@@ -222,7 +222,22 @@ impl Mcp {
             }
             Pending::List => {
                 let tools = value["result"]["tools"].as_array().and_then(|tools| {
-                    tools.iter().map(|tool| tool["name"].as_str().map(str::to_owned)).collect::<Option<Vec<_>>>()
+                    let names = tools
+                        .iter()
+                        .map(|tool| tool["name"].as_str().map(str::to_owned))
+                        .collect::<Option<Vec<_>>>()?;
+                    // Claude Code drops the whole server's inventory if even one
+                    // schema lacks the MCP-required top-level object type.
+                    Some(
+                        if tools
+                            .iter()
+                            .all(|tool| tool["inputSchema"].is_object() && tool["inputSchema"]["type"] == "object")
+                        {
+                            names
+                        } else {
+                            Vec::new()
+                        },
+                    )
                 });
                 match tools {
                     Some(tools) if value.get("error").is_none() => {
@@ -303,7 +318,7 @@ mod tests {
         let mut mcp = Mcp::new();
         mcp.input = Some(input);
         mcp.pending = Some((1, Pending::List));
-        let mut value = json!({"jsonrpc":"2.0", "id":1, "result":{"tools":[{"name":"finish"}]}, "padding":""});
+        let mut value = json!({"jsonrpc":"2.0", "id":1, "result":{"tools":[{"name":"finish","inputSchema":{"type":"object"}}]}, "padding":""});
         let envelope = serde_json::to_vec(&value).expect("JSON").len() + 1;
         value["padding"] = json!("x".repeat(RELAY_LIST_BYTES - envelope));
         let mut bytes = serde_json::to_vec(&value).expect("JSON");
