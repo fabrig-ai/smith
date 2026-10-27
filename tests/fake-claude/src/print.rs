@@ -137,6 +137,7 @@ pub(crate) struct Print {
     config: Config,
     phase: Phase,
     server: String,
+    init: Option<Value>,
     input: Vec<u8>,
     session: Session,
     next_turn: usize,
@@ -184,6 +185,7 @@ impl Print {
             config,
             phase: Phase::Session,
             server: String::new(),
+            init: None,
             input: Vec::new(),
             session: Session::default(),
             next_turn: 0,
@@ -226,7 +228,8 @@ impl Print {
             self.phase = Phase::Idle;
             let mut init = stream::init(&self.story.init, &[], "", &self.flags.values["--model"]);
             init["mcp_servers"] = json!([]);
-            vec![self.emit(init), Effect::ReadCode]
+            self.init = Some(init.clone());
+            vec![self.emit(init), self.emit(stream::status()), Effect::ReadCode]
         } else {
             let Some(root) = self.config.mcp else { return error("cannot read MCP configuration", 1) };
             self.phase = Phase::Configuration;
@@ -401,6 +404,10 @@ impl Print {
                 self.last_text.clear();
                 self.interrupted = false;
                 let mut effects = vec![Effect::Received(received)];
+                if self.next_turn > 1 {
+                    effects.push(self.emit(self.init.clone().expect("initialized conversation")));
+                    effects.push(self.emit(stream::status()));
+                }
                 if let Some(selection) = selection {
                     effects.push(Effect::Seen(selection));
                 }
@@ -462,25 +469,27 @@ impl Print {
             match step {
                 Step::Compact => effects.push(self.emit(json!({"type":"system", "subtype":"compact_boundary"}))),
                 Step::Text(text) => {
+                    if self.texts > 0 {
+                        effects.push(self.emit(stream::status()));
+                    }
                     self.texts = self.texts.checked_add(1).expect("text count fits");
                     let id = self
                         .session.messages
                         .checked_mul(super::fake::FILE_BYTES as usize)
                         .and_then(|base| base.checked_add(self.step))
                         .expect("message id fits");
+                    let assistant = stream::assistant(&text, &self.flags.values["--model"], id, &self.story.usage);
                     if self.flags.values.contains_key("--include-partial-messages") {
-                        effects.extend(
-                            stream::partials(&text, &self.flags.values["--model"], id)
-                                .into_iter()
-                                .map(|value| self.emit(value)),
-                        );
+                        for (index, value) in stream::partials(&text, &self.flags.values["--model"], id).into_iter().enumerate() {
+                            // The complete assistant precedes the block/message stops.
+                            if index == 3 {
+                                effects.push(self.emit(assistant.clone()));
+                            }
+                            effects.push(self.emit(value));
+                        }
+                    } else {
+                        effects.push(self.emit(assistant));
                     }
-                    effects.push(self.emit(stream::assistant(
-                        &text,
-                        &self.flags.values["--model"],
-                        id,
-                        &self.story.usage,
-                    )));
                     self.last_text = text;
                 }
                 Step::Partial(text) => {
@@ -544,7 +553,7 @@ impl Print {
         }
         match self.turn.end.clone() {
             End::Success { structured_output } => {
-                let mut value = json!({"type":"result", "subtype":"success", "is_error":false, "result":self.last_text, "usage":stream::usage(&self.story.usage, self.texts)});
+                let mut value = json!({"type":"result", "subtype":"success", "is_error":false, "terminal_reason":"completed", "stop_reason":"end_turn", "result":self.last_text, "usage":stream::usage(&self.story.usage, self.texts)});
                 if self.flags.values.contains_key("--json-schema")
                     && let Some(output) = structured_output
                 {
@@ -597,20 +606,28 @@ impl Print {
         self.pending = Some(ToolCall { id, tool: if builtin { tool } else { bare }, input, action });
         self.phase = Phase::Calling;
         let mut effects = Vec::new();
+        if self.texts > 1 {
+            effects.push(self.emit(stream::status()));
+        }
         if self.flags.values.contains_key("--include-partial-messages") {
             let message = &assistant["message"];
-            for event in [
+            for (index, event) in [
                 json!({"type":"message_start","message":{"id":message["id"],"role":"assistant","content":[]}}),
                 json!({"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":message["content"][0]["id"],"name":message["content"][0]["name"],"input":{}}}),
                 json!({"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":serde_json::to_string(&message["content"][0]["input"]).expect("tool input JSON")}}),
                 json!({"type":"content_block_stop","index":0}),
                 json!({"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":stream::usage(&self.story.usage,1)}),
                 json!({"type":"message_stop"}),
-            ] {
+            ].into_iter().enumerate() {
+                if index == 3 {
+                    effects.push(self.emit(assistant.clone()));
+                }
                 effects.push(self.emit(json!({"type":"stream_event","event":event})));
             }
+        } else {
+            effects.push(self.emit(assistant));
         }
-        effects.extend([self.emit(assistant), Effect::McpCall { tool: call, input: arguments }]);
+        effects.push(Effect::McpCall { tool: call, input: arguments });
         effects
     }
 
@@ -630,14 +647,22 @@ impl Print {
                 } else {
                     Vec::new()
                 };
-                all_tools.extend(tools.into_iter().map(|tool| format!("mcp__{}__{tool}", self.server)));
+                all_tools.extend(
+                    tools
+                        .into_iter()
+                        .map(|tool| format!("mcp__{}__{tool}", self.server))
+                        .filter(|tool| tool != &self.flags.values["--permission-prompt-tool"]),
+                );
                 all_tools.extend(self.story.init.extra_tools.clone());
                 init["tools"] = json!(all_tools);
+                self.init = Some(init.clone());
                 effects.extend(match self.story.init.delay_ms {
                     Some(after_ms) => {
-                        vec![Effect::DelayedInit { after_ms, bytes: stream::line(init, &self.flags.session) }]
+                        let mut bytes = stream::line(init, &self.flags.session);
+                        bytes.extend(stream::line(stream::status(), &self.flags.session));
+                        vec![Effect::DelayedInit { after_ms, bytes }]
                     }
-                    None => vec![self.emit(init), Effect::ReadCode],
+                    None => vec![self.emit(init), self.emit(stream::status()), Effect::ReadCode],
                 });
                 effects
             }
@@ -774,7 +799,12 @@ impl Print {
         let (pending, call) = self.together.pop_front().expect("nonempty group");
         self.pending = Some(pending);
         self.phase = Phase::Calling;
-        vec![self.emit(assistant), call]
+        let mut effects = Vec::new();
+        if self.texts > 1 {
+            effects.push(self.emit(stream::status()));
+        }
+        effects.extend([self.emit(assistant), call]);
+        effects
     }
 
     fn finish(&mut self, value: Value) -> Vec<Effect> {

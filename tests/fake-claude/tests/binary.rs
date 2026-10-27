@@ -164,6 +164,7 @@ fn the_binary_runs_a_turn() {
     let (_scratch, mut child) = print_child(Story::default());
     let mut reader = BufReader::new(child.stdout.take().expect("output"));
     assert_eq!(read_message(&mut reader)["subtype"], "init");
+    assert_eq!(read_message(&mut reader)["subtype"], "status");
     send_user(&mut child);
     assert_eq!(read_message(&mut reader)["type"], "assistant");
     assert_eq!(read_message(&mut reader)["result"], "Done.");
@@ -180,11 +181,14 @@ fn the_binary_ends_a_turn_on_an_interrupt() {
     let (scratch, mut child) = print_child(story);
     let mut reader = BufReader::new(child.stdout.take().expect("output"));
     assert_eq!(read_message(&mut reader)["subtype"], "init");
+    assert_eq!(read_message(&mut reader)["subtype"], "status");
     send_user(&mut child);
     assert_eq!(read_message(&mut reader)["type"], "assistant");
     signal(&child, "INT", &scratch);
     assert_eq!(read_message(&mut reader)["terminal_reason"], "interrupted");
     send_user(&mut child);
+    assert_eq!(read_message(&mut reader)["subtype"], "init");
+    assert_eq!(read_message(&mut reader)["subtype"], "status");
     assert_eq!(read_message(&mut reader)["type"], "assistant");
     assert_eq!(read_message(&mut reader)["subtype"], "success");
     child.stdin.take();
@@ -200,6 +204,7 @@ fn the_binary_exits_143_on_a_termination() {
     let (scratch, mut child) = print_child(story);
     let mut reader = BufReader::new(child.stdout.take().expect("output"));
     assert_eq!(read_message(&mut reader)["subtype"], "init");
+    assert_eq!(read_message(&mut reader)["subtype"], "status");
     send_user(&mut child);
     assert_eq!(read_message(&mut reader)["type"], "assistant");
     child.stdin.take();
@@ -225,6 +230,7 @@ fn the_binary_connects_to_its_server() {
     let init = read_message(&mut reader);
     assert_eq!(init["mcp_servers"][0]["status"], "connected");
     assert!(init["tools"].as_array().expect("tools").contains(&serde_json::json!("mcp__smith__finish")));
+    assert_eq!(read_message(&mut reader)["subtype"], "status");
     send_user(&mut child);
     assert_eq!(read_message(&mut reader)["message"]["content"][0]["name"], "mcp__smith__finish");
     assert_eq!(read_message(&mut reader)["message"]["content"][0]["content"], "accepted");
@@ -244,9 +250,10 @@ fn the_binary_uses_its_system_prompt_to_select() {
     };
     let (_scratch, mut child) = print_child(story);
     let mut reader = BufReader::new(child.stdout.take().expect("output"));
-    read_message(&mut reader);
+    assert_eq!(read_message(&mut reader)["subtype"], "init");
+    assert_eq!(read_message(&mut reader)["subtype"], "status");
     send_user(&mut child);
-    read_message(&mut reader);
+    assert_eq!(read_message(&mut reader)["type"], "assistant");
     assert_eq!(read_message(&mut reader)["result"], "matched");
     child.stdin.take();
     assert_eq!(child.wait().expect("exit").code(), Some(0));

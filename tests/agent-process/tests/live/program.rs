@@ -317,18 +317,12 @@ fn the_real_program_uses_the_prompt_tool_shape() {
     for _ in 0..1000 {
         let message = live.message();
         if message["type"] == "system" && message["subtype"] == "init" {
-            let tools = message["tools"].as_array().expect("init tools array");
+            assert_eq!(message["tools"], serde_json::json!(["Read"]), "the prompt tool is hidden");
             assert!(
-                tools.len() == 2
-                    && tools.iter().any(|tool| tool == "Read")
-                    && tools.iter().any(|tool| tool == "mcp__smith__permission_prompt"),
-                "init lists exactly the granted built in and prompt tool"
-            );
-            assert!(
-                message
-                    .get("capabilities")
-                    .is_none_or(|capabilities| capabilities.as_array().is_some_and(Vec::is_empty)),
-                "init has no additional capabilities"
+                message["capabilities"]
+                    .as_array()
+                    .is_some_and(|capabilities| capabilities.iter().all(serde_json::Value::is_string)),
+                "init capabilities are strings"
             );
             let servers = message["mcp_servers"].as_array().expect("init MCP servers");
             assert!(
