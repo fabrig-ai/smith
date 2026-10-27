@@ -1,7 +1,7 @@
 //! Live outcome policy beside Smith 04's binary and scripted terminal on the
 //! shared real ring (testing.md, sections 2.3 and 5). No service state is read.
 
-use super::{Process, start};
+use super::{BINARY_WORLD_PATIENCE, Process, start};
 use skein_io::kernel::Exit;
 use skein_lib::{Duration, Time};
 use skein_shell::{Clock, Host};
@@ -17,6 +17,9 @@ use smith_local_process_world::{
 };
 use smith_real_world::{Checkout, Scratch, settled::assert_no_children};
 use std::path::PathBuf;
+
+// Live outcomes are not duration stories; keep the world's existing 262 seconds.
+const LIVE_WORLD_PATIENCE: Duration = Duration::from_secs(262);
 
 pub struct Expectation {
     pub before: Option<Vec<u8>>,
@@ -179,7 +182,7 @@ fn run_with_peer(
     assert_no_children();
     let clock = Clock::new();
     let now = clock.now().now;
-    let budget = if peer.is_some() { Duration::from_secs(10) } else { Duration::from_secs(260) };
+    let patience = if peer.is_some() { BINARY_WORLD_PATIENCE } else { LIVE_WORLD_PATIENCE };
     let mut binary = start(Vec::new(), scratch.path(), Mode::Terminal);
     let streams = binary.take_streams().expect("live controlling terminal");
     let descriptors = streams.descriptors();
@@ -187,7 +190,7 @@ fn run_with_peer(
     let mut world = real::World::new(Judge {
         next_act: None,
         shutdown: false,
-        deadline: now.saturating_add(budget),
+        deadline: now.saturating_add(patience),
         checkout: scratch.checkout(),
         expectation,
         directory: scratch.path().into(),
@@ -212,7 +215,7 @@ fn run_with_peer(
     if let Some(peer) = peer {
         world.spawn(|| Process::Script(Proc::Peer(Box::new(peer))));
     }
-    let outcome = world.run(&clock, budget.saturating_add(Duration::from_secs(2)));
+    let outcome = world.run(&clock, patience);
     assert!(outcome.procs.iter().all(Host::is_empty), "live binary and terminal fully drained");
     assert_no_children();
 }

@@ -1,7 +1,7 @@
 //! A process login over the fake issuer and the shared scripted browser.
-use super::{Process, Ran};
+use super::{Process, Ran, STARTUP_WORLD_PATIENCE};
 use skein_io::kernel::Exit;
-use skein_lib::{Duration, Time};
+use skein_lib::Time;
 use skein_shell::{Clock, Host};
 use skein_world::{
     Referee,
@@ -93,13 +93,13 @@ pub fn sign_in(scratch: &Scratch) -> Ran {
     )
     .expect("login pipes");
     let mut world =
-        real::World::new(LoginJudge { deadline: now.saturating_add(Duration::from_secs(2)), visited: false });
+        real::World::new(LoginJudge { deadline: now.saturating_add(STARTUP_WORLD_PATIENCE), visited: false });
     world.spawn_with_fds(binary.descriptors(), || Process::Binary(Box::new(binary)));
     world.spawn(|| {
         Process::Script(Proc::Issuer(Box::new(IssuerProcess::at(skein_fake_peers::Transport::Plaintext, 34_444))))
     });
     world.spawn(|| Process::Script(Proc::Browser(Box::new(BrowserProcess::new()))));
-    let outcome = world.run(&clock, Duration::from_secs(4));
+    let outcome = world.run(&clock, STARTUP_WORLD_PATIENCE);
     assert!(outcome.procs.iter().all(Host::is_empty), "login and neighbours drain");
     let Process::Binary(binary) = outcome.procs.first().expect("binary") else { unreachable!("binary") };
     assert_eq!(binary.exit_status(), Some(Exit::Code(0)), "native login succeeds");
