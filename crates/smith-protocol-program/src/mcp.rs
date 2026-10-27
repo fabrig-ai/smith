@@ -42,7 +42,7 @@ pub const PROTOCOL_VERSIONS: [&str; 4] = ["2025-11-25", "2025-06-18", "2025-03-2
 pub struct Tool {
     pub name: Box<[u8]>,
     pub description: Box<[u8]>,
-    /// One complete JSON object.
+    /// One complete JSON Schema object; MCP adds an absent object type.
     pub input_schema: Box<[u8]>,
 }
 
@@ -106,9 +106,14 @@ pub enum Verdict {
     Deny { message: Box<[u8]> },
 }
 
-/// Startup tool records exceed the schema or tool-list bound (programs.md, 5.3).
+/// Startup refusal returned to the backend before any listener (programs.md, 5.3).
 #[derive(Debug)]
-pub struct TooLarge;
+pub enum Refused {
+    /// The tool inventory exceeds a configured schema or answer bound.
+    TooLarge,
+    /// The named tool cannot be served as an MCP object schema.
+    Schema { tool: Box<[u8]> },
+}
 
 #[derive(Debug)]
 struct Pending {
@@ -207,9 +212,9 @@ impl Server {
         tools: Box<[Tool]>,
         limits: Limits,
         below: &mut Queue<io::Request>,
-    ) -> Result<Self, TooLarge> {
+    ) -> Result<Self, Refused> {
         assert!(limits.calls > 0 && limits.message_bytes > 0, "positive MCP admission bounds");
-        let tool_list = json::tool_list(&tools, limits.answer_bytes, limits.schema_bytes).ok_or(TooLarge)?;
+        let tool_list = json::tool_list(&tools, limits.answer_bytes, limits.schema_bytes)?;
         let second = Token::new(first.raw().checked_add(1).expect("MCP token range"));
         let third = Token::new(first.raw().checked_add(2).expect("MCP token range"));
         let calls = u32::from(limits.calls);

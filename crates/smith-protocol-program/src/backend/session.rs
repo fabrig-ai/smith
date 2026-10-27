@@ -252,13 +252,17 @@ impl Backend {
             let entropy: [u8; 32] = self.names.mcp.expose().try_into().expect("MCP entropy");
             match crate::mcp::Server::new(self.first, 0, &entropy, self.tools(), self.settings.mcp, &mut self.io) {
                 Ok(server) => self.server = Some(server),
-                Err(_) => self.fail(
+                Err(crate::mcp::Refused::TooLarge) => self.fail(
                     env,
                     llm::Failure::Program { exit: None },
                     b"smith: MCP inventory exceeds bounds",
                     up,
                     below,
                 ),
+                Err(crate::mcp::Refused::Schema { tool }) => {
+                    let detail = crate::mcp::json::join(&[b"smith: MCP tool input schema is not an object: ", &tool]);
+                    self.fail(env, llm::Failure::Program { exit: None }, &detail, up, below);
+                }
             }
         }
     }

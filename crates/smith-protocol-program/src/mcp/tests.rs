@@ -269,6 +269,76 @@ fn the_tool_list_ends_with_the_prompt_tool() {
 }
 
 #[test]
+fn untyped_tool_schemas_gain_only_the_object_type() {
+    for schema in [
+        value!({}),
+        value!({"properties":{"input":{"type":"string"}},"required":["input"]}),
+        value!({"oneOf":[{"type":"object","required":["answer"]}]}),
+        value!({"anyOf":[{"type":"object"},{"type":"object","required":["answer"]}]}),
+        value!({"type":"object","properties":{"type":{"type":"string"}}}),
+    ] {
+        let mut tool = tool();
+        tool.input_schema = serde_json::to_vec(&schema).expect("schema JSON").into();
+        let bytes = json::tool_list(&[tool], limits().answer_bytes, limits().schema_bytes).expect("object schema");
+        let list: Value = serde_json::from_slice(&bytes).expect("tool list");
+        let mut expected = schema;
+        expected["type"] = value!("object");
+        assert_eq!(list["tools"][0]["inputSchema"], expected);
+    }
+}
+
+#[test]
+fn incompatible_tool_schemas_are_named_before_listening() {
+    for schema in [
+        br#"{"type":"string"}"#.as_slice(),
+        br#"{"type":["object","null"]}"#,
+        br#"{"type":"object","type":"string"}"#,
+        b"true",
+        b"[]",
+        b"{",
+    ] {
+        let mut tool = tool();
+        tool.name = b"host_action".as_slice().into();
+        tool.input_schema = schema.into();
+        let mut below = Queue::with_capacity(8);
+        let refusal = Server::new(FIRST, 0, &[7; 32], Box::new([tool]), limits(), &mut below).expect_err("bad schema");
+        match refusal {
+            super::Refused::Schema { tool } => assert_eq!(tool.as_ref(), b"host_action"),
+            super::Refused::TooLarge => panic!("schema refusal names the tool"),
+        }
+        assert!(below.is_empty());
+    }
+}
+
+#[test]
+fn normalized_schemas_stay_within_the_schema_bound() {
+    let normalized = br#"{"type":"object"}"#;
+    let schema_bytes = u32::try_from(normalized.len()).expect("normalized empty object length");
+    let mut untyped = tool();
+    untyped.input_schema = b"{}".as_slice().into();
+    let mut below = Queue::with_capacity(8);
+    let _server = Server::new(FIRST, 0, &[7; 32], Box::new([untyped]), Limits { schema_bytes, ..limits() }, &mut below)
+        .expect("normalized schema at its bound");
+    drain(&mut below);
+    let mut untyped = tool();
+    untyped.input_schema = b"{}".as_slice().into();
+    let refusal = Server::new(
+        FIRST,
+        0,
+        &[7; 32],
+        Box::new([untyped]),
+        Limits { schema_bytes: schema_bytes - 1, ..limits() },
+        &mut below,
+    )
+    .expect_err("normalized schema one byte past its bound");
+    match refusal {
+        super::Refused::TooLarge => {}
+        super::Refused::Schema { .. } => panic!("valid schema exceeds its size bound"),
+    }
+    assert!(below.is_empty());
+}
+
+#[test]
 fn a_call_is_told_up_then_answered() {
     let mut h = Harness::new();
     h.connect();
