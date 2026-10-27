@@ -27,6 +27,10 @@ impl Live {
     }
 
     fn start_options(text: &str, permission: bool, thinking: bool) -> Self {
+        Self::start_configured(text, permission, thinking, None)
+    }
+
+    fn start_configured(text: &str, permission: bool, thinking: bool, schema: Option<&str>) -> Self {
         let root = std::env::var_os("SMITH_LIVE").filter(|value| !value.is_empty()).expect("$SMITH_LIVE unset");
         let root = smith_bench::guard::write_path(std::path::Path::new(&root)).expect("guarded $SMITH_LIVE");
         let configuration = std::env::var_os("SMITH_LIVE_CLAUDE")
@@ -38,16 +42,20 @@ impl Live {
             "no configured Claude directory: set SMITH_LIVE_CLAUDE or prepare $SMITH_LIVE/programs/claude"
         );
         let probe = Probe::new();
-        let mcp = if permission || thinking { prompt_server(&probe, thinking) } else { r#"{"mcpServers":{}}"#.into() };
+        let mcp = if permission || thinking || schema.is_some() {
+            prompt_server(&probe, thinking || schema.is_some())
+        } else {
+            r#"{"mcpServers":{}}"#.into()
+        };
         let mut arguments = vec![
             "--session-id",
             &probe.session,
             "--mcp-config",
             &mcp,
             "--tools",
-            if permission { "Read" } else { "" },
+            if permission || schema.is_some() { "Read" } else { "" },
             "--max-turns",
-            if permission || thinking { "4" } else { "1" },
+            if permission || thinking || schema.is_some() { "4" } else { "1" },
         ];
         if permission {
             arguments.extend([
@@ -59,6 +67,9 @@ impl Live {
         }
         if thinking {
             arguments.extend(["--effort", "high", "--settings", r#"{"permissions":{"allow":["mcp__smith"]}}"#]);
+        }
+        if let Some(schema) = schema {
+            arguments.extend(["--json-schema", schema, "--settings", r#"{"permissions":{"allow":["mcp__smith"]}}"#]);
         }
         let (child, messages) = Self::spawn_model(
             &probe.home,
@@ -456,4 +467,66 @@ fn a_live_thinking_turn_has_the_fakes_shape() {
         }
     }
     panic!("thinking probe did not finish");
+}
+
+#[test]
+fn a_live_result_contract_lists_and_calls_structured_output() {
+    // Same bounded record allowance as the other live turn probes.
+    const TURN_RECORDS: usize = 1000;
+    const SCHEMA: &str = r#"{"type":"object","properties":{"answer":{"const":"hi"}},"required":["answer"],"additionalProperties":false}"#;
+    let mut live = Live::start_configured(
+        "First call mcp__smith__echo with text hi. Then return the structured answer with answer equal to hi.",
+        false,
+        false,
+        Some(SCHEMA),
+    );
+    let mut initialized = false;
+    let mut echo = false;
+    let mut last_call = None;
+    let mut structured_id = None;
+    let mut answered = false;
+    for _ in 0..TURN_RECORDS {
+        let record = live.message();
+        if record["type"] == "system" && record["subtype"] == "init" {
+            let tools = record["tools"].as_array().expect("init tools");
+            assert!(tools.iter().any(|tool| tool == "Read"));
+            assert!(tools.iter().any(|tool| tool == "StructuredOutput"));
+            initialized = true;
+        }
+        if record["type"] == "assistant" {
+            for block in record["message"]["content"].as_array().expect("assistant blocks") {
+                if block["type"] == "tool_use" {
+                    let name = block["name"].as_str().expect("call name");
+                    last_call = Some(name.to_owned());
+                    echo |= name == "mcp__smith__echo";
+                    if name == "StructuredOutput" {
+                        assert_eq!(block["input"], serde_json::json!({"answer":"hi"}));
+                        structured_id = Some(block["id"].as_str().expect("call ID").to_owned());
+                    }
+                }
+            }
+        }
+        if record["type"] == "user"
+            && let Some(blocks) = record["message"]["content"].as_array()
+        {
+            for block in blocks {
+                if block["type"] == "tool_result"
+                    && block["tool_use_id"].as_str() == structured_id.as_deref()
+                    && structured_id.is_some()
+                {
+                    assert_ne!(block["is_error"], true);
+                    answered = true;
+                }
+            }
+        }
+        if record["type"] == "result" {
+            assert!(initialized && echo && answered, "init, MCP echo and program-owned result arrived");
+            assert_eq!(last_call.as_deref(), Some("StructuredOutput"));
+            assert_eq!(record["is_error"], false);
+            assert_eq!(record["structured_output"], serde_json::json!({"answer":"hi"}));
+            live.close_input();
+            return;
+        }
+    }
+    panic!("result contract probe did not finish");
 }

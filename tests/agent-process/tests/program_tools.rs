@@ -272,6 +272,11 @@ fn a_nested_host_input_is_told_and_answered() {
 const THINKING_MESSAGES: u32 = 2;
 const THINKING_SPEND: u64 = 2;
 
+// Finite adds the program's StructuredOutput message and the synthetic finish;
+// the synthetic finish has zero usage, so only three messages spend tokens.
+const FINITE_THINKING_MESSAGES: u32 = 4;
+const FINITE_THINKING_SPEND: u64 = 3;
+
 fn thinking_story() -> Story {
     Story {
         turns: vec![Turn {
@@ -293,9 +298,9 @@ fn thinking_story() -> Story {
     }
 }
 
-fn thinking_reply(run: &Run) {
-    assert_eq!(run.answer().expect("answer").turns(), THINKING_MESSAGES);
-    assert_eq!(run.answer().expect("answer").spent(), THINKING_SPEND);
+fn thinking_reply(run: &Run, messages: u32, spend: u64) {
+    assert_eq!(run.answer().expect("answer").turns(), messages);
+    assert_eq!(run.answer().expect("answer").spent(), spend);
     assert!(run.seen.contains(&Seen::Called { tool: "lookup".into(), error: false }));
     let result = told_result(run, b"lookup", &json!({}));
     let smith_transcript::Returned::Said(said) = result.returned() else { panic!("host answer") };
@@ -325,12 +330,16 @@ fn thinking_reply(run: &Run) {
 fn a_finite_thinking_turn_calls_then_replies_once() {
     let run = run(&thinking_story());
     accepted(&run);
-    thinking_reply(&run);
+    thinking_reply(&run, FINITE_THINKING_MESSAGES, FINITE_THINKING_SPEND);
+    let result = told_result(&run, b"StructuredOutput", &json!({"form":"report","text":"done","fields":{}}));
+    let smith_transcript::Returned::Said(said) = result.returned() else { panic!("program result") };
+    assert_eq!(said.text(), b"Structured output accepted");
+    assert!(!said.error());
 }
 
 #[test]
 fn an_open_thinking_turn_calls_then_replies_once() {
     let run = program_world::open(&thinking_story(), &charter_mode(smith_charter::Mode::Open), &[]);
     assert!(matches!(run.answer().expect("answer").result(), RunResult::Parked), "{:?}", run.answer());
-    thinking_reply(&run);
+    thinking_reply(&run, THINKING_MESSAGES, THINKING_SPEND);
 }
