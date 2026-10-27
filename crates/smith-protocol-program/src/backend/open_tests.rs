@@ -194,6 +194,25 @@ fn a_yield_interrupts_and_returns_the_held_completion() {
 }
 
 #[test]
+fn a_yield_explains_the_next_finishing_note() {
+    let (mut backend, mut up, mut below) = running_with_queues();
+    backend.yield_for_wind_down(&env(0), &mut up, &mut below);
+    result(&mut backend, &mut up, &mut below);
+    while backend.pop_measure().is_some() {}
+    let mut next = request(&backend);
+    let FromDomain::Complete { prompt, .. } = &mut next else { panic!("complete") };
+    prompt.choice = llm::ToolChoice::None;
+    prompt.messages = Box::new([user(b"Reply now with what you have")]);
+    backend.resume(&env(0), next, &mut up, &mut below);
+    let note: serde_json::Value =
+        serde_json::from_slice(backend.outgoing.as_ref().expect("finishing input")).expect("user line");
+    assert_eq!(
+        note["message"]["content"],
+        "(The agent paused your last turn to send the finishing note.)\nReply now with what you have\n"
+    );
+}
+
+#[test]
 fn a_yield_without_an_outstanding_completion_is_ignored() {
     let (mut backend, mut up, mut below) = running_with_queues();
     backend.owner = None;

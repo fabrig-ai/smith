@@ -110,6 +110,11 @@ fn the_wind_down_requests_one_interrupt() {
     backend.flush(&mut below);
     assert!(backend.winding == stop::WindDown::Finishing);
     assert_eq!(backend.phase, Phase::Running);
+    let note: serde_json::Value = serde_json::from_slice(backend.outgoing.as_ref().expect("finishing note")).unwrap();
+    assert_eq!(
+        note["message"]["content"],
+        "(The agent paused your last turn to send the finishing note.)\nfinish now\n"
+    );
     let mut second = request(&backend);
     let FromDomain::Complete { prompt, .. } = &mut second else { panic!("complete") };
     prompt.choice = llm::ToolChoice::Only(Box::new([llm::Served::Finish]));
@@ -331,24 +336,34 @@ fn streaming_during_wind_down_keeps_the_stop_grace() {
 #[test]
 fn a_tail_checks_its_exact_encoded_length() {
     let backend = active();
-    let FromDomain::Complete { mut prompt, .. } = request(&backend) else { panic!("complete") };
-    let mut text = (0_u8..=127).collect::<alloc::vec::Vec<_>>();
-    text.extend_from_slice("é水".as_bytes());
-    let mut expected = text.clone();
-    expected.push(b'\n');
-    prompt.messages = Box::new([llm::Message {
-        role: llm::Role::User,
-        content: Box::new([llm::Block::Text { text: text.into(), replay: None }]),
-    }]);
-    let encoded = mcp::json::join(&[
-        b"{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":",
-        &serde_json::to_vec(core::str::from_utf8(&expected).unwrap()).unwrap(),
-        b"}}\n",
-    ]);
-    let length = u32::try_from(encoded.len()).unwrap();
-    assert!(tail::render(&mut prompt, &backend.ledger, &backend.settings.adapter, length - 1).is_none());
-    assert_eq!(tail::render(&mut prompt, &backend.ledger, &backend.settings.adapter, length).unwrap(), encoded);
-    assert!(prompt.messages.is_empty());
+    for prefix in [b"".as_slice(), b"(The agent paused your last turn to send the finishing note.)\n"] {
+        let FromDomain::Complete { mut prompt, .. } = request(&backend) else { panic!("complete") };
+        let mut text = (0_u8..=127).collect::<alloc::vec::Vec<_>>();
+        text.extend_from_slice("é水".as_bytes());
+        let mut expected = prefix.to_vec();
+        expected.extend_from_slice(&text);
+        expected.push(b'\n');
+        prompt.messages = Box::new([llm::Message {
+            role: llm::Role::User,
+            content: Box::new([llm::Block::Text { text: text.into(), replay: None }]),
+        }]);
+        let encoded = mcp::json::join(&[
+            b"{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":",
+            &serde_json::to_vec(core::str::from_utf8(&expected).unwrap()).unwrap(),
+            b"}}\n",
+        ]);
+        let length = u32::try_from(encoded.len()).unwrap();
+        assert!(
+            tail::render_observed(&mut prompt, &backend.ledger, &backend.settings.adapter, length - 1, prefix, true)
+                .is_none()
+        );
+        let rendered =
+            tail::render_observed(&mut prompt, &backend.ledger, &backend.settings.adapter, length, prefix, true)
+                .unwrap();
+        assert_eq!(rendered.line, encoded);
+        assert_eq!(rendered.text.as_deref(), Some(expected.as_slice()));
+        assert!(prompt.messages.is_empty());
+    }
 }
 
 #[test]
@@ -506,7 +521,7 @@ fn a_control_interrupt_keeps_the_process_for_the_note() {
         sent_lines(&below),
         [
             serde_json::json!({"type":"control_request","request_id":"smith-1","request":{"subtype":"interrupt"}}),
-            serde_json::json!({"type":"user","message":{"role":"user","content":"finish now\n"}}),
+            serde_json::json!({"type":"user","message":{"role":"user","content":"(The agent paused your last turn to send the finishing note.)\nfinish now\n"}}),
         ]
     );
     assert_eq!(backend.child, Some(Token::new(30)));

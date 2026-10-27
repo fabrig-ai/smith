@@ -52,6 +52,11 @@ fn story(turns: Vec<Turn>) -> Story {
 fn run(turns: Vec<Turn>, releases: &[HostMessage]) -> Run {
     program_world::open(&story(turns), &open_charter(), releases)
 }
+
+fn resume(old: &Run, turns: Vec<Turn>) -> Run {
+    program_world::open_with_window(&story(turns), &open_charter(), &[], Some(&program_world::from_frames(&old.frames)))
+}
+
 fn host(when: When, finish_requested: bool) -> HostMessage {
     HostMessage { when, text: "Please continue with this message".into(), finish_requested }
 }
@@ -149,16 +154,12 @@ fn a_message_while_it_listens_is_the_programs_next_turn() {
 #[test]
 fn a_parked_open_run_resumes_its_program_session() {
     let old = run(vec![text("Hello.")], &[]);
-    let run = program_world::open_with_window(
-        &story(vec![text("Resumed.")]),
-        &open_charter(),
-        &[],
-        Some(&program_world::from_frames(&old.frames)),
-    );
+    let run = resume(&old, vec![text("Resumed.")]);
     parked(&run);
     assert_eq!(texts(&run), ["Resumed."]);
     assert_eq!(prints(&run).len(), 1);
     assert_eq!(argument(prints(&run)[0], "--resume"), argument(prints(&old)[0], "--session-id"));
+    assert!(!received_text(&run, 0).starts_with("(The agent paused"), "the saved turn ended naturally");
 }
 
 #[test]
@@ -174,10 +175,16 @@ fn an_open_turn_with_no_text_is_nudged() {
 
 #[test]
 fn a_park_while_held_on_wait_interrupts_the_turn() {
-    let run = run(vec![turn(vec![Step::Call { tool: "wait".into(), input: serde_json::json!({}) }])], &[]);
+    let old = run(vec![turn(vec![Step::Call { tool: "wait".into(), input: serde_json::json!({}) }])], &[]);
+    parked(&old);
+    assert!(old.seen.contains(&Seen::Interrupted));
+    assert!(!old.seen.contains(&Seen::Terminated));
+    let run = resume(&old, vec![text("Resumed.")]);
     parked(&run);
-    assert!(run.seen.contains(&Seen::Interrupted));
-    assert!(!run.seen.contains(&Seen::Terminated));
+    assert!(
+        received_text(&run, 0).starts_with("(The agent paused your last turn: the run was parked and has resumed.)\n")
+    );
+    assert_eq!(texts(&run), ["Resumed."]);
 }
 
 #[test]
@@ -188,6 +195,7 @@ fn a_finish_request_while_it_listens_winds_down_to_a_last_reply() {
     assert_eq!(run.received.len(), 2);
     assert!(received_text(&run, 1).contains("Reply now with what you have"));
     assert!(received_text(&run, 1).contains("Please continue with this message"));
+    assert!(!received_text(&run, 1).starts_with("(The agent paused"), "the preceding turn ended naturally");
     assert_eq!(waitings(&run), [Some(0), Some(1)]);
     assert_eq!(*run.answer().expect("parked").last_read(), Some(1));
 }
@@ -208,6 +216,7 @@ fn a_finish_request_mid_turn_interrupts_then_takes_the_last_reply() {
     assert!(run.seen.contains(&Seen::Interrupted));
     assert!(!run.seen.contains(&Seen::Terminated));
     assert!(run.seen.contains(&Seen::Called { tool: "wait".into(), error: true }));
+    assert!(received_text(&run, 1).starts_with("(The agent paused your last turn to send the finishing note.)\n"));
     assert!(received_text(&run, 1).contains("Reply now with what you have"));
     assert!(received_text(&run, 1).contains("Please continue with this message"));
     assert_eq!(texts(&run).last().expect("last text"), "Last reply.");

@@ -1,6 +1,7 @@
 //! One user message for a program's tail (protocol/programs.md 5.7–5.8).
 //! Borrows messages after the last assistant, measuring escaped bytes before
-//! allocating the exact JSON line. No unescaped tail or quoted copy is kept.
+//! allocating the exact JSON line, including an optional agent pause reason
+//! (protocol/programs.md 5.9). No unescaped tail or quoted copy is kept.
 //! An opted-in capture is the queued Prompt's separately priced owned payload;
 //! it moves into the measure without another text copy.
 
@@ -25,7 +26,7 @@ pub(super) fn render(
     limits: &protocol::Limits,
     maximum: u32,
 ) -> Option<Box<[u8]>> {
-    let Rendered { line, .. } = render_observed(prompt, ledger, limits, maximum, false)?;
+    let Rendered { line, .. } = render_observed(prompt, ledger, limits, maximum, b"", false)?;
     Some(line)
 }
 
@@ -35,6 +36,7 @@ pub(super) fn render_observed(
     ledger: &List<calls::Call>,
     limits: &protocol::Limits,
     maximum: u32,
+    prefix: &[u8],
     capture: bool,
 ) -> Option<Rendered> {
     let mut from = 0;
@@ -75,7 +77,7 @@ pub(super) fn render_observed(
         }
     }
     let mut measured = Output { length: 0, maximum, bytes: None, text_length: 0, capture: None };
-    if message(&mut measured, &messages, prompt, from, ledger, limits).is_none() {
+    if message(&mut measured, &messages, prompt, from, ledger, limits, prefix).is_none() {
         prompt.messages = messages;
         return None;
     }
@@ -86,7 +88,7 @@ pub(super) fn render_observed(
         text_length: 0,
         capture: if capture { Some(List::with_capacity(measured.text_length)) } else { None },
     };
-    message(&mut output, &messages, prompt, from, ledger, limits)?;
+    message(&mut output, &messages, prompt, from, ledger, limits, prefix)?;
     prompt.messages = Box::new([]);
     let text = match output.capture {
         Some(text) => Some(text.into_boxed()),
@@ -102,8 +104,10 @@ fn message(
     from: usize,
     ledger: &List<calls::Call>,
     limits: &protocol::Limits,
+    prefix: &[u8],
 ) -> Option<()> {
     output.put(OPEN)?;
+    output.text(prefix)?;
     for message in messages.iter().skip(from) {
         for block in &message.content {
             match block {
