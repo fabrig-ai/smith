@@ -125,6 +125,23 @@ fn a_turn_without_finish_ends_with_its_structured_output() {
         Some(MCP),
     );
     assert_eq!(results(&run)[0]["structured_output"], json!({"done":true}));
+    let records = messages(&run);
+    assert_eq!(records[0]["tools"], json!(["Read", "Bash", "StructuredOutput"]));
+    assert_eq!(
+        records.iter().map(|record| record["type"].as_str().expect("record type")).collect::<Vec<_>>(),
+        ["system", "system", "assistant", "user", "result"]
+    );
+    let call = &records[2]["message"]["content"][0];
+    assert_eq!(call["name"], "StructuredOutput");
+    assert_eq!(call["input"], json!({"done":true}));
+    let result = &records[3]["message"]["content"][0];
+    assert_eq!(result["type"], "tool_result");
+    assert_eq!(result["tool_use_id"], call["id"]);
+    assert_eq!(result["is_error"], false);
+    assert!(run.calls.is_empty(), "the program answers StructuredOutput itself");
+    let heap = run.heap.expect("world checks memory");
+    eprintln!("structured output process (peak, envelope): {heap:?}");
+    assert!(heap.iter().all(|(peak, envelope)| peak <= envelope));
 }
 
 #[test]

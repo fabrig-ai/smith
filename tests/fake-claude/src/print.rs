@@ -586,6 +586,11 @@ impl Print {
         }
         match self.turn.end.clone() {
             End::Success { structured_output } => {
+                if self.flags.values.contains_key("--json-schema")
+                    && let Some(output) = &structured_output
+                {
+                    effects.extend(self.structured_output(output));
+                }
                 let mut value = json!({"type":"result", "subtype":"success", "is_error":false, "terminal_reason":"completed", "stop_reason":"end_turn", "result":self.last_text, "usage":stream::usage(&self.story.usage, self.texts)});
                 if self.thinking_tokens > 0 {
                     value["usage"]["output_tokens_details"] = json!({"thinking_tokens":self.thinking_tokens});
@@ -607,6 +612,28 @@ impl Print {
             End::Exit(code) => effects.push(Effect::End(code)),
             End::Undecodable => effects.extend([Effect::Output(b"not json\n".to_vec()), Effect::End(1)]),
         }
+        effects
+    }
+
+    fn structured_output(&mut self, output: &Value) -> Vec<Effect> {
+        self.next_tool = self.next_tool.checked_add(1).expect("tool ID fits");
+        self.texts = self.texts.checked_add(1).expect("message count fits");
+        let id = format!("toolu_{}", self.next_tool);
+        let message_id = self
+            .session
+            .messages
+            .checked_mul(super::fake::FILE_BYTES as usize)
+            .and_then(|base| base.checked_add(self.step))
+            .expect("message ID fits");
+        let mut assistant = stream::assistant("", &self.flags.values["--model"], message_id, &self.story.usage);
+        assistant["message"]["content"] =
+            json!([{"type":"tool_use","id":id,"name":"StructuredOutput","input":output,"caller":{"type":"direct"}}]);
+        let mut effects = Vec::new();
+        if self.texts > 1 {
+            effects.push(self.emit(stream::status()));
+        }
+        effects.extend(self.message(assistant, None));
+        effects.push(self.emit(json!({"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":id,"content":"Structured output accepted","is_error":false}]}})));
         effects
     }
 
@@ -662,6 +689,9 @@ impl Print {
                     stream::init(&self.story.init, &self.flags.tools, &self.server, &self.flags.values["--model"]);
                 init["mcp_servers"][0]["status"] = json!(if connected { "connected" } else { "failed" });
                 let mut all_tools = self.flags.tools.clone();
+                if self.flags.values.contains_key("--json-schema") {
+                    all_tools.push("StructuredOutput".into());
+                }
                 let mut effects = if self.story.observe_tools {
                     vec![Effect::Seen(Seen::Tools { names: tools.clone() })]
                 } else {
