@@ -50,6 +50,9 @@ pub(super) fn init(bytes: &[u8], tools: &[mcp::Tool], depth: u32, tokens: u32) -
         && checked_init(bytes, tools, depth, tokens) == Some(())
 }
 
+/// The owner's Claude Code 2.1.311 probe (`reports/live-claude-shapes.md`,
+/// system/init) hides the permission-prompt tool even though it remains callable.
+/// Accept it absent or listed once, alongside every declared server tool.
 pub(super) fn checked_init(bytes: &[u8], tools: &[mcp::Tool], depth: u32, tokens: u32) -> Option<()> {
     let document = json::collect_limited(bytes, limits(u32::try_from(bytes.len()).ok()?, depth, tokens))?;
     if json::text_in(&document, json::field(&document, 0, b"type"))? != b"system"
@@ -74,6 +77,7 @@ pub(super) fn checked_init(bytes: &[u8], tools: &[mcp::Tool], depth: u32, tokens
     }
     let mut index = listed.checked_add(1)?;
     let mut count = 0_usize;
+    let mut prompt_listed = false;
     for _ in 0..document.len() {
         if document.token(index)?.kind == Kind::ArrayEnd {
             break;
@@ -88,6 +92,9 @@ pub(super) fn checked_init(bytes: &[u8], tools: &[mcp::Tool], depth: u32, tokens
             None => return None,
         };
         let mut known = suffix == mcp::PROMPT_TOOL;
+        if known {
+            prompt_listed = true;
+        }
         for tool in tools {
             if suffix == tool.name.as_ref() {
                 known = true;
@@ -105,11 +112,15 @@ pub(super) fn checked_init(bytes: &[u8], tools: &[mcp::Tool], depth: u32, tokens
         index = index.checked_add(1)?;
         count = count.checked_add(1)?;
     }
-    if count != tools.len().checked_add(1)? {
+    if count != tools.len().checked_add(usize::from(prompt_listed))? {
         return None;
     }
     Some(())
 }
+
+#[cfg(test)]
+#[path = "stream_tests.rs"]
+pub(super) mod tests;
 
 pub(super) fn user_message(prompt: &llm::Prompt, maximum: u32) -> Option<Box<[u8]>> {
     let limits = skein_json::writer::Limits { depth: 8, length: maximum.checked_sub(1)? };

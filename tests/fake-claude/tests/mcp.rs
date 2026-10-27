@@ -34,7 +34,7 @@ fn init_reports_the_configured_server_connected_with_its_tools() {
     let run = print::with_server(Story::default(), print::invocation(0), script(Answer::Text("done".into())));
     let init = &messages(&run)[0];
     assert_eq!(init["mcp_servers"], json!([{"name":"smith", "status":"connected"}]));
-    assert_eq!(init["tools"], json!(["Read", "Bash", "mcp__smith__finish", "mcp__smith__prompt"]));
+    assert_eq!(init["tools"], json!(["Read", "Bash", "mcp__smith__finish"]));
     assert_eq!(run.server_exit, Some(Exit::Code(0)));
 }
 
@@ -65,7 +65,7 @@ fn a_server_tool_call_returns_its_answer_to_the_model() {
         print::invocation(1),
         script(Answer::Text("accepted".into())),
     );
-    let message = &messages(&run)[1]["message"];
+    let message = &messages(&run)[2]["message"];
     assert_eq!(
         message["content"][0],
         json!({"type":"tool_use", "id":"toolu_1", "name":"mcp__smith__finish", "input":{"answer":"private-value"}})
@@ -83,7 +83,7 @@ fn a_server_tool_call_returns_its_answer_to_the_model() {
 fn a_builtin_call_asks_the_prompt_tool_first() {
     let run = print::with_server(story(vec![builtin()]), print::invocation(1), ServerScript::default());
     assert_eq!(run.calls, ["prompt"]);
-    let message = &messages(&run)[1]["message"]["content"][0];
+    let message = &messages(&run)[2]["message"]["content"][0];
     assert_eq!(message["name"], "Read");
     assert_eq!(message["id"], tool_result(&run)["tool_use_id"]);
     assert_eq!(

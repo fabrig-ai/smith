@@ -25,11 +25,11 @@ fn a_print_run_starts_with_its_init() {
     let mut story = Story::default();
     story.init.extra_tools.push("ungranted".into());
     story.init.extra_servers.push("other".into());
-    story.init.capabilities.push("stream".into());
+    story.init.capabilities = vec!["stream".into()];
     let run = normal(story, 0);
     let init = &messages(&run)[0];
     assert_eq!(init["subtype"], "init");
-    assert_eq!(init["tools"], json!(["Read", "Bash", "mcp__smith__prompt", "ungranted"]));
+    assert_eq!(init["tools"], json!(["Read", "Bash", "ungranted"]));
     assert_eq!(
         init["mcp_servers"],
         json!([{"name":"smith", "status":"connected"}, {"name":"other", "status":"connected"}])
@@ -74,29 +74,40 @@ fn partial_messages_come_only_when_asked() {
     let run = print::run(Story::default(), invocation, None, Some(MCP));
     let messages = messages(&run);
     assert_eq!(
-        messages[1..6].iter().map(|message| message["event"]["type"].as_str().expect("event")).collect::<Vec<_>>(),
-        ["message_start", "content_block_start", "content_block_delta", "content_block_stop", "message_stop"]
+        messages
+            .iter()
+            .filter(|message| message["type"] == "stream_event")
+            .map(|message| message["event"]["type"].as_str().expect("event"))
+            .collect::<Vec<_>>(),
+        [
+            "message_start",
+            "content_block_start",
+            "content_block_delta",
+            "content_block_stop",
+            "message_delta",
+            "message_stop"
+        ]
     );
-    assert_eq!(messages[6]["type"], "assistant");
+    assert_eq!(messages[5]["type"], "assistant");
 }
 
 #[test]
 fn a_usage_limit_is_told_with_its_reset() {
     let run = normal(story(vec![Step::RateLimit { resets_at: Some(123) }], End::default()), 1);
-    assert_eq!(messages(&run)[1]["rate_limit_info"], json!({"status":"rejected", "resetsAt":123}));
+    assert_eq!(messages(&run)[2]["rate_limit_info"], json!({"status":"rejected", "resetsAt":123}));
 }
 
 #[test]
 fn a_usage_limit_is_told_without_a_reset() {
     let run = normal(story(vec![Step::RateLimit { resets_at: None }], End::default()), 1);
-    assert_eq!(messages(&run)[1]["rate_limit_info"], json!({"status":"rejected"}));
+    assert_eq!(messages(&run)[2]["rate_limit_info"], json!({"status":"rejected"}));
 }
 
 #[test]
 fn the_program_s_own_retry_is_told() {
     let run = normal(story(vec![Step::Retry { attempt: 2, status: 503, delay_ms: Some(250) }], End::default()), 1);
     assert_eq!(
-        messages(&run)[1],
+        messages(&run)[2],
         json!({"type":"system", "subtype":"api_retry", "attempt":2,"error_status":503,"retry_delay_ms":250,"session_id":SESSION})
     );
 }
@@ -310,7 +321,7 @@ fn optional_flags_accept_values_in_any_order() {
         None,
         Some(MCP),
     );
-    assert_eq!(messages(&run)[0]["tools"], json!(["mcp__smith__prompt"]));
+    assert_eq!(messages(&run)[0]["tools"], json!([]));
     assert_eq!(results(&run).len(), 2);
 }
 
@@ -342,7 +353,7 @@ fn input_eof_does_not_end_a_hanging_turn() {
 #[test]
 fn absent_standard_input_is_its_end() {
     let run = print::run(Story::default(), print::without_input(), None, Some(MCP));
-    assert_eq!(messages(&run).len(), 1);
+    assert_eq!(messages(&run).len(), 2);
     assert_eq!(messages(&run)[0]["subtype"], "init");
     assert_eq!(run.records[0].exit, Some(Exit::Code(0)));
 }
@@ -364,7 +375,11 @@ fn a_tool_message_is_framed_before_its_mcp_reply() {
     );
     let messages = messages(&run);
     assert_eq!(
-        messages[1..7].iter().map(|m| m["event"]["type"].as_str().expect("bounded test fixture")).collect::<Vec<_>>(),
+        messages
+            .iter()
+            .filter(|message| message["type"] == "stream_event")
+            .map(|message| message["event"]["type"].as_str().expect("event"))
+            .collect::<Vec<_>>(),
         [
             "message_start",
             "content_block_start",
@@ -374,9 +389,9 @@ fn a_tool_message_is_framed_before_its_mcp_reply() {
             "message_stop"
         ]
     );
-    assert_eq!(messages[1]["event"]["message"]["id"], messages[7]["message"]["id"]);
-    assert_eq!(messages[3]["event"]["delta"]["type"], "input_json_delta");
-    assert_eq!(messages[8]["message"]["content"][0]["type"], "tool_result");
+    assert_eq!(messages[2]["event"]["message"]["id"], messages[5]["message"]["id"]);
+    assert_eq!(messages[4]["event"]["delta"]["type"], "input_json_delta");
+    assert_eq!(messages[9]["message"]["content"][0]["type"], "tool_result");
 }
 
 #[test]
