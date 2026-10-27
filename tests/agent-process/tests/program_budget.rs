@@ -79,6 +79,7 @@ fn a_cancel_interrupts_the_turn() {
         matches!(run.answer().expect("bounded test fixture").result(), RunResult::Failed(failed) if matches!(failed.reason(), RunFailure::Cancelled))
     );
     assert!(!run.seen.contains(&Seen::Terminated));
+    assert!(run.exits.contains(&skein_io::kernel::Exit::Code(0)));
     assert!(run.run_directories.is_empty());
 }
 

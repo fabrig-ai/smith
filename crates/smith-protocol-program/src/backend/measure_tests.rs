@@ -156,7 +156,16 @@ fn a_wind_down_measures_the_encoded_user_text() {
         role: llm::Role::User,
         content: Box::new([llm::Block::Text { text: b"finish \"now\"\n".as_slice().into(), replay: None }]),
     }]);
-    backend.resume(&env(0), next, &mut Queue::with_capacity(32), &mut Queue::with_capacity(64));
+    let mut up = Queue::with_capacity(32);
+    let mut below = Queue::with_capacity(64);
+    backend.resume(&env(0), next, &mut up, &mut below);
+    backend.line(
+        &env(0),
+        br#"{"type":"control_response","response":{"subtype":"success","request_id":"smith-1"}}"#,
+        &mut up,
+        &mut below,
+    );
+    backend.line(&env(0), br#"{"type":"result","subtype":"error_during_execution","is_error":true,"terminal_reason":"aborted_streaming"}"#, &mut up, &mut below);
     backend.flush_prompt_measure(Time::ZERO);
     let Some(Measure::Prompt { prompt, .. }) = backend.pop_measure() else { panic!("prompt") };
     let sent: serde_json::Value = serde_json::from_slice(backend.outgoing.as_ref().unwrap()).unwrap();
@@ -284,7 +293,7 @@ fn private_carries_flush_at_every_terminal_boundary() {
             ),
             2 => backend.close(&env(1), &mut up, &mut below),
             3 => backend.fail(&env(1), llm::Failure::Invalid, b"failure", &mut up, &mut below),
-            4 => backend.stop(env(1).now, true, true),
+            4 => backend.stop(&env(1), true, true, &mut up, &mut below),
             _ => unreachable!(),
         }
         assert_eq!(delta_text(&mut backend), b"**********", "boundary {boundary}");

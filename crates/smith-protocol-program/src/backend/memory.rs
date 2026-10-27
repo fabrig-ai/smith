@@ -110,7 +110,12 @@ pub fn backend_worst_case(settings: &Settings) -> Option<u64> {
         // covered by the idle stdout accumulator terms before spawn.
         // Native writer retention belongs to the service's two writer terms.
         .checked_add(u64::from(settings.line_bytes).checked_mul(2)?)?
+        // The finishing note is encoded only after the interrupted result,
+        // reusing the old user line's term; its neutral prompt is already priced.
         .checked_add(u64::from(settings.input_bytes))?
+        // Control line retained while waiting for input room, its encoding
+        // copy, and the largest "smith-" + u64 id during correlation.
+        .checked_add(stream::INTERRUPT_BYTES.checked_mul(2)?.checked_add(26)?)?
         // MCP correlation retains at most five messages' provider fields and
         // one rendered reply per ledger slot. Rebuilding moves payloads but
         // briefly owns both old and new slot allocations.

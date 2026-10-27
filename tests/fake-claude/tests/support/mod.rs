@@ -22,6 +22,7 @@ pub struct Invocation {
     stream: bool,
     no_input: bool,
     signal: Option<(skein_io::kernel::ServiceSignal, String)>,
+    control_after: Option<String>,
 }
 
 impl Invocation {
@@ -34,6 +35,7 @@ impl Invocation {
             stream: false,
             no_input: false,
             signal: None,
+            control_after: None,
         }
     }
 
@@ -80,6 +82,9 @@ enum Phase {
     Done,
 }
 
+const CONTROL_INTERRUPT: &[u8] =
+    b"{\"type\":\"control_request\",\"request_id\":\"test-1\",\"request\":{\"subtype\":\"interrupt\"}}\n";
+
 pub struct Parent {
     invocations: VecDeque<Invocation>,
     pub records: Vec<Record>,
@@ -91,6 +96,8 @@ pub struct Parent {
     input_from: u32,
     waiting: bool,
     signal_waiting: bool,
+    control_write: Option<Token>,
+    control_ready: bool,
     signal_at: Option<Time>,
     pub signalled: bool,
     input_closed: bool,
@@ -115,6 +122,8 @@ impl Parent {
             input_from: 0,
             waiting: false,
             signal_waiting: false,
+            control_write: None,
+            control_ready: false,
             signal_at: None,
             signalled: false,
             input_closed: false,
@@ -132,7 +141,22 @@ impl Parent {
         self.submissions.push(Submit { op: Token::new(self.sequence), kind });
     }
 
+    fn send_control(&mut self) {
+        self.control_ready = false;
+        self.invocations.front_mut().expect("invocation").control_after = None;
+        self.issue(Op::PipeWrite { fd: self.pipes[0], bytes: CONTROL_INTERRUPT.into(), from: 0 });
+        self.control_write = Some(Token::new(self.sequence));
+    }
+
     fn complete(&mut self, complete: Complete, now: Time) {
+        if self.control_write == Some(complete.op) {
+            assert_eq!(
+                complete.result,
+                Ok(Done::Count(u32::try_from(CONTROL_INTERRUPT.len()).expect("short control line")))
+            );
+            self.control_write = None;
+            return;
+        }
         if matches!(complete.kind, Op::Signal { .. }) {
             assert_eq!(complete.result, Ok(Done::Nothing));
             self.signal_waiting = false;
@@ -209,6 +233,10 @@ impl Parent {
                                         .is_some_and(|(_, after)| after == kind)
                                 {
                                     self.signal_ready = true;
+                                }
+                                if self.invocations.front().expect("invocation").control_after.as_deref() == Some(kind)
+                                {
+                                    self.send_control();
                                 }
                                 if self.invocations.front().expect("invocation").stream
                                     && !self.input_closed
@@ -313,6 +341,9 @@ impl Parent {
 
 impl Host for Parent {
     fn iterate(&mut self, now: Time, _wall: Wall) {
+        if self.control_ready {
+            self.send_control();
+        }
         while let Some(complete) = self.completions.pop() {
             self.complete(complete, now);
         }
@@ -344,6 +375,7 @@ impl Host for Parent {
     }
     fn work_pending(&self, now: Time) -> bool {
         !self.completions.is_empty()
+            || self.control_ready
             || (!self.waiting && !self.signal_waiting && !self.is_empty())
             || self.signal_at.is_some_and(|at| now >= at)
     }
@@ -426,6 +458,11 @@ impl Referee<Process> for Judge {
         };
         let server_present = procs.len() > 2;
         if let Process::Parent(parent) = &mut procs[0] {
+            if server_called
+                && parent.invocations.front().and_then(|invocation| invocation.control_after.as_deref()) == Some("call")
+            {
+                parent.control_ready = true;
+            }
             let after = parent
                 .invocations
                 .front()

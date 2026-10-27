@@ -155,7 +155,7 @@ impl Backend {
         self.request = Some(request);
         self.outgoing = None;
         if !stopping {
-            self.stop(env.now, active, false);
+            self.stop(env, active, false, up, below);
         }
     }
 
@@ -201,6 +201,8 @@ impl Backend {
         self.tail = 0;
         self.stderr_wrapped = false;
         self.written = 0;
+        self.interrupt_pending = None;
+        self.interrupt_line = None;
         self.ledger =
             List::with_capacity(self.settings.receiving.max_completion_blocks.checked_mul(5).expect("ledger"));
         self.turns = turns::Turns::new(&self.settings.receiving, self.settings.adapter.client.answer);
