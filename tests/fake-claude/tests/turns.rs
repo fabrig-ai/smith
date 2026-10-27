@@ -560,9 +560,9 @@ fn a_control_interrupt_ends_a_turn_and_keeps_reading() {
     let input = format!("{user}\n{}\n{user}\n", control_input());
     let run = print::run(story(vec![Step::Hang], End::default()), print::unpaced(input.as_bytes()), None, Some(MCP));
     let output = messages(&run);
-    assert_eq!(output[1]["type"], "control_response");
-    assert_eq!(output[1]["response"]["request_id"], "probe-1");
-    assert_eq!(output[1]["response"]["subtype"], "success");
+    assert_eq!(output[2]["type"], "control_response");
+    assert_eq!(output[2]["response"]["request_id"], "probe-1");
+    assert_eq!(output[2]["response"]["subtype"], "success");
     assert_eq!(results(&run)[0]["terminal_reason"], "aborted_streaming");
     assert_eq!(results(&run)[1]["subtype"], "success");
     assert_eq!(run.records[0].exit, Some(Exit::Code(0)));
@@ -573,9 +573,11 @@ fn an_idle_control_interrupt_only_acknowledges() {
     let input = format!("{}\n", control_input());
     let run = print::run(Story::default(), print::unpaced(input.as_bytes()), None, Some(MCP));
     let output = messages(&run);
-    assert_eq!(output.len(), 2);
-    assert_eq!(output[1]["type"], "control_response");
-    assert_eq!(output[1]["response"]["subtype"], "success");
-    assert_eq!(output[1]["response"]["request_id"], "probe-1");
+    // Startup init and status precede the control acknowledgement.
+    const RECORDS: usize = 3;
+    assert_eq!(output.len(), RECORDS);
+    assert_eq!(output[2]["type"], "control_response");
+    assert_eq!(output[2]["response"]["subtype"], "success");
+    assert_eq!(output[2]["response"]["request_id"], "probe-1");
     assert_eq!(run.records[0].exit, Some(Exit::Code(0)));
 }
