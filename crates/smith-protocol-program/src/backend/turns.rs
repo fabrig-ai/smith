@@ -100,7 +100,15 @@ impl Turns {
                 self.message.as_mut()?.stopped = true;
                 self.close(false)
             }
-            b"content_block_delta" | b"content_block_stop" | b"message_delta" => Some(()),
+            b"message_delta" => {
+                // The block records repeat the initial usage; the final delta
+                // supplies the message's total, including its thinking tokens.
+                if let Some(tokens) = json::field(document, event, b"usage") {
+                    self.message.as_mut()?.usage = usage(document, Some(tokens));
+                }
+                Some(())
+            }
+            b"content_block_delta" | b"content_block_stop" => Some(()),
             _ => None,
         }
     }

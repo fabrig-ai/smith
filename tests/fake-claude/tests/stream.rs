@@ -137,3 +137,81 @@ fn a_tool_reply_and_second_turn_follow_the_recorded_order() {
         assert_eq!(result["stop_reason"], "end_turn");
     }
 }
+
+// Owner's thinking estimate and signature length; output tokens already include
+// the estimate, as in live-claude-thinking.txt.
+const THINKING_TOKENS: u64 = 100;
+const SIGNATURE_BYTES: usize = 1000;
+
+#[test]
+fn a_thinking_call_uses_the_recorded_block_sequence() {
+    let story = Story {
+        turns: vec![Turn {
+            steps: vec![
+                Step::Think {
+                    tokens: THINKING_TOKENS,
+                    step: Box::new(Step::Call { tool: "echo".into(), input: json!({"text":"yes"}) }),
+                },
+                Step::Text("reply".into()),
+            ],
+            ..Turn::default()
+        }],
+        usage: smith_fake_claude::Usage { input_tokens: 13, output_tokens: 154 },
+        ..Story::default()
+    };
+    let mut arguments = print::arguments();
+    arguments.push("--include-partial-messages".into());
+    let run = print::with_server(
+        story,
+        print::invocation(1).arguments(&arguments.iter().map(String::as_str).collect::<Vec<_>>()),
+        ServerScript {
+            tools: vec![Tool { name: "echo".into(), answer: Answer::Text("yes".into()) }],
+            ..ServerScript::default()
+        },
+    );
+    let records = messages(&run);
+    assert_eq!(
+        records.iter().map(shape).collect::<Vec<_>>(),
+        [
+            ("system", "init"),
+            ("system", "status"),
+            ("stream_event", "message_start"),
+            ("stream_event", "content_block_start"),
+            ("system", "thinking_tokens"),
+            ("stream_event", "content_block_delta"),
+            ("system", "thinking_tokens"),
+            ("stream_event", "content_block_delta"),
+            ("assistant", "thinking"),
+            ("stream_event", "content_block_stop"),
+            ("stream_event", "content_block_start"),
+            ("stream_event", "content_block_delta"),
+            ("assistant", "tool_use"),
+            ("stream_event", "content_block_stop"),
+            ("stream_event", "message_delta"),
+            ("stream_event", "message_stop"),
+            ("user", "tool_result"),
+            ("system", "status"),
+            ("stream_event", "message_start"),
+            ("stream_event", "content_block_start"),
+            ("stream_event", "content_block_delta"),
+            ("assistant", "text"),
+            ("stream_event", "content_block_stop"),
+            ("stream_event", "message_delta"),
+            ("stream_event", "message_stop"),
+            ("result", "success"),
+        ]
+    );
+    let assistants: Vec<_> = records.iter().filter(|record| record["type"] == "assistant").collect();
+    assert_eq!(assistants[0]["message"]["id"], assistants[1]["message"]["id"]);
+    assert_ne!(assistants[1]["message"]["id"], assistants[2]["message"]["id"]);
+    assert_eq!(assistants[0]["message"]["content"][0]["thinking"], "");
+    assert_eq!(assistants[0]["message"]["content"][0]["signature"].as_str().expect("signature").len(), SIGNATURE_BYTES);
+    assert_eq!(assistants[1]["message"]["content"][0]["caller"], json!({"type":"direct"}));
+    let usage = records.iter().find(|record| record["event"]["type"] == "message_delta").expect("final usage");
+    assert_eq!(usage["event"]["usage"]["output_tokens"], 154);
+    assert_eq!(usage["event"]["usage"]["output_tokens_details"]["thinking_tokens"], THINKING_TOKENS);
+    assert_eq!(records.last().expect("result")["usage"]["output_tokens"], 308);
+    let heap = run.heap.expect("world checks memory");
+    eprintln!("thinking turn process (peak, envelope): {heap:?}");
+    assert!(heap.iter().all(|(peak, envelope)| peak <= envelope));
+}

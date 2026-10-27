@@ -129,3 +129,78 @@ fn ignored_thinking_still_fills_its_started_block() {
     assert_eq!(completion.content.len(), 1);
     assert_eq!(completion.usage.input_tokens, Some(13));
 }
+
+// Owner's live thinking turn: empty deltas, signed thinking, then a separate
+// block record under the same ID; final usage supersedes both initial copies.
+fn thinking_turn(turns: &mut Turns, block: Value) {
+    let records = [
+        partial("message_start"),
+        json!({"type":"stream_event","event":{"type":"content_block_start","index":0_u32,"content_block":{"type":"thinking","thinking":"","signature":""}}}),
+        json!({"type":"stream_event","event":{"type":"content_block_delta","index":0_u32,"delta":{"type":"thinking_delta","thinking":"","estimated_tokens":100_u32}}}),
+        json!({"type":"stream_event","event":{"type":"content_block_delta","index":0_u32,"delta":{"type":"signature_delta","signature":"opaque"}}}),
+        assistant(json!([{"type":"thinking","thinking":"","signature":"opaque"}])),
+        partial("content_block_stop"),
+        json!({"type":"stream_event","event":{"type":"content_block_start","index":1_u32,"content_block":block}}),
+        assistant(json!([block])),
+        json!({"type":"stream_event","event":{"type":"content_block_stop","index":1_u32}}),
+        json!({"type":"stream_event","event":{"type":"message_delta","usage":{"input_tokens":13_u32,"output_tokens":154_u32,"cache_creation_input_tokens":648_u32,"cache_read_input_tokens":2646_u32,"output_tokens_details":{"thinking_tokens":100_u32}}}}),
+        partial("message_stop"),
+    ];
+    for record in records {
+        feed(turns, record).expect("recorded thinking sequence");
+    }
+}
+
+fn thinking_usage() -> smith_domain::llm::Usage {
+    smith_domain::llm::Usage {
+        input_tokens: Some(13),
+        output_tokens: Some(154),
+        cache_write_tokens: Some(648),
+        cache_read_tokens: Some(2646),
+        reasoning_tokens: None,
+    }
+}
+
+#[test]
+fn thinking_and_a_call_are_one_completion_with_final_usage() {
+    let mut turns = turns();
+    let mut tool = call();
+    tool["caller"] = json!({"type":"direct"});
+    thinking_turn(&mut turns, tool);
+    let completion = turns.ready.pop().expect("one completion");
+    match completion.content.as_ref() {
+        [smith_domain::llm::Said::ToolCall { name, .. }] => assert_eq!(name.as_ref(), b"finish"),
+        _ => panic!("one tool call"),
+    }
+    assert_eq!(completion.usage, thinking_usage());
+    assert!(turns.ready.is_empty());
+    assert_eq!(turns.closed, 1);
+}
+
+#[test]
+fn thinking_and_text_keep_the_text_in_one_completion() {
+    let mut turns = turns();
+    thinking_turn(&mut turns, json!({"type":"text","text":"Hello."}));
+    turns.close(true).expect("result boundary");
+    let completion = turns.ready.pop().expect("one completion");
+    assert_eq!(
+        completion.content.as_ref(),
+        [smith_domain::llm::Said::Text { text: b"Hello.".as_slice().into(), replay: None }]
+    );
+    assert_eq!(completion.usage, thinking_usage());
+    assert!(turns.ready.is_empty());
+    assert_eq!(turns.closed, 1);
+}
+
+#[test]
+fn a_new_id_after_thinking_opens_a_new_completion() {
+    let mut turns = turns();
+    thinking_turn(&mut turns, json!({"type":"text","text":"Hello."}));
+    let mut next = assistant(json!([call()]));
+    next["message"]["id"] = json!("next");
+    feed(&mut turns, next).expect("new ID");
+    assert_eq!(turns.closed, 2);
+    assert_eq!(turns.ready.pop().expect("thinking message").usage, thinking_usage());
+    assert_eq!(turns.ready.pop().expect("next message").usage.output_tokens, Some(7));
+    assert!(turns.ready.is_empty());
+}

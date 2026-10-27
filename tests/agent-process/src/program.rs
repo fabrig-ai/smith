@@ -673,6 +673,9 @@ fn run_inner(
             parent.peer.play(tools_start(charter, value));
             parent.program_host_answers = Some(0);
         }
+        if case == Case::Open {
+            parent.program_host_answers = Some(0);
+        }
         if case == Case::Transcript || history.is_some() {
             parent.peer = crate::host();
             parent.peer.play(match history {

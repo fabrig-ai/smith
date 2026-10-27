@@ -324,3 +324,20 @@ fn an_unknown_system_subtype_still_fails_the_run() {
     let Some(ToDomain::Failed { failure, .. }) = up.pop() else { panic!("unknown subtype failure") };
     assert_eq!(failure, llm::Failure::Program { exit: None });
 }
+
+#[test]
+fn thinking_tokens_is_a_notice_without_state_or_measure() {
+    let (mut backend, mut up, mut below) = active_with_queues();
+    backend.line(
+        &env(0),
+        br#"{"type":"system","subtype":"thinking_tokens","estimated_tokens":50,"estimated_tokens_delta":50}"#,
+        &mut up,
+        &mut below,
+    );
+    assert_eq!(backend.phase, Phase::Running);
+    assert!(backend.turns.message.is_none());
+    assert_eq!(backend.turns.closed, 0);
+    assert!(backend.pop_measure().is_none());
+    assert!(up.is_empty());
+    assert!(below.is_empty());
+}
