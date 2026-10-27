@@ -145,6 +145,7 @@ pub(crate) struct Print {
     turn: Turn,
     step: usize,
     texts: u64,
+    thinking_tokens: u64,
     last_text: String,
     interrupted: bool,
     cancelling: bool,
@@ -194,6 +195,7 @@ impl Print {
             turn: Turn::default(),
             step: 0,
             texts: 0,
+            thinking_tokens: 0,
             last_text: String::new(),
             interrupted: false,
             cancelling: false,
@@ -420,6 +422,7 @@ impl Print {
                 self.next_turn = self.next_turn.checked_add(1).expect("turn count fits");
                 self.step = 0;
                 self.texts = 0;
+                self.thinking_tokens = 0;
                 self.last_text.clear();
                 self.interrupted = false;
                 let mut effects = vec![Effect::Received(received)];
@@ -485,7 +488,26 @@ impl Print {
         let mut effects = Vec::new();
         while let Some(step) = self.turn.steps.get(self.step).cloned() {
             self.step = self.step.checked_add(1).expect("step count fits");
+            let (step, thinking) = match step {
+                Step::Think { tokens, step } => {
+                    if !matches!(
+                        *step,
+                        Step::Text(_)
+                            | Step::Call { .. }
+                            | Step::CallChecked { .. }
+                            | Step::Builtin { .. }
+                            | Step::Act { .. }
+                            | Step::Together(_)
+                    ) {
+                        return error("Think requires a text or tool message", 1);
+                    }
+                    self.thinking_tokens = self.thinking_tokens.checked_add(tokens).expect("thinking tokens fit");
+                    (*step, Some(tokens))
+                }
+                step => (step, None),
+            };
             match step {
+                Step::Think { .. } => return error("Think requires a text or tool message", 1),
                 Step::Compact => effects.push(self.emit(json!({"type":"system", "subtype":"compact_boundary"}))),
                 Step::Text(text) => {
                     if self.texts > 0 {
@@ -498,17 +520,7 @@ impl Print {
                         .and_then(|base| base.checked_add(self.step))
                         .expect("message id fits");
                     let assistant = stream::assistant(&text, &self.flags.values["--model"], id, &self.story.usage);
-                    if self.flags.values.contains_key("--include-partial-messages") {
-                        for (index, value) in stream::partials(&text, &self.flags.values["--model"], id).into_iter().enumerate() {
-                            // The complete assistant precedes the block/message stops.
-                            if index == 3 {
-                                effects.push(self.emit(assistant.clone()));
-                            }
-                            effects.push(self.emit(value));
-                        }
-                    } else {
-                        effects.push(self.emit(assistant));
-                    }
+                    effects.extend(self.message(assistant, thinking));
                     self.last_text = text;
                 }
                 Step::Partial(text) => {
@@ -540,24 +552,24 @@ impl Print {
                     }
                 }
                 Step::Call { tool, input } => {
-                    effects.extend(self.tool(tool, input, ToolAction::Server));
+                    effects.extend(self.tool(tool, input, ToolAction::Server, thinking));
                     return effects;
                 }
                 Step::CallChecked { tool, input, contains } => {
                     self.expected_reply = Some(contains);
-                    effects.extend(self.tool(tool, input, ToolAction::Server));
+                    effects.extend(self.tool(tool, input, ToolAction::Server, thinking));
                     return effects;
                 }
                 Step::Builtin { tool, input, result } => {
-                    effects.extend(self.tool(tool, input, ToolAction::Scripted(result)));
+                    effects.extend(self.tool(tool, input, ToolAction::Scripted(result), thinking));
                     return effects;
                 }
                 Step::Act { tool, input } => {
-                    effects.extend(self.tool(tool, input, ToolAction::Act));
+                    effects.extend(self.tool(tool, input, ToolAction::Act, thinking));
                     return effects;
                 }
                 Step::Together(steps) => {
-                    effects.extend(self.together(steps));
+                    effects.extend(self.together(steps, thinking));
                     return effects;
                 }
                 Step::Deaf => {
@@ -575,6 +587,9 @@ impl Print {
         match self.turn.end.clone() {
             End::Success { structured_output } => {
                 let mut value = json!({"type":"result", "subtype":"success", "is_error":false, "terminal_reason":"completed", "stop_reason":"end_turn", "result":self.last_text, "usage":stream::usage(&self.story.usage, self.texts)});
+                if self.thinking_tokens > 0 {
+                    value["usage"]["output_tokens_details"] = json!({"thinking_tokens":self.thinking_tokens});
+                }
                 if self.flags.values.contains_key("--json-schema")
                     && let Some(output) = structured_output
                 {
@@ -595,7 +610,7 @@ impl Print {
         effects
     }
 
-    fn tool(&mut self, tool: String, input: Value, action: ToolAction) -> Vec<Effect> {
+    fn tool(&mut self, tool: String, input: Value, action: ToolAction, thinking: Option<u64>) -> Vec<Effect> {
         if matches!(action, ToolAction::Act) && !["Read", "Write", "Edit"].contains(&tool.as_str()) {
             return error("Act requires Read, Write or Edit", 1);
         }
@@ -612,7 +627,8 @@ impl Print {
             .and_then(|base| base.checked_add(self.step))
             .expect("message ID fits");
         let mut assistant = stream::assistant("", &self.flags.values["--model"], message_id, &self.story.usage);
-        assistant["message"]["content"] = json!([{"type":"tool_use", "id":id, "name":name, "input":input}]);
+        assistant["message"]["content"] =
+            json!([{"type":"tool_use", "id":id, "name":name, "input":input,"caller":{"type":"direct"}}]);
         let (call, arguments) = if builtin {
             (
                 self.flags.values["--permission-prompt-tool"]
@@ -630,24 +646,7 @@ impl Print {
         if self.texts > 1 {
             effects.push(self.emit(stream::status()));
         }
-        if self.flags.values.contains_key("--include-partial-messages") {
-            let message = &assistant["message"];
-            for (index, event) in [
-                json!({"type":"message_start","message":{"id":message["id"],"role":"assistant","content":[]}}),
-                json!({"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":message["content"][0]["id"],"name":message["content"][0]["name"],"input":{}}}),
-                json!({"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":serde_json::to_string(&message["content"][0]["input"]).expect("tool input JSON")}}),
-                json!({"type":"content_block_stop","index":0}),
-                json!({"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":stream::usage(&self.story.usage,1)}),
-                json!({"type":"message_stop"}),
-            ].into_iter().enumerate() {
-                if index == 3 {
-                    effects.push(self.emit(assistant.clone()));
-                }
-                effects.push(self.emit(json!({"type":"stream_event","event":event})));
-            }
-        } else {
-            effects.push(self.emit(assistant));
-        }
+        effects.extend(self.message(assistant, thinking));
         effects.extend([Effect::McpCall { tool: call, input: arguments }, Effect::ReadCode]);
         effects
     }
@@ -777,17 +776,17 @@ impl Print {
         effects
     }
 
-    fn together(&mut self, steps: Vec<Step>) -> Vec<Effect> {
+    fn together(&mut self, steps: Vec<Step>, thinking: Option<u64>) -> Vec<Effect> {
         let mut blocks = Vec::new();
         for step in steps {
             let effects = match step {
-                Step::Call { tool, input } => self.tool(tool, input, ToolAction::Server),
-                Step::Builtin { tool, input, result } => self.tool(tool, input, ToolAction::Scripted(result)),
+                Step::Call { tool, input } => self.tool(tool, input, ToolAction::Server, None),
+                Step::Builtin { tool, input, result } => self.tool(tool, input, ToolAction::Scripted(result), None),
                 Step::Act { tool, input } => {
                     if !["Read", "Write", "Edit"].contains(&tool.as_str()) {
                         return error("Act requires Read, Write or Edit", 1);
                     }
-                    self.tool(tool, input, ToolAction::Act)
+                    self.tool(tool, input, ToolAction::Act, None)
                 }
                 _ => return error("Together requires Call, Builtin or Act", 1),
             };
@@ -797,7 +796,9 @@ impl Print {
             } else {
                 format!("mcp__{}__{}", self.server, pending.tool)
             };
-            blocks.push(json!({"type":"tool_use","id":pending.id,"name":name,"input":pending.input}));
+            blocks.push(
+                json!({"type":"tool_use","id":pending.id,"name":name,"input":pending.input,"caller":{"type":"direct"}}),
+            );
             let call = effects.into_iter().find(|effect| matches!(effect, Effect::McpCall { .. })).expect("tool RPC");
             self.together.push_back((pending, call));
         }
@@ -824,8 +825,16 @@ impl Print {
         if self.texts > 1 {
             effects.push(self.emit(stream::status()));
         }
-        effects.extend([self.emit(assistant), call, Effect::ReadCode]);
+        effects.extend(self.message(assistant, thinking));
+        effects.extend([call, Effect::ReadCode]);
         effects
+    }
+
+    fn message(&self, assistant: Value, thinking: Option<u64>) -> Vec<Effect> {
+        stream::message(assistant, thinking, self.flags.values.contains_key("--include-partial-messages"))
+            .into_iter()
+            .map(|value| self.emit(value))
+            .collect()
     }
 
     fn finish(&mut self, value: Value) -> Vec<Effect> {

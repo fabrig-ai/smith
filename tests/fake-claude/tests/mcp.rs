@@ -68,7 +68,7 @@ fn a_server_tool_call_returns_its_answer_to_the_model() {
     let message = &messages(&run)[2]["message"];
     assert_eq!(
         message["content"][0],
-        json!({"type":"tool_use", "id":"toolu_1", "name":"mcp__smith__finish", "input":{"answer":"private-value"}})
+        json!({"type":"tool_use", "id":"toolu_1", "name":"mcp__smith__finish", "input":{"answer":"private-value"}, "caller":{"type":"direct"}})
     );
     assert_eq!(
         tool_result(&run),
