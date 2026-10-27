@@ -125,6 +125,7 @@ fn sub_agent(host_part: u64) -> ToolSchema {
         schema: writer.finish() }
 }
 
+#[cfg(test)]
 pub(crate) fn contract_text_bytes() -> Option<[u64; 2]> {
     let finish = finishing();
     let deliver = delivering();

@@ -28,6 +28,7 @@ mod descriptions;
 mod endpoints;
 mod failure;
 mod framing;
+mod generated_schema_costs;
 mod grants;
 mod guard;
 mod limits;

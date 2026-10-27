@@ -344,3 +344,18 @@ fn history_and_non_attestation_limits_stay_fresh_without_invalidating_declaratio
     assert_eq!(translated.instructions.as_ref(), b"fresh instructions");
     assert_eq!(cache.as_ref().expect("attested").offered.as_ptr(), pointer);
 }
+
+#[test]
+fn retained_declarations_do_not_retain_the_previous_tool_choice() {
+    let mut cache = None;
+    cached(&mut cache, input(), &limits()).expect("admitted declarations");
+    let pointer = cache.as_ref().expect("attested").offered.as_ptr();
+    let mut prompt = input();
+    prompt.choice = llm::ToolChoice::Only(Box::new([llm::Served::Finish]));
+    let translated = cached(&mut cache, prompt, &limits()).expect("fresh choice");
+    assert_eq!(translated.choice, shared::ToolChoice::Only(Box::new([b"finish".as_slice().into()])));
+    let mut prompt = input();
+    prompt.choice = llm::ToolChoice::Only(Box::new([llm::Served::Wait]));
+    assert_eq!(cached(&mut cache, prompt, &limits()).err(), Some(Error::Invalid));
+    assert_eq!(cache.as_ref().expect("attested").offered.as_ptr(), pointer);
+}

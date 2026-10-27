@@ -1,5 +1,9 @@
 //! Whole bounded application declarations and concrete conversations into Skein.
-//! Parsing is generic JSON attestation, never schema-policy validation.
+//! Component preparation keeps one activation's exact attested declarations;
+//! `prompt` and `prepare_prompt` retain only the current call's context.
+//! History and choice are admitted anew. Parsing knows generic JSON, never
+//! host schema policy or provider wire grammar.
+//! Contract: protocol/llm.md, sections 3 and 6; protocol/limits.md, section 3.9.
 
 use alloc::boxed::Box;
 
