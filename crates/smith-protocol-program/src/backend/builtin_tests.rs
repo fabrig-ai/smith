@@ -116,15 +116,100 @@ fn tools_flag_names_the_granted_families() {
 }
 
 fn init(tools: &[&str], granted: bool) -> (Backend, Queue<ToDomain>) {
+    init_contract(tools, granted, false)
+}
+
+fn init_contract(tools: &[&str], granted: bool, contract: bool) -> (Backend, Queue<ToDomain>) {
     let mut backend = active();
     let mut up = Queue::with_capacity(32);
     let mut below = Queue::with_capacity(64);
     if let Some(FromDomain::Complete { prompt, .. }) = &mut backend.request {
         prompt.tools.inspect = granted;
+        if contract {
+            prompt.served = Box::new([llm::Served::Finish]);
+        }
     }
     let bytes = serde_json::to_vec(&serde_json::json!({"type":"system","subtype":"init","mcp_servers":[{"name":"smith","status":"connected"}],"tools":tools})).expect("init");
     backend.admit_init(&env(0), &bytes, &mut up, &mut below);
     (backend, up)
+}
+
+#[test]
+fn a_contract_init_may_list_structured_output() {
+    let (backend, up) = init_contract(&["mcp__smith__finish", "StructuredOutput"], false, true);
+    assert!(up.is_empty());
+    assert_eq!(backend.phase, Phase::Running);
+}
+
+#[test]
+fn a_contract_init_may_omit_structured_output() {
+    let (backend, up) = init_contract(&["mcp__smith__finish"], false, true);
+    assert!(up.is_empty());
+    assert_eq!(backend.phase, Phase::Running);
+}
+
+#[test]
+fn structured_output_without_a_contract_fails_init() {
+    let (_, mut up) = init_contract(&["StructuredOutput"], false, false);
+    failed(up.pop(), b"smith: the program offers a built-in tool the run did not grant: StructuredOutput");
+}
+
+#[test]
+fn a_contract_init_refuses_duplicate_structured_output() {
+    let (_, mut up) = init_contract(&["mcp__smith__finish", "StructuredOutput", "StructuredOutput"], false, true);
+    failed(up.pop(), b"smith: the program offers a built-in tool the run did not grant: StructuredOutput");
+}
+
+#[test]
+fn structured_output_uses_the_programs_result_before_finish() {
+    use smith_domain::run::outcome::{Declared, Report};
+
+    let mut backend = active();
+    backend.request = Some(report_request(&backend));
+    let mut up = Queue::with_capacity(32);
+    let mut below = Queue::with_capacity(64);
+    backend.line(&env(0), br#"{"type":"assistant","message":{"id":"structured","content":[{"type":"tool_use","id":"s","name":"StructuredOutput","input":{"form":"report","text":"done","fields":{}}}]}}"#, &mut up, &mut below);
+    let Some(ToDomain::Completed { completion, .. }) = up.pop() else { panic!("completion") };
+    let [llm::Said::ToolCall { name, input, call, .. }] = completion.content.as_ref() else { panic!("builtin call") };
+    assert_eq!(name.as_ref(), b"StructuredOutput");
+    assert_eq!(input.as_ref(), br#"{"form":"report","text":"done","fields":{}}"#);
+    assert_eq!(*call, llm::Decoded::Builtin { effect: Effect::Write });
+    assert!(!backend.awaits_answer(b"s"), "the domain has no call to answer");
+    backend.line(&env(0), br#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"s","content":"accepted","is_error":false}]}}"#, &mut up, &mut below);
+    let Some(ToDomain::BuiltinResult { id, text, error, .. }) = up.pop() else { panic!("program result") };
+    assert_eq!(id.as_ref(), b"s");
+    assert_eq!(text.as_ref(), b"accepted");
+    assert!(!error);
+    while backend.pop_measure().is_some() {}
+    let mut next = report_request(&backend);
+    let FromDomain::Complete { owner, .. } = &mut next else { panic!("complete") };
+    *owner = Token::new(81);
+    backend.resume(&env(0), next, &mut up, &mut below);
+    backend.line(&env(0), br#"{"type":"result","subtype":"success","is_error":false,"structured_output":{"form":"report","text":"done","fields":{}}}"#, &mut up, &mut below);
+    let Some(ToDomain::Completed { owner, completion }) = up.pop() else { panic!("structured finish") };
+    assert_eq!(owner, Token::new(81));
+    let [llm::Said::ToolCall { name, call, .. }] = completion.content.as_ref() else { panic!("finish") };
+    assert_eq!(name.as_ref(), b"finish");
+    assert_eq!(
+        *call,
+        llm::Decoded::Served {
+            ask: smith_domain::run::Ask::Finish {
+                outcome: Declared::Report(Report { text: b"done".as_slice().into(), fields: Box::default() })
+            }
+        }
+    );
+    assert!(up.is_empty());
+    assert!(below.is_empty(), "neither a permission prompt nor an MCP answer");
+    assert_eq!(backend.phase, Phase::Running);
+}
+
+fn report_request(backend: &Backend) -> FromDomain {
+    let mut request = request(backend);
+    let FromDomain::Complete { prompt, outcome, .. } = &mut request else { panic!("complete") };
+    prompt.served = Box::new([llm::Served::Finish]);
+    // Same report text cap as the backend harness's max_tokens.
+    outcome.report = Some(smith_domain::run::outcome::TextSpec { max: 128, fields: Box::default() });
+    request
 }
 
 #[test]
