@@ -1,0 +1,112 @@
+family smith-transcript 6
+
+# The aggregate turn is limited again by the receiving session's
+# Limits.session_bytes. These member ceilings cover its default fixtures and
+# the tools' configurable read, list, search and command response limits.
+record Usage { input: option u64 output: option u64 cache_read: option u64 cache_write: option u64 reasoning: option u64 }
+record Replay { dialect: u32 bytes: bytes 1048576 }
+record Text { text: text 1048576 replay: option Replay }
+record Opaque { dialect: u32 bytes: bytes 3145728 }
+record Call {
+    id: text 256
+    name: text 64
+    input: bytes 1048576
+    replay: option Replay
+}
+
+# These records mirror smith-domain-tools::call::Outcome, its nested Kind,
+# Exit and Fault, with each payload bounded above the tools' default tests.
+enum Kind { file, directory, link, other }
+record Entry { name: bytes 4096 kind: Kind }
+record Hit { path: bytes 4096 line: u32 text: bytes 2097152 }
+record LineNumber { number: u32 }
+enum Next { line: LineNumber, end }
+enum ReadCut { whole, line }
+record ByteClamp { asked: u32 ceiling: u32 }
+enum BytesClamp { within, clamped: ByteClamp }
+record Read { content: bytes 1048576 first: u32 lines: u32 total: u32 next: Next cut: ReadCut window: BytesClamp }
+record Listed { entries: list 512 Entry more: u64 }
+record Found { hits: bytes 2097152 pieces Hit more: u64 timed_out: bool }
+record Written { created: bool }
+record Edited { replaced: u32 }
+record ExitCode { code: u8 }
+record ExitSignal { signal: u8 }
+enum Exit { code: ExitCode, signal: ExitSignal, timed_out }
+record DurationClamp { asked_ns: u64 ceiling_ns: u64 }
+enum TimeoutClamp { within, clamped: DurationClamp }
+record CommandEnd { exit: Exit head: bytes 1048576 last: bytes 1048576 dropped: u64 timeout: TimeoutClamp output: BytesClamp }
+record JobExit { exit: Exit }
+enum JobEnd { running, ended: JobExit, stopped, cancelled }
+record CommandRunning { job: u32 head: bytes 1048576 last: bytes 1048576 dropped: u64 timeout: TimeoutClamp output: BytesClamp after: TimeoutClamp }
+record JobRead { job: u32 head: bytes 1048576 last: bytes 1048576 dropped: u64 output: BytesClamp wait: TimeoutClamp end: JobEnd }
+enum SizePart { file, write_content, edit_old, edit_new, edit_items, edit_result, edit_replacements, list_glob }
+record TooLarge { what: SizePart size: u64 bound: u32 }
+record Ambiguous { count: u32 lines: list 1024 LineNumber }
+enum Mismatch { no_match, ambiguous: Ambiguous, unchanged }
+record EditFailed { edit: u32 why: Mismatch }
+enum Fault { denied, no_space, other }
+record Failed { fault: Fault }
+record WorkingPath { path: bytes 4096 }
+record OtherPath { directory: bytes 4096 path: bytes 4096 }
+record OutsidePath { path: bytes 4096 }
+enum Resolved { working: WorkingPath, other: OtherPath, outside: OutsidePath }
+record ResolvedFailure { path: Resolved }
+enum Outcome {
+    read: Read, listed: Listed, found: Found, written: Written,
+    edited: Edited, exited: CommandEnd, not_granted, outside: ResolvedFailure, read_only: ResolvedFailure,
+    too_long, not_found: ResolvedFailure, not_file, linked, protected, not_directory: ResolvedFailure,
+    too_large: TooLarge, not_read, stale, edit_failed: EditFailed,
+    failed: Failed, timed_out,
+    cancelled, busy, nul_byte, running: CommandRunning, job: JobRead
+}
+
+# The problem variants mirror smith-domain-session::llm::Problem.
+record FieldProblem { field: text 64 }
+record OversizeProblem { bytes: u64 bound: u32 }
+record CutProblem { bytes: u64 }
+record JobsFullProblem { jobs: u32 }
+record UnknownJobProblem { job: u32 }
+enum CallProblem {
+    unknown_tool, not_an_object, missing: FieldProblem,
+    wrong_type: FieldProblem, bad_value: FieldProblem, too_large,
+    oversize: OversizeProblem, cut_off: CutProblem, nesting, jobs_full: JobsFullProblem, unknown_job: UnknownJobProblem
+}
+record Said { text: text 1048576 error: bool }
+record Invalid { problem: CallProblem }
+record OwnedOutcome { value: Outcome }
+record CallName { name: text 64 }
+record AllowedCalls { names: list 256 CallName }
+record OutsideChoice { only: option AllowedCalls }
+record AfterFailedWrite { call: u16 }
+enum NotRunWhy { stopped, outside_choice: OutsideChoice, after_failed_write: AfterFailedWrite }
+record NotRun { why: NotRunWhy }
+enum Returned { outcome: OwnedOutcome, said: Said, invalid: Invalid, not_run: NotRun, withdrawn }
+record ToolResult { id: text 256 returned: Returned }
+enum Block { text: Text, refusal: Text, call: Call, result: ToolResult, opaque: Opaque }
+enum Role { user, assistant }
+# The standard native completion holds 34 blocks; actual receiving limits
+# derive the smaller completion/results/opening count under this ceiling.
+record Message { role: Role blocks: list 64 Block }
+
+# Transcript admission also checks common version, endpoint, dialect and
+# consecutive place, and its aggregate byte and message limits.
+record Affinity { key: fixed 16 thread: u32 }
+record Program { name: text 32 }
+enum Backend { direct, program: Program }
+record Opening { affinity: Affinity account: option u32 backend: Backend }
+enum TurnKind { ordinary, window }
+versioned record Turn {
+    kind: TurnKind
+    opening: option Opening
+    endpoint: text 64
+    model: text 128
+    effort: option text 32
+    dialect: u32
+    place: u32
+    usage: Usage
+    spent: u64
+    jobs: u32
+    # One completion plus its surrounding messages; window openings use one.
+    # Keeping this envelope separate from whole-window history preserves u32.
+    messages: list 16 Message
+}

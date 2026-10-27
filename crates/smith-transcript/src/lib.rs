@@ -47,4 +47,5 @@ pub const ROOT: &str = "Turn";
 /// and starts the next run afresh from its brief (transcript.md, 12).
 pub const FRESH_WINDOWS: &str = "fresh-windows";
 
+#[path = "../patches/mod.rs"]
 pub mod patches;
