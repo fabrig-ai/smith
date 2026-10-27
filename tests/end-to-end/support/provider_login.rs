@@ -2,8 +2,8 @@
 //! The referee keeps readiness and browser progress, never credential values;
 //! entry points observe sign-in ownership (protocol/hosts.md, section 5.4)
 //! through shipped commands (testing.md, sections 2.3 and 5).
-use super::{Process, Ran};
-use skein_lib::{Duration, Time};
+use super::{Process, Ran, STARTUP_WORLD_PATIENCE};
+use skein_lib::Time;
 use skein_shell::{Clock, Host};
 use skein_world::{
     Referee,
@@ -118,7 +118,7 @@ pub fn run_arriving(
     let descriptors = streams.descriptors();
     let Streams::Pipes { input, output } = streams else { unreachable!("credential pipes") };
     let mut world = real::World::new(Judge {
-        deadline: clock.now().now.saturating_add(Duration::from_secs(2)),
+        deadline: clock.now().now.saturating_add(STARTUP_WORLD_PATIENCE),
         visited: false,
         started: false,
         arriving,
@@ -131,7 +131,7 @@ pub fn run_arriving(
     world.spawn_with_fds(descriptors, || {
         Process::Script(Proc::Terminal(Box::new(Terminal::piped(input, output, Vec::new()))))
     });
-    let outcome = world.run(&clock, Duration::from_secs(4));
+    let outcome = world.run(&clock, STARTUP_WORLD_PATIENCE);
     assert!(outcome.procs.iter().all(Host::is_empty), "credential command drains");
     let Process::Binary(binary) = outcome.procs.first().expect("binary") else { unreachable!() };
     let Process::Script(Proc::Issuer(issuer)) = outcome.procs.get(1).expect("issuer") else { unreachable!() };
@@ -207,12 +207,12 @@ pub fn terminal_key(scratch: &Scratch, name: &str) -> Ran {
     let descriptors = streams.descriptors();
     let Streams::Terminal { stream } = streams else { unreachable!() };
     let mut world =
-        real::World::new(super::Refusal::new(clock.now().now, clock.now().now.saturating_add(Duration::from_secs(2))));
+        real::World::new(super::Refusal::new(clock.now().now, clock.now().now.saturating_add(STARTUP_WORLD_PATIENCE)));
     world.spawn_with_fds(binary.descriptors(), || Process::Binary(Box::new(binary)));
     world.spawn_with_fds(descriptors, || {
         Process::Script(Proc::Terminal(Box::new(Terminal::attached(stream, Vec::new()))))
     });
-    let outcome = world.run(&clock, Duration::from_secs(4));
+    let outcome = world.run(&clock, STARTUP_WORLD_PATIENCE);
     assert!(outcome.procs.iter().all(Host::is_empty), "credential command drained");
     let Process::Binary(binary) = outcome.procs.first().expect("binary") else { unreachable!() };
     let Some(skein_io::kernel::Exit::Code(code)) = binary.exit_status() else { panic!("terminal key exit") };

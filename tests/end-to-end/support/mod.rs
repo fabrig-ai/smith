@@ -22,6 +22,11 @@ use smith_real_world::{
 };
 use std::{fmt::Write as _, path::Path};
 
+// Startup, sign-in and binary outcomes are the subjects, not their durations.
+// Each referee shares the patience its world already uses (director 1294).
+const STARTUP_WORLD_PATIENCE: Duration = Duration::from_secs(4);
+const BINARY_WORLD_PATIENCE: Duration = Duration::from_secs(12);
+
 pub enum Process {
     Binary(Box<Binary>),
     Script(Proc),
@@ -342,7 +347,7 @@ pub fn run_with_provider(
         sign_in: referee::SignIn::default(),
         visiting: false,
         shutdown: None,
-        deadline: now.saturating_add(Duration::from_secs(10)),
+        deadline: now.saturating_add(BINARY_WORLD_PATIENCE),
         saved: false,
         tokens: scratch.path().join("credentials/tokens/fake"),
         checkout: if scenario.launch.change { scratch.checkout() } else { smith_real_world::Checkout::default() },
@@ -373,7 +378,7 @@ pub fn run_with_provider(
         });
         world.spawn(|| Process::Script(Proc::Browser(Box::default())));
     }
-    let outcome = world.run(&clock, Duration::from_secs(12));
+    let outcome = world.run(&clock, BINARY_WORLD_PATIENCE);
     assert!(outcome.procs.iter().all(Host::is_empty), "binary and scripted processes drained");
     let seen = observations(&outcome.procs, scenario.launch.authenticated);
     let mut resolved = resolved_settings(scratch.path());
@@ -620,7 +625,7 @@ fn refusal_program_code(
     let streams = binary.take_streams().expect("startup terminal");
     let descriptors = streams.descriptors();
     let Streams::Terminal { stream } = streams else { unreachable!("startup on terminal") };
-    let mut world = real::World::new(Refusal::new(now, now.saturating_add(Duration::from_secs(2))));
+    let mut world = real::World::new(Refusal::new(now, now.saturating_add(STARTUP_WORLD_PATIENCE)));
     world.spawn_with_fds(binary.descriptors(), || Process::Binary(Box::new(binary)));
     world.spawn_with_fds(descriptors, || {
         Process::Script(Proc::Terminal(Box::new(Terminal::attached(
@@ -628,7 +633,7 @@ fn refusal_program_code(
             vec![smith_local_process_world::terminal::Action::Eof],
         ))))
     });
-    let outcome = world.run(&clock, Duration::from_secs(4));
+    let outcome = world.run(&clock, STARTUP_WORLD_PATIENCE);
     assert!(outcome.procs.iter().all(Host::is_empty), "startup refusal drains all processes");
     let Process::Binary(binary) = outcome.procs.first().expect("binary process") else {
         unreachable!("binary observer")
@@ -705,7 +710,7 @@ pub fn smith_with_environment(
     let Streams::Pipes { input: stdin, output } = streams else { unreachable!("product on pipes") };
     let clock = Clock::new();
     let now = clock.now().now;
-    let mut world = real::World::new(Refusal::new(now, now.saturating_add(Duration::from_secs(2))));
+    let mut world = real::World::new(Refusal::new(now, now.saturating_add(STARTUP_WORLD_PATIENCE)));
     world.spawn_with_fds(binary.descriptors(), || Process::Binary(Box::new(binary)));
     world.spawn_with_fds(descriptors, || {
         let mut commands = Vec::new();
@@ -715,7 +720,7 @@ pub fn smith_with_environment(
         commands.push(smith_local_process_world::terminal::Action::Eof);
         Process::Script(Proc::Terminal(Box::new(Terminal::piped(stdin, output, commands))))
     });
-    let outcome = world.run(&clock, Duration::from_secs(4));
+    let outcome = world.run(&clock, STARTUP_WORLD_PATIENCE);
     assert!(outcome.procs.iter().all(Host::is_empty), "product and person drain");
     let Process::Binary(binary) = outcome.procs.first().expect("binary observation") else { unreachable!("binary") };
     let Process::Script(Proc::Terminal(person)) = outcome.procs.get(1).expect("person observation") else {
