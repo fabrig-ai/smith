@@ -43,7 +43,12 @@ pub(crate) enum Command {
 }
 
 impl Command {
-    pub fn start(arguments: &[String], story: Story, config: Config) -> (Self, Vec<Effect>) {
+    pub fn start(
+        arguments: &[String],
+        story: Story,
+        config: Config,
+        directory: &std::path::Path,
+    ) -> (Self, Vec<Effect>) {
         match arguments {
             [auth, command] if auth == "auth" => match command.as_str() {
                 "status" => {
@@ -60,7 +65,7 @@ impl Command {
                 }
                 _ => (Self::Unknown, error("unknown command", 2)),
             },
-            _ => match crate::print::Print::start(arguments, story, config) {
+            _ => match crate::print::Print::start(arguments, story, config, directory) {
                 Ok((state, effects)) => (Self::Print(Box::new(state)), effects),
                 Err(effects) => (Self::Unknown, effects),
             },

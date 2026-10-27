@@ -251,3 +251,30 @@ fn the_binary_uses_its_system_prompt_to_select() {
     child.stdin.take();
     assert_eq!(child.wait().expect("exit").code(), Some(0));
 }
+
+#[test]
+fn the_binary_edits_its_working_directory_file() {
+    let story = Story {
+        turns: vec![Turn {
+            steps: vec![Step::Act {
+                tool: "Edit".into(),
+                input: serde_json::json!({"file_path":"act.txt","old_string":"before","new_string":"after"}),
+            }],
+            ..Turn::default()
+        }],
+        ..Story::default()
+    };
+    let (scratch, mut child) = print_child(story);
+    let path = scratch.path().join("act.txt");
+    fs::write(&path, b"before\n").expect("working file");
+    let mut reader = BufReader::new(child.stdout.take().expect("output"));
+    send_user(&mut child);
+    loop {
+        if read_message(&mut reader)["type"] == "result" {
+            break;
+        }
+    }
+    child.stdin.take();
+    assert_eq!(child.wait().expect("exit").code(), Some(0));
+    assert_eq!(fs::read(path).expect("edited file"), b"after\n");
+}

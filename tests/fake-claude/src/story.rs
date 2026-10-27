@@ -169,7 +169,7 @@ pub enum Step {
     Hang,
     /// Waits through interrupts until termination.
     Deaf,
-    /// Emits one assistant message, then runs its Call or Builtin steps in order.
+    /// Emits one assistant message, then runs its Call, Builtin or Act steps in order.
     Together(Vec<Step>),
     /// Calls the named server tool, returning its answer to the model.
     Call { tool: String, input: serde_json::Value },
@@ -177,6 +177,9 @@ pub enum Step {
     CallChecked { tool: String, input: serde_json::Value, contains: String },
     /// Asks permission before returning this built-in tool's scripted result.
     Builtin { tool: String, input: serde_json::Value, result: String },
+    /// Asks permission, then performs Read, Write or Edit in the launch directory;
+    /// a denial returns its message without touching the file.
+    Act { tool: String, input: serde_json::Value },
 }
 
 /// A turn's terminal message, or its process exit without a result.
@@ -251,6 +254,8 @@ pub enum Seen {
     Settings { allow: Vec<String>, ask: Vec<String>, deny: Vec<String>, keys: Vec<String> },
     /// The settings could not be read or decoded.
     UnreadableSettings,
+    /// An allowed built-in operation completed or failed, without file contents.
+    Acted { tool: String, path: String, error: bool },
     /// A server tool call and whether its result failed, without its input.
     Called { tool: String, error: bool },
     /// A built-in tool's permission decision, without its input.

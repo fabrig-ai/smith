@@ -278,7 +278,17 @@ fn make_fake(spawn: &Spawn, inherited: &Inherited) -> Proc {
         spawn.env.iter().any(|entry| entry.as_ref() == b"CLAUDE_CONFIG_DIR=/programs/source"),
         "each invocation uses the source's configuration directory"
     );
-    let mut spawn = Spawn {
+    let mut spawn = fake_launch(spawn);
+    if spawn.args.first().is_some_and(|argument| argument.as_ref() == b"-p")
+        && spawn.env.iter().any(|entry| entry.as_ref() == b"EARLY_EXIT=1")
+    {
+        spawn.args = Box::new([b"unknown-command".as_slice().into()]);
+    }
+    Proc::Fake(Box::new((smith_fake_claude::hosted(b"/programs/claude").make)(&spawn, inherited)))
+}
+
+fn fake_launch(spawn: &Spawn) -> Spawn {
+    let mut launch = Spawn {
         program: spawn.program.clone(),
         args: spawn.args.clone(),
         env: spawn.env.clone(),
@@ -286,12 +296,17 @@ fn make_fake(spawn: &Spawn, inherited: &Inherited) -> Proc {
         dir: spawn.dir.clone(),
         pipes: spawn.pipes.clone(),
     };
-    if spawn.args.first().is_some_and(|argument| argument.as_ref() == b"-p")
-        && spawn.env.iter().any(|entry| entry.as_ref() == b"EARLY_EXIT=1")
-    {
-        spawn.args = Box::new([b"unknown-command".as_slice().into()]);
+    // Hosted startup paths use the scenario namespace. Program print launches
+    // use either the admitted workspace descriptor (empty dir) or /programs
+    // with a run-relative dir; resolve that descriptor-relative cwd for the fake.
+    if launch.args.first().is_some_and(|argument| argument.as_ref() == b"-p") {
+        launch.dir = if launch.dir.is_empty() {
+            b"/work/repo".as_slice().into()
+        } else {
+            [b"/programs/", launch.dir.as_ref()].concat().into()
+        };
     }
-    Proc::Fake(Box::new((smith_fake_claude::hosted(b"/programs/claude").make)(&spawn, inherited)))
+    launch
 }
 
 fn make_relay(spawn: &Spawn, inherited: &Inherited) -> Proc {
@@ -421,6 +436,12 @@ pub struct Run {
     /// Names from each relay's spawn, with no environment values retained.
     pub relay_environments: Vec<Vec<String>>,
     pub events: Vec<smith_events::Record>,
+    /// Final bytes of the writable fixture, read after the run settles.
+    pub workspace_file: Option<Vec<u8>>,
+    /// Final bytes of the fixture outside every admitted workspace directory.
+    pub outside_file: Option<Vec<u8>>,
+    /// Final bytes of the read-only library fixture.
+    pub library_file: Option<Vec<u8>>,
 }
 
 impl Run {
@@ -434,7 +455,7 @@ impl Run {
     }
 }
 
-fn fixture(story: &Story, login: Option<&[u8]>) -> (Files, Opened) {
+fn fixture(story: &Story, login: Option<&[u8]>, case: Case) -> (Files, Opened) {
     let mut files = Files::new();
     let mut items = vec![
         Item::directory(b"home").mode(0o700),
@@ -447,6 +468,14 @@ fn fixture(story: &Story, login: Option<&[u8]>) -> (Files, Opened) {
     ];
     if let Some(login) = login {
         items.push(Item::file(b"programs/source/fake-claude.login", login).mode(0o600));
+    }
+    if case == Case::Tools {
+        items.extend([
+            Item::file(b"work/repo/a", b"before\n"),
+            Item::file(b"library/a", b"library text"),
+            Item::directory(b"outside"),
+            Item::file(b"outside/a", b"outside text"),
+        ]);
     }
     let base = files.lay(&items);
     (files, base)
@@ -503,7 +532,7 @@ fn run_inner(
             end: smith_fake_claude::End::default(),
         });
     }
-    let (mut files, base) = fixture(&story, login);
+    let (mut files, base) = fixture(&story, login, case);
     let root = files.open(base, b".", How::Directory).expect("parent root");
     let machine = Machine { files, base };
     let mut world =
@@ -584,7 +613,10 @@ fn run_inner(
     let factory = smith_fake_claude::hosted(b"/programs/claude");
     world.host_startup(
         HostedProgram { program: factory.program, make: make_fake, instances: 2, operations: factory.operations },
-        |spawn| smith_fake_claude::config_root(spawn).into_iter().chain(smith_fake_claude::mcp_root(spawn)).collect(),
+        |spawn| {
+            let launch = fake_launch(spawn);
+            smith_fake_claude::config_root(&launch).into_iter().chain(smith_fake_claude::mcp_root(&launch)).collect()
+        },
         |spawn| smith_fake_claude::observation_append(spawn).into_iter().collect(),
     );
     world.host(HostedProgram {
@@ -649,6 +681,9 @@ fn run_inner(
         Err(_) => Vec::new(),
     };
     let run = Run {
+        workspace_file: fixture_file(&mut outcome.machine.files, base, b"work/repo/a"),
+        outside_file: fixture_file(&mut outcome.machine.files, base, b"outside/a"),
+        library_file: fixture_file(&mut outcome.machine.files, base, b"library/a"),
         frames: parent.peer.observed().to_vec(),
         errors: parent.errors.clone(),
         invocations: redacted_invocations(&bytes),
@@ -677,6 +712,13 @@ fn run_inner(
     outcome.machine.files.close(base);
     assert_eq!(outcome.machine.files.open_handles(), 0, "fixture handles settle");
     run
+}
+
+fn fixture_file(files: &mut Files, base: Opened, path: &[u8]) -> Option<Vec<u8>> {
+    let file = files.open(base, path, How::Read).ok()?;
+    let bytes = files.read(file, 0, 65_536).expect("bounded fixture file");
+    files.close(file);
+    Some(bytes)
 }
 
 pub(crate) fn cancel() -> skein_channel::Frame {

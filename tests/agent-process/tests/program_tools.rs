@@ -197,3 +197,42 @@ fn an_ungranted_built_in_in_init_fails_the_start() {
         matches!(model.value(), ModelFault::Program(fault) if fault.exit().is_none() && fault.detail() == b"smith: the program offers a built-in tool the run did not grant: WebFetch")
     );
 }
+
+fn edit(path: &str, old: &str, new: &str) -> Step {
+    Step::Act { tool: "Edit".into(), input: json!({"file_path":path,"old_string":old,"new_string":new}) }
+}
+
+#[test]
+fn a_program_edits_its_workspace_through_the_prompt() {
+    for path in ["a", "/work/repo/a"] {
+        let run = steps(vec![edit(path, "before", "after"), finish()]);
+        accepted(&run);
+        assert_eq!(run.workspace_file.as_deref(), Some(b"after\n".as_slice()));
+        assert!(
+            run.seen.contains(&Seen::Prompted { tool: "Edit".into(), decision: Decision::Allow { unchanged: true } })
+        );
+        assert!(run.seen.contains(&Seen::Acted { tool: "Edit".into(), path: path.into(), error: false }));
+    }
+}
+
+#[test]
+fn an_edit_outside_the_workspace_is_denied_and_nothing_changes() {
+    let run = steps(vec![edit("/outside/a", "outside", "changed"), finish()]);
+    accepted(&run);
+    assert_eq!(run.outside_file.as_deref(), Some(b"outside text".as_slice()));
+    assert_eq!(run.workspace_file.as_deref(), Some(b"before\n".as_slice()));
+    assert!(run.seen.contains(&Seen::Prompted {
+        tool: "Edit".into(),
+        decision: Decision::Deny("path is outside the workspace: /outside/a".into())
+    }));
+    assert!(!run.seen.iter().any(|seen| matches!(seen, Seen::Acted { .. })));
+}
+
+#[test]
+fn a_program_reads_its_absolute_library_path() {
+    let run = steps(vec![Step::Act { tool: "Read".into(), input: json!({"file_path":"/library/a"}) }, finish()]);
+    accepted(&run);
+    result(&run, "/library/a", b"library text", false);
+    assert_eq!(run.library_file.as_deref(), Some(b"library text".as_slice()));
+    assert!(run.seen.contains(&Seen::Acted { tool: "Read".into(), path: "/library/a".into(), error: false }));
+}

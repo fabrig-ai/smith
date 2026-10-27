@@ -511,9 +511,24 @@ pub struct Run {
     pub observations: Option<Vec<u8>>,
     pub signalled: bool,
     #[allow(dead_code)]
+    pub files: Vec<File>,
+    #[allow(dead_code)]
     pub calls: Vec<String>,
     #[allow(dead_code)]
     pub server_exit: Option<Exit>,
+}
+
+#[allow(dead_code)]
+pub struct File {
+    pub path: Vec<u8>,
+    pub bytes: Option<Vec<u8>>,
+}
+
+impl Run {
+    #[allow(dead_code)]
+    pub fn file(&self, path: &[u8]) -> Option<&[u8]> {
+        self.files.iter().find(|file| file.path == path).and_then(|file| file.bytes.as_deref())
+    }
 }
 
 pub fn run(story: Option<Story>, login: Option<&[u8]>, invocations: Vec<Invocation>) -> Run {
@@ -521,6 +536,16 @@ pub fn run(story: Option<Story>, login: Option<&[u8]>, invocations: Vec<Invocati
 }
 
 fn run_files(story: Option<Story>, login: Option<&[u8]>, invocations: Vec<Invocation>, extra: Vec<Item>) -> Run {
+    run_files_observing(story, login, invocations, extra, &[])
+}
+
+pub fn run_files_observing(
+    story: Option<Story>,
+    login: Option<&[u8]>,
+    invocations: Vec<Invocation>,
+    extra: Vec<Item>,
+    paths: &[&[u8]],
+) -> Run {
     let mut items = vec![Item::directory(b"home"), Item::directory(b"config")];
     if let Some(story) = story {
         items.push(Item::file(b"config/fake-claude.story", &story.encode()));
@@ -581,7 +606,8 @@ fn run_files(story: Option<Story>, login: Option<&[u8]>, invocations: Vec<Invoca
     };
     let login = read(b"config/fake-claude.login");
     let observations = read(b"config/fake-claude.observations");
+    let files = paths.iter().map(|path| File { path: path.to_vec(), bytes: read(path) }).collect();
     outcome.machine.files.close(base);
     assert_eq!(outcome.machine.files.open_handles(), 0, "all invocation descriptors settle");
-    Run { records, login, observations, signalled, calls, server_exit }
+    Run { records, login, observations, signalled, calls, server_exit, files }
 }

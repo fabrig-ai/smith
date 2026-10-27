@@ -5,6 +5,7 @@
 
 #![forbid(unsafe_code)]
 
+mod act;
 mod commands;
 mod faces;
 mod fake;

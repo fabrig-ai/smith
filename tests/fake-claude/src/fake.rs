@@ -27,7 +27,7 @@ const QUEUE: u32 = 64;
 const FILE_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// Descriptors transferred by the kernel entry point or hosted factory.
-/// `observations` appends beneath `config`; `mcp` contains both invocation files.
+/// `observations` appends beneath `config`; `mcp` roots invocation files and allowed workspace actions.
 #[derive(Debug)]
 pub struct Faces {
     pub stdin: Option<Fd>,
@@ -54,6 +54,7 @@ pub struct Fake {
     stderr: Output,
     observation: Output,
     arguments: Vec<String>,
+    directory: std::path::PathBuf,
     story: Option<Story>,
     command: Option<Command>,
     code: Option<u8>,
@@ -193,6 +194,7 @@ impl Fake {
             stderr,
             observation,
             arguments,
+            directory: directory.to_path_buf(),
             story,
             command: None,
             code: None,
@@ -390,7 +392,7 @@ impl Fake {
             && self.observation.drained()
             && let Some(story) = self.story.take()
         {
-            let (command, effects) = Command::start(&self.arguments, story, self.config);
+            let (command, effects) = Command::start(&self.arguments, story, self.config, &self.directory);
             self.command = Some(command);
             self.effects(effects);
         }

@@ -100,8 +100,23 @@ pub fn without_input() -> Invocation {
 }
 
 pub fn with_server(story: Story, invocation: Invocation, script: smith_fake_claude::ServerScript) -> Run {
+    with_server_files(story, invocation, script, Vec::new(), &[])
+}
+
+pub fn with_server_files(
+    story: Story,
+    invocation: Invocation,
+    script: smith_fake_claude::ServerScript,
+    extra: Vec<Item>,
+    paths: &[&[u8]],
+) -> Run {
     let config = serde_json::json!({"mcpServers":{"smith":{"command":"server","args":[script.encode()],"env":{"SERVER_TEST":"overridden"}}}});
-    run(story, invocation, None, Some(&serde_json::to_vec(&config).expect("configuration")))
+    let mut files = vec![
+        Item::directory(b"run"),
+        Item::file(b"run/mcp.json", &serde_json::to_vec(&config).expect("configuration")),
+    ];
+    files.extend(extra);
+    super::run_files_observing(Some(story), Some(b"claude.ai"), vec![invocation], files, paths)
 }
 
 pub fn sequence(story: Story, invocations: Vec<Invocation>) -> Run {

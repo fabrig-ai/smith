@@ -22,20 +22,21 @@ pub fn config_root(spawn: &Spawn) -> Option<StartupRoot> {
     config_path(&spawn.env).map(|path| StartupRoot { name: b"config".as_slice().into(), path: path.into() })
 }
 
-/// Declares the common directory of the prompt and MCP files, named `mcp`.
+/// Declares the invocation file namespace as `mcp`, shared with allowed acts.
+/// Paths are root-relative; the launch directory resolves relative user paths.
 pub fn mcp_root(spawn: &Spawn) -> Option<StartupRoot> {
     file_arguments(&spawn.args, Path::new(std::ffi::OsStr::from_bytes(&spawn.dir)))
         .map(|files| StartupRoot { name: b"mcp".as_slice().into(), path: files.root.into() })
 }
 
-/// Startup's containing directory and flag paths relative to it.
+/// Startup's file namespace and flag paths relative to it.
 #[derive(Debug)]
 pub(crate) struct FileArguments {
     pub root: Vec<u8>,
     pub arguments: Vec<Box<[u8]>>,
 }
 
-// Startup and the command agree on a common root and paths beneath it. Kernel
+// Startup and commands share a file root without adding a third root slot. Kernel
 // file effects deliberately refuse absolute names and paths escaping a root.
 pub(crate) fn file_arguments(arguments: &[Box<[u8]>], directory: &Path) -> Option<FileArguments> {
     let paths: Vec<_> = arguments
@@ -44,14 +45,17 @@ pub(crate) fn file_arguments(arguments: &[Box<[u8]>], directory: &Path) -> Optio
         .filter(|(_, pair)| matches!(pair[0].as_ref(), b"--mcp-config" | b"--append-system-prompt-file"))
         .map(|(index, pair)| (index + 1, directory.join(std::ffi::OsStr::from_bytes(&pair[1]))))
         .collect();
-    let first = paths.first()?.1.parent()?;
-    let root = first.ancestors().find(|root| paths.iter().all(|(_, path)| path.starts_with(root)))?;
+    let rooted = paths.iter().any(|(_, path)| path.is_absolute());
     let mut relative = arguments.to_vec();
     for (index, path) in &paths {
-        relative[*index] = path.strip_prefix(root).ok()?.as_os_str().as_bytes().into();
+        relative[*index] = path.strip_prefix("/").unwrap_or(path).as_os_str().as_bytes().into();
     }
-    let root = if root.as_os_str().is_empty() { Path::new(".") } else { root };
-    Some(FileArguments { root: root.as_os_str().as_bytes().to_vec(), arguments: relative })
+    if paths.is_empty() {
+        return None;
+    }
+    // `/.' also maps to the simulated machine's root through its startup hook.
+    let root = if rooted { b"/.".to_vec() } else { b".".to_vec() };
+    Some(FileArguments { root, arguments: relative })
 }
 
 /// Declares the observations append file for `World::host_startup`, alongside
@@ -67,6 +71,8 @@ pub fn observation_append(spawn: &Spawn) -> Option<StartupAppend> {
 
 /// A hosted factory; register it with [`config_root`] and [`observation_append`]
 /// and [`mcp_root`] through `World::host_startup`. Its default limit is one simultaneous invocation.
+/// Scenario adapters resolve a descriptor-relative `Spawn::dir` into the
+/// scenario's filesystem namespace before selecting roots or calling the factory.
 pub fn hosted(program: &[u8]) -> HostedProgram<Fake> {
     HostedProgram { program: program.into(), make, instances: 1, operations: crate::fake::operations() }
 }

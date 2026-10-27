@@ -120,6 +120,7 @@ enum Phase {
     Settings,
     Connecting,
     Calling,
+    Acting,
     Idle,
     Login,
     Removing,
@@ -146,6 +147,8 @@ pub(crate) struct Print {
     interrupted: bool,
     server_config: Value,
     pending: Option<ToolCall>,
+    acting: Option<crate::act::Act>,
+    directory: std::path::PathBuf,
     next_tool: u64,
     expected_reply: Option<String>,
     together: std::collections::VecDeque<(ToolCall, Effect)>,
@@ -156,7 +159,12 @@ impl Print {
         self.pending.as_ref().map(|call| call.tool.as_str())
     }
 
-    pub fn start(arguments: &[String], story: Story, config: Config) -> Result<(Self, Vec<Effect>), Vec<Effect>> {
+    pub fn start(
+        arguments: &[String],
+        story: Story,
+        config: Config,
+        directory: &std::path::Path,
+    ) -> Result<(Self, Vec<Effect>), Vec<Effect>> {
         let flags = Flags::parse(arguments).ok_or_else(|| error("unknown command or flag", 2))?;
         if flags.values.contains_key("--resume") && story.resume == Resume::Missing {
             return Err(vec![
@@ -181,6 +189,8 @@ impl Print {
             interrupted: false,
             server_config: Value::Null,
             pending: None,
+            acting: None,
+            directory: directory.to_path_buf(),
             next_tool: 0,
             expected_reply: None,
             together: std::collections::VecDeque::new(),
@@ -309,6 +319,16 @@ impl Print {
                     _ => self.finish(stream::failure(Some(401), None, vec!["not signed in".into()])),
                 }
             }
+            Phase::Acting => {
+                let progress = self.acting.as_mut().expect("active built-in operation").file(event);
+                match progress {
+                    crate::act::Progress::Request(request) => vec![Effect::File(request)],
+                    crate::act::Progress::Done(outcome) => {
+                        let path = self.acting.take().expect("completed operation").path;
+                        self.acted(path, outcome)
+                    }
+                }
+            }
             Phase::Removing => {
                 if self.interrupted {
                     self.interrupt_result()
@@ -341,6 +361,7 @@ impl Print {
                     | Phase::Hanging
                     | Phase::Deaf
                     | Phase::Calling
+                    | Phase::Acting
                     | Phase::Connecting
             ) =>
             {
@@ -483,16 +504,20 @@ impl Print {
                     }
                 }
                 Step::Call { tool, input } => {
-                    effects.extend(self.tool(tool, input, None));
+                    effects.extend(self.tool(tool, input, ToolAction::Server));
                     return effects;
                 }
                 Step::CallChecked { tool, input, contains } => {
                     self.expected_reply = Some(contains);
-                    effects.extend(self.tool(tool, input, None));
+                    effects.extend(self.tool(tool, input, ToolAction::Server));
                     return effects;
                 }
                 Step::Builtin { tool, input, result } => {
-                    effects.extend(self.tool(tool, input, Some(result)));
+                    effects.extend(self.tool(tool, input, ToolAction::Scripted(result)));
+                    return effects;
+                }
+                Step::Act { tool, input } => {
+                    effects.extend(self.tool(tool, input, ToolAction::Act));
                     return effects;
                 }
                 Step::Together(steps) => {
@@ -532,12 +557,16 @@ impl Print {
         effects
     }
 
-    fn tool(&mut self, tool: String, input: Value, result: Option<String>) -> Vec<Effect> {
+    fn tool(&mut self, tool: String, input: Value, action: ToolAction) -> Vec<Effect> {
+        if matches!(action, ToolAction::Act) && !["Read", "Write", "Edit"].contains(&tool.as_str()) {
+            return error("Act requires Read, Write or Edit", 1);
+        }
+        let builtin = action.builtin();
         self.next_tool = self.next_tool.checked_add(1).expect("tool ID fits");
         self.texts = self.texts.checked_add(1).expect("message count fits");
         let id = format!("toolu_{}", self.next_tool);
         let bare = tool.strip_prefix(&format!("mcp__{}__", self.server)).unwrap_or(&tool).to_owned();
-        let name = if result.is_some() { tool.clone() } else { format!("mcp__{}__{}", self.server, bare) };
+        let name = if builtin { tool.clone() } else { format!("mcp__{}__{}", self.server, bare) };
         let message_id = self
             .session
             .messages
@@ -546,7 +575,7 @@ impl Print {
             .expect("message ID fits");
         let mut assistant = stream::assistant("", &self.flags.values["--model"], message_id, &self.story.usage);
         assistant["message"]["content"] = json!([{"type":"tool_use", "id":id, "name":name, "input":input}]);
-        let (call, arguments) = if result.is_some() {
+        let (call, arguments) = if builtin {
             (
                 self.flags.values["--permission-prompt-tool"]
                     .strip_prefix(&format!("mcp__{}__", self.server))
@@ -557,7 +586,7 @@ impl Print {
         } else {
             (bare.clone(), input.clone())
         };
-        self.pending = Some(ToolCall { id, tool: if result.is_some() { tool } else { bare }, input, result });
+        self.pending = Some(ToolCall { id, tool: if builtin { tool } else { bare }, input, action });
         self.phase = Phase::Calling;
         let mut effects = Vec::new();
         if self.flags.values.contains_key("--include-partial-messages") {
@@ -612,47 +641,98 @@ impl Print {
                 if let Some(expected) = self.expected_reply.take() {
                     failed |= !text.contains(&expected);
                 }
-                let (text, observation) = match pending.result {
-                    None => (text, Seen::Called { tool: pending.tool, error: failed }),
-                    Some(result) => {
+                let mut effects = Vec::new();
+                let text = match &pending.action {
+                    ToolAction::Server => {
+                        effects.push(Effect::Seen(Seen::Called { tool: pending.tool.clone(), error: failed }));
+                        text
+                    }
+                    ToolAction::Scripted(_) | ToolAction::Act => {
                         let decision = if failed { Decision::Unreadable } else { decision(&text, &pending.input) };
-                        let text = match &decision {
-                            Decision::Allow { .. } => result,
+                        effects.push(Effect::Seen(Seen::Prompted {
+                            tool: pending.tool.clone(),
+                            decision: decision.clone(),
+                        }));
+                        match decision {
+                            Decision::Allow { .. } => match &pending.action {
+                                ToolAction::Scripted(result) => result.clone(),
+                                ToolAction::Act => {
+                                    let path = pending.input["file_path"].as_str().unwrap_or("").to_owned();
+                                    let started = crate::act::Act::start(
+                                        &pending.tool,
+                                        &pending.input,
+                                        self.config.mcp.expect("MCP invocation has its file root"),
+                                        &self.directory,
+                                    );
+                                    self.pending = Some(pending);
+                                    self.phase = Phase::Acting;
+                                    match started {
+                                        Ok((act, request)) => {
+                                            self.acting = Some(act);
+                                            effects.push(Effect::File(request));
+                                        }
+                                        Err(outcome) => effects.extend(self.acted(path, outcome)),
+                                    }
+                                    return effects;
+                                }
+                                ToolAction::Server => unreachable!("server calls do not ask permission"),
+                            },
                             Decision::Deny(message) => {
                                 failed = true;
-                                message.clone()
+                                message
                             }
                             Decision::Unreadable => {
                                 failed = true;
                                 "unreadable permission answer".into()
                             }
-                        };
-                        (text, Seen::Prompted { tool: pending.tool, decision })
+                        }
                     }
                 };
-                let mut effects = vec![Effect::Seen(observation), self.emit(json!({"type":"user", "message":{"role":"user", "content":[{"type":"tool_result", "tool_use_id":pending.id, "content":text, "is_error":failed}]}}))];
-                if let Some((pending, call)) = self.together.pop_front() {
-                    self.pending = Some(pending);
-                    self.phase = Phase::Calling;
-                    effects.push(call);
-                } else {
-                    effects.extend(self.steps());
-                }
+                effects.extend(self.tool_result(pending.id, text, failed));
                 effects
             }
         }
+    }
+
+    fn acted(&mut self, path: String, outcome: crate::act::Outcome) -> Vec<Effect> {
+        let pending = self.pending.take().expect("acted built-in call");
+        let mut effects = vec![Effect::Seen(Seen::Acted { tool: pending.tool, path, error: outcome.error })];
+        if self.interrupted {
+            effects.extend(self.interrupt_result());
+        } else {
+            effects.extend(self.tool_result(pending.id, outcome.text, outcome.error));
+        }
+        effects
+    }
+
+    fn tool_result(&mut self, id: String, text: String, failed: bool) -> Vec<Effect> {
+        let mut effects = vec![self.emit(json!({"type":"user", "message":{"role":"user", "content":[{"type":"tool_result", "tool_use_id":id, "content":text, "is_error":failed}]}}))];
+        if let Some((pending, call)) = self.together.pop_front() {
+            self.pending = Some(pending);
+            self.phase = Phase::Calling;
+            effects.push(call);
+        } else {
+            effects.extend(self.steps());
+        }
+        effects
     }
 
     fn together(&mut self, steps: Vec<Step>) -> Vec<Effect> {
         let mut blocks = Vec::new();
         for step in steps {
             let effects = match step {
-                Step::Call { tool, input } => self.tool(tool, input, None),
-                Step::Builtin { tool, input, result } => self.tool(tool, input, Some(result)),
-                _ => return error("Together requires Call or Builtin", 1),
+                Step::Call { tool, input } => self.tool(tool, input, ToolAction::Server),
+                Step::Builtin { tool, input, result } => self.tool(tool, input, ToolAction::Scripted(result)),
+                Step::Act { tool, input } => {
+                    if !["Read", "Write", "Edit"].contains(&tool.as_str()) {
+                        return error("Act requires Read, Write or Edit", 1);
+                    }
+                    self.tool(tool, input, ToolAction::Act)
+                }
+                _ => return error("Together requires Call, Builtin or Act", 1),
             };
             let pending = self.pending.take().expect("tool prepared");
-            let name = if pending.result.is_some() {
+            let name = if pending.action.builtin() {
                 pending.tool.clone()
             } else {
                 format!("mcp__{}__{}", self.server, pending.tool)
@@ -696,7 +776,10 @@ impl Print {
     pub fn stop(&mut self) -> Vec<Effect> {
         match self.pending.take() {
             Some(pending) => {
-                let seen = if pending.result.is_some() {
+                if let Some(act) = self.acting.take() {
+                    return vec![Effect::Seen(Seen::Acted { tool: pending.tool, path: act.path, error: true })];
+                }
+                let seen = if pending.action.builtin() {
                     Seen::Prompted { tool: pending.tool, decision: Decision::Unreadable }
                 } else {
                     Seen::Called { tool: pending.tool, error: true }
@@ -716,7 +799,7 @@ impl Print {
                 effects.extend(self.interrupt_result());
                 effects
             }
-            Phase::Saving | Phase::Login | Phase::Removing => {
+            Phase::Saving | Phase::Login | Phase::Removing | Phase::Acting => {
                 self.interrupted = true;
                 Vec::new()
             }
@@ -795,7 +878,23 @@ struct ToolCall {
     id: String,
     tool: String,
     input: Value,
-    result: Option<String>,
+    action: ToolAction,
+}
+
+#[derive(Debug)]
+enum ToolAction {
+    Server,
+    Scripted(String),
+    Act,
+}
+
+impl ToolAction {
+    fn builtin(&self) -> bool {
+        match self {
+            Self::Server => false,
+            Self::Scripted(_) | Self::Act => true,
+        }
+    }
 }
 
 fn decision(text: &str, input: &Value) -> Decision {
