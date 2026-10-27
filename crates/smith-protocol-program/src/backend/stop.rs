@@ -1,11 +1,12 @@
 //! One interrupt/result/input-close sequence (protocol/programs.md 5.7).
-//! Keeps whether a result is owed; knows no run budget. Cancel, close and the
-//! wind-down enter here; the backend's existing grace escalates to termination.
+//! Keeps the process-local interrupt sequence, its outstanding response and
+//! whether a result is owed; knows no run budget. Keeping stops write control
+//! requests, cancel/close signal, and the existing grace escalates both.
 
-use super::{Backend, Below, Phase, tail, turns};
+use super::{Backend, Below, Phase, stream, tail, turns};
 use crate::mcp;
 use skein_io::{self as io, kernel};
-use skein_lib::{Env, List, Queue, Time};
+use skein_lib::{Env, List, Queue};
 use smith_domain::llm;
 use smith_protocol_llm as protocol;
 use smith_protocol_llm::{FromDomain, ToDomain};
@@ -14,8 +15,13 @@ pub(super) const INTERRUPTED: &[u8] = b"not run: the program turn was interrupte
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Stop {
+    /// No backend stop is awaiting the program's result.
     None,
+    /// Cancel or close signals the program, then closes input at its result.
     Closing,
+    /// End a held wait and close input after its session has recorded the turn.
+    Parking,
+    /// A finishing Complete waits for the result before sending its note.
     WindDown,
     /// End an in-flight completion so the domain can issue its finishing note.
     Yielding,
@@ -54,7 +60,10 @@ impl Backend {
         }
         self.winding = WindDown::Ordinary;
         if self.active_turn() {
-            self.stop(env.now, true, true);
+            self.stop(env, true, true, up, below);
+            if self.phase == Phase::Ending {
+                return;
+            }
             self.stop = Stop::Yielding;
         } else {
             self.deliver(env, up, below);
@@ -80,32 +89,27 @@ impl Backend {
     pub(super) fn wind_down(
         &mut self,
         env: &Env<protocol::ComponentLimits>,
-        mut request: FromDomain,
+        request: FromDomain,
         up: &mut Queue<ToDomain>,
         below: &mut Queue<Below>,
     ) -> Option<FromDomain> {
-        let (prompt, capture) = match &mut request {
-            FromDomain::Complete { prompt, observation, .. } => (prompt, observation.is_some()),
+        let choice = match &request {
+            FromDomain::Complete { prompt, .. } => &prompt.choice,
             FromDomain::Cancel { .. } | FromDomain::Yield { .. } => unreachable!("completion route"),
         };
-        match &prompt.choice {
+        match choice {
             llm::ToolChoice::Only(_) | llm::ToolChoice::None if self.winding == WindDown::Ordinary => {}
             llm::ToolChoice::Only(_) | llm::ToolChoice::Auto | llm::ToolChoice::None => return Some(request),
         }
         self.winding = WindDown::Finishing;
-        let Some(rendered) =
-            tail::render_observed(prompt, &self.ledger, &self.settings.adapter, self.settings.input_bytes, capture)
-        else {
-            self.fail(env, llm::Failure::Invalid, b"smith: wind-down input exceeds its bound", up, below);
-            return None;
-        };
-        self.outgoing = Some(rendered.line);
         let active = self.active_turn();
         self.request = Some(request);
-        if let Some(text) = rendered.text {
-            self.prompt_text_measure(env.now, text);
+        // Keep the neutral prompt in its existing ownership term until the
+        // interrupted result. Encoding now would retain two input ceilings.
+        if !active && !self.render_finishing_input(env, up, below) {
+            return None;
         }
-        self.stop(env.now, active, true);
+        self.stop(env, active, true, up, below);
         if self.stop == Stop::None {
             self.completion_deadline(env, true);
         }
@@ -113,12 +117,83 @@ impl Backend {
         None
     }
 
-    pub(super) fn stop(&mut self, now: Time, active: bool, keeping: bool) {
-        self.flush_deltas(now);
+    fn render_finishing_input(
+        &mut self,
+        env: &Env<protocol::ComponentLimits>,
+        up: &mut Queue<ToDomain>,
+        below: &mut Queue<Below>,
+    ) -> bool {
+        let rendered = match &mut self.request {
+            Some(FromDomain::Complete { prompt, observation, .. }) => tail::render_observed(
+                prompt,
+                &self.ledger,
+                &self.settings.adapter,
+                self.settings.input_bytes,
+                observation.is_some(),
+            ),
+            Some(FromDomain::Cancel { .. } | FromDomain::Yield { .. }) | None => unreachable!("finishing Complete"),
+        };
+        match rendered {
+            Some(rendered) => {
+                self.outgoing = Some(rendered.line);
+                if let Some(text) = rendered.text {
+                    self.prompt_text_measure(env.now, text);
+                }
+                true
+            }
+            None => {
+                self.fail(env, llm::Failure::Invalid, b"smith: wind-down input exceeds its bound", up, below);
+                false
+            }
+        }
+    }
+
+    pub(super) fn parking_wait(&self) -> bool {
+        if self.owner.is_some() || self.turns.result {
+            return false;
+        }
+        for call in &self.ledger {
+            if call.name.as_ref() == b"wait" && !call.answered {
+                return true;
+            }
+        }
+        false
+    }
+
+    pub(super) fn stop(
+        &mut self,
+        env: &Env<protocol::ComponentLimits>,
+        active: bool,
+        keeping: bool,
+        up: &mut Queue<ToDomain>,
+        below: &mut Queue<Below>,
+    ) {
+        self.flush_deltas(env.now);
         let waiting = self.stop != Stop::None;
+        let was_keeping = match self.stop {
+            Stop::WindDown | Stop::Yielding | Stop::Parking => true,
+            Stop::None | Stop::Closing => false,
+        };
+        if keeping && active && !waiting && self.child.is_some() {
+            match self.prepare_interrupt() {
+                Some(()) => {
+                    // Finish any user line already being written before this line.
+                    if self.outgoing.is_none() {
+                        self.send_interrupt();
+                    }
+                }
+                None => {
+                    self.fail(env, llm::Failure::Invalid, b"smith: interrupt input exceeds its bound", up, below);
+                    if self.stop == Stop::None {
+                        self.stop(env, active, false, up, below);
+                    }
+                    return;
+                }
+            }
+        }
         self.stop = if keeping { Stop::WindDown } else { Stop::Closing };
         if active && let Some(child) = self.child {
-            if !waiting {
+            if !keeping && (!waiting || was_keeping) {
                 self.io.push(io::Request::Signal {
                     child,
                     to: kernel::Target::Group,
@@ -130,14 +205,64 @@ impl Backend {
         }
         if !waiting {
             self.deadline = if self.child.is_some() || self.spawning {
-                Some(now.saturating_add(self.settings.grace))
+                Some(env.now.saturating_add(self.settings.grace))
             } else {
                 None
             };
         }
     }
 
-    pub(super) fn stopped_result(&mut self, env: &Env<protocol::ComponentLimits>) {
+    fn prepare_interrupt(&mut self) -> Option<()> {
+        let sequence = self.interrupt_sequence.checked_add(1)?;
+        let line = stream::interrupt_request(sequence, self.settings.input_bytes)?;
+        self.interrupt_sequence = sequence;
+        self.interrupt_pending = Some(sequence);
+        self.interrupt_line = Some(line);
+        Some(())
+    }
+
+    pub(super) fn send_interrupt(&mut self) {
+        if let Some(line) = &self.interrupt_line {
+            self.io.push(io::Request::Output {
+                stream: self.pipes[0].expect("interrupt input"),
+                down: skein_lib::stream::OutputDown::Room {
+                    right: skein_lib::Token::new(2),
+                    bytes: u32::try_from(line.len()).expect("bounded interrupt line"),
+                },
+            });
+        }
+    }
+
+    pub(super) fn control_response(&mut self, document: &skein_json::Document) -> bool {
+        let response = mcp::json::field(document, 0, b"response");
+        let subtype = mcp::json::text_in(document, mcp::json::field_in(document, response, b"subtype"));
+        let id = mcp::json::text_in(document, mcp::json::field_in(document, response, b"request_id"));
+        match self.interrupt_pending {
+            Some(sequence) if subtype == Some(b"success") => {
+                let expected = stream::interrupt_id(sequence);
+                if id == Some(expected.as_ref()) {
+                    self.interrupt_pending = None;
+                    return true;
+                }
+            }
+            Some(_) | None => {}
+        }
+        false
+    }
+
+    pub(super) fn stopped_result(
+        &mut self,
+        env: &Env<protocol::ComponentLimits>,
+        up: &mut Queue<ToDomain>,
+        below: &mut Queue<Below>,
+    ) {
+        if self.stop == Stop::WindDown {
+            self.outgoing = None;
+            self.written = 0;
+            if !self.render_finishing_input(env, up, below) {
+                return;
+            }
+        }
         let yielding = self.stop == Stop::Yielding;
         if yielding {
             // A complete assistant message retains its text and usage. A partial
@@ -194,7 +319,7 @@ impl Backend {
             call.answered = true;
         }
         match self.stop {
-            Stop::Closing => {
+            Stop::Closing | Stop::Parking => {
                 if let Some(input) = self.pipes[0] {
                     self.io.push(io::Request::Close { entity: input });
                 }

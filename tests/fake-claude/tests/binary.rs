@@ -172,8 +172,7 @@ fn the_binary_runs_a_turn() {
     assert_eq!(child.wait().expect("exit").code(), Some(0));
 }
 
-#[test]
-fn the_binary_ends_a_turn_on_an_interrupt() {
+fn hanging_child() -> (Scratch, std::process::Child, BufReader<std::process::ChildStdout>) {
     let story = Story {
         turns: vec![Turn { steps: vec![Step::Text("waiting".into()), Step::Hang], end: End::default() }],
         ..Story::default()
@@ -184,13 +183,19 @@ fn the_binary_ends_a_turn_on_an_interrupt() {
     assert_eq!(read_message(&mut reader)["subtype"], "status");
     send_user(&mut child);
     assert_eq!(read_message(&mut reader)["type"], "assistant");
+    (scratch, child, reader)
+}
+
+#[test]
+fn the_binary_ends_a_turn_on_an_interrupt() {
+    let (scratch, mut child, mut reader) = hanging_child();
     signal(&child, "INT", &scratch);
-    assert_eq!(read_message(&mut reader)["terminal_reason"], "interrupted");
-    send_user(&mut child);
-    assert_eq!(read_message(&mut reader)["subtype"], "init");
-    assert_eq!(read_message(&mut reader)["subtype"], "status");
-    assert_eq!(read_message(&mut reader)["type"], "assistant");
-    assert_eq!(read_message(&mut reader)["subtype"], "success");
+    let result = read_message(&mut reader);
+    assert_eq!(result["terminal_reason"], "aborted_streaming");
+    assert_eq!(result.get("stop_reason"), Some(&serde_json::Value::Null));
+    assert_eq!(result["is_error"], true);
+    let mut rest = String::new();
+    assert_eq!(reader.read_line(&mut rest).expect("stdout closes after SIGINT"), 0);
     child.stdin.take();
     assert_eq!(child.wait().expect("exit").code(), Some(0));
 }
@@ -284,4 +289,31 @@ fn the_binary_edits_its_working_directory_file() {
     child.stdin.take();
     assert_eq!(child.wait().expect("exit").code(), Some(0));
     assert_eq!(fs::read(path).expect("edited file"), b"after\n");
+}
+
+#[test]
+fn the_binary_keeps_reading_after_a_control_interrupt() {
+    let (_scratch, mut child, mut reader) = hanging_child();
+    writeln!(
+        child.stdin.as_mut().expect("open input"),
+        "{}",
+        serde_json::json!({"type":"control_request","request_id":"probe-1","request":{"subtype":"interrupt"}})
+    )
+    .expect("control request");
+    let response = read_message(&mut reader);
+    assert_eq!(
+        response,
+        serde_json::json!({"type":"control_response", "response":{
+            "subtype":"success", "request_id":"probe-1", "response":{"still_queued":[]}
+        }})
+    );
+    let result = read_message(&mut reader);
+    assert_eq!(result["terminal_reason"], "aborted_streaming");
+    assert_eq!(result.get("stop_reason"), Some(&serde_json::Value::Null));
+    assert_eq!(result["is_error"], true);
+    send_user(&mut child);
+    assert_eq!(read_message(&mut reader)["type"], "assistant");
+    assert_eq!(read_message(&mut reader)["subtype"], "success");
+    child.stdin.take();
+    assert_eq!(child.wait().expect("exit").code(), Some(0));
 }
