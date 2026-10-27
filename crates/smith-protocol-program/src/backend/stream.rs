@@ -51,8 +51,8 @@ pub(super) fn init(bytes: &[u8], tools: &[mcp::Tool], depth: u32, tokens: u32) -
         && checked_init(bytes, tools, depth, tokens) == Some(())
 }
 
-/// The owner's Claude Code 2.1.311 probe (`reports/live-claude-shapes.md`,
-/// system/init) hides the permission-prompt tool even though it remains callable.
+/// Claude Code's system/init (`protocol/programs.md`, 5.5) hides the
+/// permission-prompt tool even though it remains callable.
 /// Accept it absent or listed once, alongside every declared server tool.
 pub(super) fn checked_init(bytes: &[u8], tools: &[mcp::Tool], depth: u32, tokens: u32) -> Option<()> {
     let document = json::collect_limited(bytes, limits(u32::try_from(bytes.len()).ok()?, depth, tokens))?;
