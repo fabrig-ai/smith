@@ -25,7 +25,7 @@ fn the_relay_connects_claude_to_the_agent_s_server() {
     assert_eq!(run.messages[0]["mcp_servers"], json!([{"name":"smith","status":"connected"}]));
     let tools = run.messages[0]["tools"].as_array().expect("tools");
     assert!(tools.contains(&json!("mcp__smith__finish")));
-    assert!(tools.contains(&json!("mcp__smith__permission_prompt")));
+    assert!(!tools.contains(&json!("mcp__smith__permission_prompt")));
     assert_eq!(run.seen[0], Up::Listening { port: 47100 });
     assert_eq!(run.seen[1], Up::Connected);
 }

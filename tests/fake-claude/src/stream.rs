@@ -18,7 +18,18 @@ pub(crate) fn init(init: &Init, tools: &[String], server: &str, model: &str) -> 
     let mut servers = vec![json!({"name": server, "status": "pending"})];
     servers.extend(init.extra_servers.iter().map(|name| json!({"name": name, "status": "connected"})));
     json!({"type":"system", "subtype":"init", "tools":tools, "mcp_servers":servers,
-        "model":model, "permissionMode":"default", "apiKeySource":"none", "capabilities":init.capabilities})
+        "model":model, "permissionMode":"default", "apiKeySource":"none",
+        "capabilities":init.capabilities,
+        "additional_directories":[], "agents":[], "analytics_disabled":false,
+        "claude_code_version":"2.1.311", "cwd":"", "original_cwd":"",
+        "fast_mode_disabled_reason":null, "fast_mode_state":"off", "memory_paths":[],
+        "messaging_socket_path":null, "output_style":"default", "per_turn_effort_active":false,
+        "plugins":[], "product_feedback_disabled":false, "skills":[], "slash_commands":[],
+        "terminal_slash_commands":[], "uuid":"fake", "view_mode":"default"})
+}
+
+pub(crate) fn status() -> Value {
+    json!({"type":"system", "subtype":"status", "status":null})
 }
 
 pub(crate) fn usage(usage: &Usage, count: u64) -> Value {
@@ -40,6 +51,7 @@ pub(crate) fn partials(text: &str, model: &str, id: usize) -> Vec<Value> {
         json!({"type":"content_block_start", "index":0, "content_block":{"type":"text", "text":""}}),
         json!({"type":"content_block_delta", "index":0, "delta":{"type":"text_delta", "text":text}}),
         json!({"type":"content_block_stop", "index":0}),
+        json!({"type":"message_delta", "delta":{"stop_reason":"end_turn"}}),
         json!({"type":"message_stop"}),
     ]
     .into_iter()

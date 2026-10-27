@@ -171,6 +171,14 @@ impl Backend {
                 Some(())
             }
             Some(b"system") => match json::text_in(&document, json::field(&document, 0, b"subtype")) {
+                Some(b"status") => return,
+                Some(b"init") => {
+                    // Admission collects the line itself; reuse the one-document
+                    // workspace rather than retaining this dispatch document too.
+                    drop(document);
+                    self.later_init(env, bytes, up, below);
+                    return;
+                }
                 Some(b"compact_boundary" | b"compaction") => Some(()),
                 Some(b"api_retry") => {
                     self.retry_measure(env.now, &document);
