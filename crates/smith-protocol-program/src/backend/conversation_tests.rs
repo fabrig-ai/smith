@@ -194,3 +194,133 @@ fn a_result_with_the_reviews_ignored_array_decodes() {
     let Some(ToDomain::Completed { completion, .. }) = up.pop() else { panic!("review result") };
     assert_eq!(completion.stop, llm::Stop::EndTurn);
 }
+
+// Queue capacities used by the existing conversation step harness.
+const UP_EVENTS: u32 = 32;
+const BELOW_EFFECTS: u32 = 64;
+
+const STATUS: &[u8] = br#"{"type":"system","subtype":"status","status":null}"#;
+const REPLY: &[u8] = br#"{"type":"assistant","message":{"id":"reply","content":[{"type":"text","text":"Hello."}]}}"#;
+const RESULT: &[u8] = br#"{"type":"result","is_error":false,"terminal_reason":"completed","stop_reason":"end_turn"}"#;
+
+fn active_with_queues() -> (Backend, Queue<ToDomain>, Queue<Below>) {
+    (active(), Queue::with_capacity(UP_EVENTS), Queue::with_capacity(BELOW_EFFECTS))
+}
+
+fn expected_reply() -> Box<[llm::Said]> {
+    Box::new([llm::Said::Text { text: b"Hello.".as_slice().into(), replay: None }])
+}
+
+fn finished_reply(up: &Queue<ToDomain>) -> &llm::Completion {
+    for event in up {
+        match event {
+            ToDomain::Completed { completion, .. } => return completion,
+            ToDomain::BuiltinResult { .. }
+            | ToDomain::Failed { .. }
+            | ToDomain::Cancelled { .. }
+            | ToDomain::Text { .. } => {}
+        }
+    }
+    panic!("completed reply")
+}
+
+#[test]
+fn status_before_a_completion_preserves_the_reply() {
+    let (mut backend, mut up, mut below) = active_with_queues();
+    backend.line(&env(0), STATUS, &mut up, &mut below);
+    backend.line(&env(0), REPLY, &mut up, &mut below);
+    backend.line(&env(0), RESULT, &mut up, &mut below);
+    assert_eq!(finished_reply(&up).content, expected_reply());
+    assert_eq!(backend.phase, Phase::Running);
+}
+
+#[test]
+fn status_after_a_tool_result_preserves_the_next_completion() {
+    let (mut backend, mut up, mut below) = active_with_queues();
+    backend.line(&env(0), br#"{"type":"assistant","message":{"id":"call","content":[{"type":"tool_use","id":"read","name":"Read","input":{}}]}}"#, &mut up, &mut below);
+    backend.line(
+        &env(0),
+        br#"{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"read","content":"file text"}]}}"#,
+        &mut up,
+        &mut below,
+    );
+    while backend.pop_measure().is_some() {}
+    backend.resume(&env(0), request(&backend), &mut up, &mut below);
+    up = Queue::with_capacity(UP_EVENTS);
+    backend.line(&env(0), STATUS, &mut up, &mut below);
+    backend.line(&env(0), REPLY, &mut up, &mut below);
+    backend.line(&env(0), RESULT, &mut up, &mut below);
+    assert_eq!(finished_reply(&up).content, expected_reply());
+    assert_eq!(backend.phase, Phase::Running);
+}
+
+fn second_turn() -> (Backend, Queue<ToDomain>, Queue<Below>) {
+    let (mut backend, mut up, mut below) = active_with_queues();
+    let Some(FromDomain::Complete { prompt, .. }) = &mut backend.request else { panic!("complete") };
+    prompt.served = Box::new([llm::Served::Finish]);
+    backend.line(&env(0), REPLY, &mut up, &mut below);
+    backend.line(&env(0), RESULT, &mut up, &mut below);
+    while backend.pop_measure().is_some() {}
+    let mut next = request(&backend);
+    let FromDomain::Complete { prompt, .. } = &mut next else { panic!("complete") };
+    prompt.served = Box::new([llm::Served::Finish]);
+    prompt.messages = Box::new([llm::Message {
+        role: llm::Role::User,
+        content: Box::new([llm::Block::Text { text: b"second message".as_slice().into(), replay: None }]),
+    }]);
+    backend.resume(&env(0), next, &mut up, &mut below);
+    up = Queue::with_capacity(UP_EVENTS);
+    (backend, up, below)
+}
+
+#[test]
+fn a_valid_later_init_allows_the_second_turn() {
+    let (mut backend, mut up, mut below) = second_turn();
+    let line = stream::tests::init_line(&["mcp__smith__finish"]);
+    backend.line(&env(0), &line, &mut up, &mut below);
+    backend.line(&env(0), STATUS, &mut up, &mut below);
+    backend.line(&env(0), REPLY, &mut up, &mut below);
+    backend.line(&env(0), RESULT, &mut up, &mut below);
+    assert_eq!(finished_reply(&up).stop, llm::Stop::EndTurn);
+    assert_eq!(backend.phase, Phase::Running);
+}
+
+fn init_failure(mut up: Queue<ToDomain>) -> (llm::Failure, Box<[u8]>) {
+    let Some(ToDomain::Failed { failure, detail, .. }) = up.pop() else { panic!("init failure") };
+    (failure, detail)
+}
+
+#[test]
+fn a_later_init_fails_like_startup_when_tools_are_missing() {
+    let line = stream::tests::init_line(&[]);
+    let (mut startup, mut startup_up, mut startup_below) = second_turn();
+    startup.admit_init(&env(0), &line, &mut startup_up, &mut startup_below);
+    let (mut later, mut later_up, mut later_below) = second_turn();
+    later.line(&env(0), &line, &mut later_up, &mut later_below);
+    let expected =
+        (llm::Failure::Program { exit: None }, b"smith: the program started without smith's tools".as_slice().into());
+    assert_eq!(init_failure(startup_up), expected);
+    assert_eq!(init_failure(later_up), expected);
+}
+
+#[test]
+fn a_later_init_rechecks_the_runs_builtin_grants() {
+    let (mut backend, mut up, mut below) = second_turn();
+    let line = stream::tests::init_line(&["mcp__smith__finish", "Read"]);
+    backend.line(&env(0), &line, &mut up, &mut below);
+    assert_eq!(
+        init_failure(up),
+        (
+            llm::Failure::Program { exit: None },
+            b"smith: the program offers a built-in tool the run did not grant: Read".as_slice().into()
+        )
+    );
+}
+
+#[test]
+fn an_unknown_system_subtype_still_fails_the_run() {
+    let (mut backend, mut up, mut below) = active_with_queues();
+    backend.line(&env(0), br#"{"type":"system","subtype":"future"}"#, &mut up, &mut below);
+    let Some(ToDomain::Failed { failure, .. }) = up.pop() else { panic!("unknown subtype failure") };
+    assert_eq!(failure, llm::Failure::Program { exit: None });
+}

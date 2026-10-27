@@ -26,34 +26,46 @@ impl Backend {
         up: &mut Queue<ToDomain>,
         below: &mut Queue<Below>,
     ) {
+        if let Some(detail) = self.init_problem(bytes) {
+            self.fail(env, llm::Failure::Program { exit: None }, &detail, up, below);
+            return;
+        }
+        self.phase = Phase::Running;
+        if !self.compaction() {
+            self.remember_session();
+        }
+        self.completion_deadline(env, true);
+    }
+
+    pub(super) fn later_init(
+        &mut self,
+        env: &Env<protocol::ComponentLimits>,
+        bytes: &[u8],
+        up: &mut Queue<ToDomain>,
+        below: &mut Queue<Below>,
+    ) {
+        if let Some(detail) = self.init_problem(bytes) {
+            self.fail(env, llm::Failure::Program { exit: None }, &detail, up, below);
+        }
+    }
+
+    fn init_problem(&self, bytes: &[u8]) -> Option<Box<[u8]>> {
         let depth = self.settings.adapter.client.depth;
         let tokens = self.settings.stream_tokens;
         if self.compaction() {
             if super::compact::checked_init(bytes, depth, tokens).is_some() {
-                self.phase = Phase::Running;
-                self.completion_deadline(env, true);
-            } else {
-                self.fail(
-                    env,
-                    llm::Failure::Program { exit: None },
-                    b"smith: summary program offered tools",
-                    up,
-                    below,
-                );
+                return None;
             }
-            return;
+            return Some(b"smith: summary program offered tools".as_slice().into());
         }
         let error = init_error(bytes, self.grants(), depth, tokens);
         if error.is_none() && stream::checked_init(bytes, &self.tools(), depth, tokens).is_some() {
-            self.phase = Phase::Running;
-            self.remember_session();
-            self.completion_deadline(env, true);
+            None
         } else {
-            let detail = match error {
+            Some(match error {
                 Some(detail) => detail,
                 None => b"smith: the program started without smith's tools".as_slice().into(),
-            };
-            self.fail(env, llm::Failure::Program { exit: None }, &detail, up, below);
+            })
         }
     }
 
