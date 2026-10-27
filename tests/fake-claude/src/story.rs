@@ -125,7 +125,7 @@ pub fn observations(bytes: &[u8]) -> Vec<Observation> {
 }
 
 /// Additional init claims sent by the scripted program to its parent.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Init {
     /// Simulated delay before publishing init; never sleeps the test process.
     #[serde(default)]
@@ -134,8 +134,36 @@ pub struct Init {
     pub extra_tools: Vec<String>,
     #[serde(default)]
     pub extra_servers: Vec<String>,
-    #[serde(default)]
+    #[serde(default = "capabilities")]
     pub capabilities: Vec<String>,
+}
+
+impl Default for Init {
+    fn default() -> Self {
+        Self { delay_ms: None, extra_tools: Vec::new(), extra_servers: Vec::new(), capabilities: capabilities() }
+    }
+}
+
+// Owner's Claude Code 2.1.311 probe: reports/live-claude-shapes.md, system/init.
+fn capabilities() -> Vec<String> {
+    [
+        "interrupt_receipt_v1",
+        "interrupt_cancel_queued_v1",
+        "interrupt_send_now_v1",
+        "interrupt_requeue_taken_v1",
+        "msg_lifecycle_v1",
+        "request_marker_lists_v1",
+        "lifecycle_wakeup_source_v1",
+        "sdk_mcp_tools_list_changed",
+        "sdk_mcp_manifests",
+        "mcp_read_resource_v1",
+        "mcp_tool_ui_meta_v1",
+        "ui_surface_v1",
+        "mcp_call_result_not_for_model_v1",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect()
 }
 
 /// The n-th user message runs this turn; beyond the story it says "Done.".
