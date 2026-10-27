@@ -1,4 +1,5 @@
 #![expect(
+    clippy::disallowed_macros,
     clippy::disallowed_methods,
     clippy::disallowed_types,
     reason = "ordinary Rust deterministic harness, programming-model.md 10.2"
@@ -80,7 +81,7 @@ fn an_interrupted_result_after_a_stop_is_no_failure() {
     let mut up = Queue::with_capacity(32);
     let mut below = Queue::with_capacity(64);
     backend.close(&env(0), &mut up, &mut below);
-    backend.line(&env(0), br#"{"type":"result","is_error":true,"terminal_reason":"interrupted"}"#, &mut up, &mut below);
+    backend.line(&env(0), br#"{"type":"result","is_error":true,"subtype":"error_during_execution","terminal_reason":"aborted_streaming"}"#, &mut up, &mut below);
     assert!(backend.pending_failure.is_none());
     let Some(ToDomain::Cancelled { .. }) = up.pop() else {
         panic!("cancel terminal");
@@ -91,7 +92,7 @@ fn an_interrupted_result_after_a_stop_is_no_failure() {
 }
 
 #[test]
-fn the_wind_down_interrupts_once() {
+fn the_wind_down_requests_one_interrupt() {
     let mut backend = active();
     let mut next = request(&backend);
     let FromDomain::Complete { prompt, .. } = &mut next else { panic!("complete") };
@@ -103,8 +104,9 @@ fn the_wind_down_interrupts_once() {
     let mut up = Queue::with_capacity(32);
     let mut below = Queue::with_capacity(64);
     backend.resume(&env(0), next, &mut up, &mut below);
-    assert_eq!(signal(&below, kernel::Signal::Interrupt), 1);
-    backend.line(&env(0), br#"{"type":"result","is_error":true,"terminal_reason":"interrupted"}"#, &mut up, &mut below);
+    assert_eq!(signal(&below, kernel::Signal::Interrupt), 0);
+    assert_eq!(control_rooms(&below), 1);
+    backend.line(&env(0), br#"{"type":"result","is_error":true,"subtype":"error_during_execution","terminal_reason":"aborted_streaming"}"#, &mut up, &mut below);
     backend.flush(&mut below);
     assert!(backend.winding == stop::WindDown::Finishing);
     assert_eq!(backend.phase, Phase::Running);
@@ -112,7 +114,8 @@ fn the_wind_down_interrupts_once() {
     let FromDomain::Complete { prompt, .. } = &mut second else { panic!("complete") };
     prompt.choice = llm::ToolChoice::Only(Box::new([llm::Served::Finish]));
     backend.resume(&env(0), second, &mut up, &mut below);
-    assert_eq!(signal(&below, kernel::Signal::Interrupt), 1);
+    assert_eq!(signal(&below, kernel::Signal::Interrupt), 0);
+    assert_eq!(control_rooms(&below), 1);
 }
 
 #[test]
@@ -421,4 +424,216 @@ fn a_prompt_arriving_during_interrupt_is_not_run() {
             "behavior":"deny", "message":"not run: the program turn was interrupted",
         })
     );
+}
+
+fn control_rooms(below: &Queue<Below>) -> usize {
+    below
+        .iter()
+        .filter_map(|effect| {
+            if let Below::Io(io::Request::Output { down: skein_lib::stream::OutputDown::Room { right, .. }, .. }) =
+                effect
+            {
+                Some(*right)
+            } else {
+                None
+            }
+        })
+        .filter(|right| *right == Token::new(2))
+        .count()
+}
+
+const INTERRUPTED_RESULT: &[u8] = br#"{"type":"result","subtype":"error_during_execution","is_error":true,"terminal_reason":"aborted_streaming","stop_reason":null}"#;
+const CONTROL_SUCCESS: &[u8] = br#"{"type":"control_response","response":{"subtype":"success","request_id":"smith-1","response":{"still_queued":[]}}}"#;
+
+fn grant_input(backend: &mut Backend, right: u64, up: &mut Queue<ToDomain>, below: &mut Queue<Below>) {
+    backend.from_io(
+        &env(0),
+        BelowEvent::Io(io::Event::Output {
+            owner: Token::new(31),
+            up: skein_lib::stream::OutputUp::Settled {
+                right: Token::new(right),
+                outcome: skein_lib::stream::OutputOutcome::Granted,
+            },
+        }),
+        up,
+        below,
+    );
+}
+
+fn sent_lines(below: &Queue<Below>) -> alloc::vec::Vec<serde_json::Value> {
+    let bytes: alloc::vec::Vec<u8> = below
+        .iter()
+        .filter_map(|effect| match effect {
+            Below::Io(io::Request::Output { down: skein_lib::stream::OutputDown::Send { bytes, .. }, .. }) => {
+                Some(bytes.as_ref())
+            }
+            Below::Io(_) | Below::File { .. } => None,
+        })
+        .flatten()
+        .copied()
+        .collect();
+    bytes
+        .split(|byte| *byte == b'\n')
+        .filter(|line| !line.is_empty())
+        .map(|line| serde_json::from_slice(line).expect("input JSON"))
+        .collect()
+}
+
+fn yielding() -> (Backend, Queue<ToDomain>, Queue<Below>) {
+    let mut backend = active();
+    let mut up = Queue::with_capacity(32);
+    let mut below = Queue::with_capacity(64);
+    backend.yield_for_wind_down(&env(0), &mut up, &mut below);
+    grant_input(&mut backend, 2, &mut up, &mut below);
+    (backend, up, below)
+}
+
+#[test]
+fn a_control_interrupt_keeps_the_process_for_the_note() {
+    let (mut backend, mut up, mut below) = yielding();
+    backend.line(&env(0), CONTROL_SUCCESS, &mut up, &mut below);
+    backend.line(&env(0), INTERRUPTED_RESULT, &mut up, &mut below);
+    let mut next = request(&backend);
+    let FromDomain::Complete { prompt, .. } = &mut next else { panic!("complete") };
+    prompt.choice = llm::ToolChoice::None;
+    prompt.messages = Box::new([llm::Message {
+        role: llm::Role::User,
+        content: Box::new([llm::Block::Text { text: b"finish now".as_slice().into(), replay: None }]),
+    }]);
+    backend.resume(&env(0), next, &mut up, &mut below);
+    grant_input(&mut backend, 1, &mut up, &mut below);
+    assert_eq!(
+        sent_lines(&below),
+        [
+            serde_json::json!({"type":"control_request","request_id":"smith-1","request":{"subtype":"interrupt"}}),
+            serde_json::json!({"type":"user","message":{"role":"user","content":"finish now\n"}}),
+        ]
+    );
+    assert_eq!(backend.child, Some(Token::new(30)));
+    assert_eq!(backend.phase, Phase::Running);
+    assert_eq!(signal(&below, kernel::Signal::Interrupt), 0);
+    assert!(!input_closed(&below));
+    for event in &up {
+        if let ToDomain::Failed { .. } = event {
+            panic!("keeping interrupt does not fail the run");
+        }
+    }
+}
+
+fn refused_response(response: &[u8], interrupt: bool) {
+    let (mut backend, mut up, mut below) =
+        if interrupt { yielding() } else { (active(), Queue::with_capacity(32), Queue::with_capacity(64)) };
+    backend.line(&env(0), response, &mut up, &mut below);
+    let Some(ToDomain::Failed { failure, detail, .. }) = up.pop() else { panic!("failed interrupt") };
+    assert_eq!(failure, llm::Failure::Invalid);
+    assert_eq!(detail.as_ref(), b"smith: the program refused the interrupt");
+}
+
+#[test]
+fn a_refused_control_interrupt_fails_the_run() {
+    refused_response(br#"{"type":"control_response","response":{"subtype":"error","request_id":"smith-1"}}"#, true);
+}
+
+#[test]
+fn an_unknown_interrupt_response_fails_the_run() {
+    refused_response(br#"{"type":"control_response","response":{"subtype":"success","request_id":"smith-2"}}"#, true);
+}
+
+#[test]
+fn an_unsolicited_interrupt_response_fails_the_run() {
+    refused_response(CONTROL_SUCCESS, false);
+}
+
+#[test]
+fn an_acknowledged_interrupt_still_needs_its_result() {
+    let (mut backend, mut up, mut below) = yielding();
+    backend.line(&env(0), CONTROL_SUCCESS, &mut up, &mut below);
+    backend.fire(&env(1), &mut up, &mut below);
+    assert_eq!(signal(&below, kernel::Signal::Terminate), 1);
+}
+
+#[test]
+fn a_cancel_after_the_interrupt_ack_still_signals() {
+    let (mut backend, mut up, mut below) = yielding();
+    backend.line(&env(0), CONTROL_SUCCESS, &mut up, &mut below);
+    backend.from_domain(&env(0), FromDomain::Cancel { owner: Token::new(80) }, &mut up, &mut below);
+    assert_eq!(signal(&below, kernel::Signal::Interrupt), 1);
+}
+
+#[test]
+fn a_control_request_obeys_the_exact_input_ceiling() {
+    // Compact envelope + "smith-" + twenty decimal digits + LF.
+    const MAXIMUM_REQUEST_BYTES: u32 = 103;
+    let maximum = MAXIMUM_REQUEST_BYTES;
+    let line = stream::interrupt_request(u64::MAX, maximum).expect("maximum id fits");
+    assert_eq!(line.len(), usize::try_from(MAXIMUM_REQUEST_BYTES).unwrap());
+    assert!(stream::interrupt_request(u64::MAX, maximum - 1).is_none());
+    assert_eq!(serde_json::from_slice::<serde_json::Value>(&line).unwrap()["request_id"], "smith-18446744073709551615");
+}
+
+#[test]
+fn an_interrupt_id_advances_in_the_same_process() {
+    let (mut backend, mut up, mut below) = yielding();
+    backend.line(&env(0), CONTROL_SUCCESS, &mut up, &mut below);
+    backend.line(&env(0), INTERRUPTED_RESULT, &mut up, &mut below);
+    backend.owner = Some(Token::new(80));
+    backend.request = Some(request(&backend));
+    backend.turns.restart();
+    backend.yield_for_wind_down(&env(0), &mut up, &mut below);
+    grant_input(&mut backend, 2, &mut up, &mut below);
+    assert_eq!(sent_lines(&below)[1]["request_id"], "smith-2");
+}
+
+#[test]
+fn a_held_wait_closes_input_after_its_control_result() {
+    let mut backend = active();
+    builtin(&mut backend);
+    backend.ledger.get_mut(0).unwrap().name = b"wait".as_slice().into();
+    let mut up = Queue::with_capacity(32);
+    let mut below = Queue::with_capacity(64);
+    backend.close(&env(0), &mut up, &mut below);
+    grant_input(&mut backend, 2, &mut up, &mut below);
+    assert!(!input_closed(&below));
+    backend.line(&env(0), CONTROL_SUCCESS, &mut up, &mut below);
+    backend.line(&env(0), INTERRUPTED_RESULT, &mut up, &mut below);
+    backend.flush(&mut below);
+    assert_eq!(sent_lines(&below)[0]["type"], "control_request");
+    assert_eq!(signal(&below, kernel::Signal::Interrupt), 0);
+    assert!(input_closed(&below));
+}
+
+#[test]
+fn a_control_interrupt_follows_the_whole_user_line() {
+    // One byte beyond the backend's 4096-byte native write chunk.
+    const TEXT_BYTES: usize = 4097;
+    let mut backend = active();
+    let original = alloc::vec![b'x'; TEXT_BYTES];
+    backend.outgoing = stream::text_message(&original, backend.settings.input_bytes);
+    backend.send_input();
+    let mut up = Queue::with_capacity(32);
+    let mut below = Queue::with_capacity(64);
+    backend.yield_for_wind_down(&env(0), &mut up, &mut below);
+    grant_input(&mut backend, 1, &mut up, &mut below);
+    grant_input(&mut backend, 1, &mut up, &mut below);
+    grant_input(&mut backend, 2, &mut up, &mut below);
+    assert_eq!(
+        sent_lines(&below),
+        [
+            serde_json::json!({"type":"user","message":{"role":"user","content":"x".repeat(TEXT_BYTES)}}),
+            serde_json::json!({"type":"control_request","request_id":"smith-1","request":{"subtype":"interrupt"}}),
+        ]
+    );
+}
+
+#[test]
+fn an_unencodable_interrupt_fails_and_still_stops() {
+    let mut backend = active();
+    // An empty input ceiling admits no request, including its newline.
+    backend.settings.input_bytes = 0;
+    let mut up = Queue::with_capacity(32);
+    let mut below = Queue::with_capacity(64);
+    backend.yield_for_wind_down(&env(0), &mut up, &mut below);
+    let Some(ToDomain::Failed { failure, .. }) = up.pop() else { panic!("invalid interrupt input") };
+    assert_eq!(failure, llm::Failure::Invalid);
+    assert_eq!(signal(&below, kernel::Signal::Interrupt), 1);
 }

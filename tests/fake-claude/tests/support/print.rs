@@ -128,3 +128,9 @@ pub fn sequence_files(story: Story, invocations: Vec<Invocation>, extra: Vec<Ite
     files.extend(extra);
     super::run_files(Some(story), Some(b"claude.ai"), invocations, files)
 }
+
+// Dispatch a keeping interrupt while the stdout reader remains outstanding.
+pub fn control(mut invocation: Invocation, after: &str) -> Invocation {
+    invocation.control_after = Some(after.into());
+    invocation
+}

@@ -33,12 +33,16 @@ fn result(backend: &mut Backend, up: &mut Queue<ToDomain>, below: &mut Queue<Bel
 fn interrupt_sent(below: &Queue<Below>) -> bool {
     below
         .iter()
-        .filter_map(
-            |effect| {
-                if let Below::Io(io::Request::Signal { signal, .. }) = effect { Some(signal) } else { None }
-            },
-        )
-        .any(|signal| *signal == kernel::Signal::Interrupt)
+        .filter_map(|effect| {
+            if let Below::Io(io::Request::Output { down: skein_lib::stream::OutputDown::Room { right, .. }, .. }) =
+                effect
+            {
+                Some(*right)
+            } else {
+                None
+            }
+        })
+        .any(|right| right == Token::new(2))
 }
 
 fn user(text: &[u8]) -> llm::Message {
@@ -120,7 +124,7 @@ fn a_listening_message_writes_one_new_user_line() {
 fn an_interrupted_open_turn_yields_without_failure() {
     let (mut backend, mut up, mut below) = running_with_queues();
     backend.yield_for_wind_down(&env(0), &mut up, &mut below);
-    backend.line(&env(0), br#"{"type":"result","is_error":true,"terminal_reason":"interrupted"}"#, &mut up, &mut below);
+    backend.line(&env(0), br#"{"type":"result","is_error":true,"subtype":"error_during_execution","terminal_reason":"aborted_streaming"}"#, &mut up, &mut below);
     assert_eq!(completed(&up).stop, llm::Stop::EndTurn);
     assert!(completed(&up).content.is_empty());
     assert!(backend.pending_failure.is_none());

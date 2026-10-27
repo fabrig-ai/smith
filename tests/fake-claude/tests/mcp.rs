@@ -132,7 +132,7 @@ fn an_unreadable_prompt_answer_is_an_error_for_the_model() {
 
 #[test]
 fn an_interrupt_during_a_server_call_ends_the_turn() {
-    let invocation = print::signal(print::invocation(2), ServiceSignal::Interrupt, "call");
+    let invocation = print::signal(print::invocation(1), ServiceSignal::Interrupt, "call");
     let run = print::with_server(
         story(vec![Step::Call { tool: "finish".into(), input: json!({}) }]),
         invocation,
@@ -142,8 +142,9 @@ fn an_interrupt_during_a_server_call_ends_the_turn() {
     let messages = messages(&run);
     assert!(!messages.iter().any(|message| message["type"] == "user"));
     let results: Vec<_> = messages.iter().filter(|message| message["type"] == "result").collect();
-    assert_eq!(results[0]["terminal_reason"], "interrupted");
-    assert_eq!(results[1]["subtype"], "success");
+    assert_eq!(results[0]["terminal_reason"], "aborted_streaming");
+    assert_eq!(results.len(), 1);
+    assert_eq!(run.records[0].exit, Some(skein_io::kernel::Exit::Code(0)));
     assert_eq!(run.calls, ["finish"]);
     assert_eq!(
         seen(run.observations.as_ref().expect("observations"))[2],
@@ -191,7 +192,7 @@ fn a_late_server_answer_is_dropped() {
     let first = Step::Call { tool: "finish".into(), input: json!({}) };
     let mut story = story(vec![first.clone()]);
     story.turns.push(Turn { steps: vec![first], end: End::default() });
-    let invocation = print::signal(print::invocation(2), ServiceSignal::Interrupt, "call");
+    let invocation = print::control(print::invocation(2), "call");
     let run = print::with_server(story, invocation, script(Answer::Text("late".repeat(256))));
     let messages = messages(&run);
     assert_eq!(messages.iter().filter(|message| message["type"] == "user").count(), 1);

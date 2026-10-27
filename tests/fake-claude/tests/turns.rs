@@ -173,21 +173,22 @@ fn an_undecodable_line_ends_the_stream() {
 }
 
 #[test]
-fn an_interrupt_ends_a_hanging_turn_then_the_next_message_runs() {
-    let invocation = print::signal(print::invocation(2), ServiceSignal::Interrupt, "assistant");
+fn a_sigint_ends_a_hanging_turn_and_exits() {
+    let invocation = print::signal(print::invocation(1), ServiceSignal::Interrupt, "assistant");
     let run =
         print::run(story(vec![Step::Text("waiting".into()), Step::Hang], End::default()), invocation, None, Some(MCP));
     assert!(run.signalled);
-    assert_eq!(results(&run)[0]["terminal_reason"], "interrupted");
-    assert_eq!(results(&run)[1]["result"], "Done.");
+    assert_eq!(results(&run)[0]["terminal_reason"], "aborted_streaming");
+    assert_eq!(results(&run).len(), 1);
+    assert_eq!(run.records[0].exit, Some(Exit::Code(0)));
 }
 
 #[test]
-fn an_interrupt_between_turns_changes_nothing() {
-    let invocation = print::signal(print::invocation(2), ServiceSignal::Interrupt, "success");
+fn a_sigint_between_turns_exits() {
+    let invocation = print::signal(print::invocation(1), ServiceSignal::Interrupt, "success");
     let run = print::run(Story::default(), invocation, None, Some(MCP));
     assert!(run.signalled);
-    assert_eq!(results(&run).len(), 2);
+    assert_eq!(results(&run).len(), 1);
     assert!(results(&run).iter().all(|result| result["is_error"] == false));
 }
 
@@ -547,4 +548,34 @@ fn an_input_line_past_the_bound_is_refused() {
     assert!(results(&run).is_empty());
     assert_eq!(run.records[0].exit, Some(Exit::Code(1)));
     assert!(String::from_utf8_lossy(&run.records[0].stderr).contains("input line too long"));
+}
+
+fn control_input() -> Value {
+    json!({"type":"control_request","request_id":"probe-1","request":{"subtype":"interrupt"}})
+}
+
+#[test]
+fn a_control_interrupt_ends_a_turn_and_keeps_reading() {
+    let user = json!({"type":"user","message":{"role":"user","content":"hello"}});
+    let input = format!("{user}\n{}\n{user}\n", control_input());
+    let run = print::run(story(vec![Step::Hang], End::default()), print::unpaced(input.as_bytes()), None, Some(MCP));
+    let output = messages(&run);
+    assert_eq!(output[1]["type"], "control_response");
+    assert_eq!(output[1]["response"]["request_id"], "probe-1");
+    assert_eq!(output[1]["response"]["subtype"], "success");
+    assert_eq!(results(&run)[0]["terminal_reason"], "aborted_streaming");
+    assert_eq!(results(&run)[1]["subtype"], "success");
+    assert_eq!(run.records[0].exit, Some(Exit::Code(0)));
+}
+
+#[test]
+fn an_idle_control_interrupt_only_acknowledges() {
+    let input = format!("{}\n", control_input());
+    let run = print::run(Story::default(), print::unpaced(input.as_bytes()), None, Some(MCP));
+    let output = messages(&run);
+    assert_eq!(output.len(), 2);
+    assert_eq!(output[1]["type"], "control_response");
+    assert_eq!(output[1]["response"]["subtype"], "success");
+    assert_eq!(output[1]["response"]["request_id"], "probe-1");
+    assert_eq!(run.records[0].exit, Some(Exit::Code(0)));
 }
