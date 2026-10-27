@@ -23,6 +23,10 @@ impl Live {
     }
 
     fn start_with(text: &str, permission: bool) -> Self {
+        Self::start_options(text, permission, false)
+    }
+
+    fn start_options(text: &str, permission: bool, thinking: bool) -> Self {
         let root = std::env::var_os("SMITH_LIVE").filter(|value| !value.is_empty()).expect("$SMITH_LIVE unset");
         let root = smith_bench::guard::write_path(std::path::Path::new(&root)).expect("guarded $SMITH_LIVE");
         let configuration = std::env::var_os("SMITH_LIVE_CLAUDE")
@@ -34,7 +38,7 @@ impl Live {
             "no configured Claude directory: set SMITH_LIVE_CLAUDE or prepare $SMITH_LIVE/programs/claude"
         );
         let probe = Probe::new();
-        let mcp = if permission { prompt_server(&probe) } else { r#"{"mcpServers":{}}"#.into() };
+        let mcp = if permission || thinking { prompt_server(&probe, thinking) } else { r#"{"mcpServers":{}}"#.into() };
         let mut arguments = vec![
             "--session-id",
             &probe.session,
@@ -43,7 +47,7 @@ impl Live {
             "--tools",
             if permission { "Read" } else { "" },
             "--max-turns",
-            if permission { "4" } else { "1" },
+            if permission || thinking { "4" } else { "1" },
         ];
         if permission {
             arguments.extend([
@@ -53,19 +57,38 @@ impl Live {
                 r#"{"permissions":{"allow":["mcp__smith"],"ask":["Read"]}}"#,
             ]);
         }
-        let (child, messages) = Self::spawn(&probe.home, &configuration, &arguments, text);
+        if thinking {
+            arguments.extend(["--effort", "high", "--settings", r#"{"permissions":{"allow":["mcp__smith"]}}"#]);
+        }
+        let (child, messages) = Self::spawn_model(
+            &probe.home,
+            &configuration,
+            &arguments,
+            text,
+            if thinking { "opus" } else { "claude-haiku-5-5" },
+        );
         Self { child, probe, messages, configuration }
+    }
+
+    fn spawn(
+        home: &std::path::Path,
+        configuration: &std::path::Path,
+        arguments: &[&str],
+        text: &str,
+    ) -> (Child, mpsc::Receiver<serde_json::Value>) {
+        Self::spawn_model(home, configuration, arguments, text, "claude-haiku-5-5")
     }
 
     #[expect(
         clippy::disallowed_methods,
         reason = "live protocol probe bounds blocking stdout; departure from testing-strategy.md 2.9"
     )]
-    fn spawn(
+    fn spawn_model(
         home: &std::path::Path,
         configuration: &std::path::Path,
         arguments: &[&str],
         text: &str,
+        model: &str,
     ) -> (Child, mpsc::Receiver<serde_json::Value>) {
         let configuration = guarded_configuration(configuration);
         let mut child = Command::new("claude")
@@ -86,7 +109,7 @@ impl Live {
                 "user",
                 "--strict-mcp-config",
                 "--model",
-                "claude-haiku-5-5",
+                model,
             ])
             .args(arguments)
             .stdin(Stdio::piped())
@@ -288,7 +311,7 @@ fn a_live_resume_continues() {
 }
 
 // A bounded fixture records only the prompt's shape, never the program's input.
-fn prompt_server(probe: &Probe) -> String {
+fn prompt_server(probe: &Probe, thinking: bool) -> String {
     assert!(
         std::fs::symlink_metadata("/usr/bin/python3").is_ok(),
         "`/usr/bin/python3` is missing: the prompt-shape probe's MCP fixture needs it"
@@ -305,6 +328,8 @@ for line in sys.stdin:
         result = {'protocolVersion':'2025-06-18', 'capabilities':{'tools':{}}, 'serverInfo':{'name':'smith-live-probe','version':'1'}}
     elif method == 'tools/list':
         result = {'tools':[{'name':'permission_prompt','description':'Ask before Read', 'inputSchema':{'type':'object','properties':{'tool_name':{'type':'string'},'input':{'type':'object'},'tool_use_id':{'type':'string'}},'required':['tool_name','input']}}]}
+        if sys.argv[2] == 'thinking':
+            result['tools'].append({'name':'echo','description':'Echo the thinking probe answer','inputSchema':{'type':'object','properties':{'text':{'type':'string'}},'required':['text']}})
     elif method == 'tools/call':
         params = request['params']
         args = params.get('arguments', {})
@@ -312,13 +337,15 @@ for line in sys.stdin:
         Path(sys.argv[1]).write_text('shape-ok' if shape else 'shape-failed')
         answer = {'behavior':'allow','updatedInput':args.get('input', {})}
         result = {'content':[{'type':'text','text':json.dumps(answer)}]}
+        if params.get('name') == 'echo':
+            result = {'content':[{'type':'text','text':'thinking-probe-ok'}]}
     else:
         print(json.dumps({'jsonrpc':'2.0','id':request['id'],'error':{'code':-32601,'message':'unknown method'}}), flush=True)
         continue
     print(json.dumps({'jsonrpc':'2.0','id':request['id'],'result':result}), flush=True)
 ").expect("private prompt fixture");
     std::fs::write(probe.home.join("read-me.txt"), b"probe input\n").expect("private Read input");
-    serde_json::json!({"mcpServers":{"smith":{"command":"/usr/bin/python3","args":[script,probe.home.join("prompt-shape")]}}}).to_string()
+    serde_json::json!({"mcpServers":{"smith":{"command":"/usr/bin/python3","args":[script,probe.home.join("prompt-shape"),if thinking {"thinking"} else {"prompt"}]}}}).to_string()
 }
 
 #[test]
@@ -363,4 +390,70 @@ fn the_real_program_uses_the_prompt_tool_shape() {
 fn guarded_configuration(configuration: &std::path::Path) -> std::path::PathBuf {
     smith_bench::guard::write_path(configuration)
         .unwrap_or_else(|reason| panic!("guarded Claude configuration directory: {reason}"))
+}
+
+#[test]
+fn a_live_thinking_turn_has_the_fakes_shape() {
+    // Same bounded record allowance as the other live turn probes.
+    const TURN_RECORDS: usize = 1000;
+    let mut live = Live::start_options(
+        "Work out privately whether 99991 is prime by checking possible prime divisors up to its square root. Think carefully before using tools. Then call mcp__smith__echo with text equal to your conclusion. After the tool result, reply with OK.",
+        false,
+        true,
+    );
+    let mut notice = false;
+    let mut start = false;
+    let mut delta = false;
+    let mut signature = false;
+    let mut thinking_id = None;
+    let mut call_id = None;
+    for _ in 0..TURN_RECORDS {
+        let record = live.message();
+        if record["type"] == "system" && record["subtype"] == "thinking_tokens" {
+            assert!(record["estimated_tokens"].is_u64());
+            assert!(record["estimated_tokens_delta"].is_u64());
+            notice = true;
+        }
+        let event = &record["event"];
+        if event["type"] == "content_block_start" && event["content_block"]["type"] == "thinking" {
+            assert_eq!(event["content_block"]["thinking"], "");
+            assert_eq!(event["content_block"]["signature"], "");
+            start = true;
+        }
+        if event["delta"]["type"] == "thinking_delta" {
+            assert_eq!(event["delta"]["thinking"], "");
+            assert!(event["delta"]["estimated_tokens"].is_u64());
+            delta = true;
+        }
+        if event["delta"]["type"] == "signature_delta" {
+            assert!(event["delta"]["signature"].as_str().is_some_and(|value| !value.is_empty()));
+            signature = true;
+        }
+        if record["type"] == "assistant" {
+            let blocks = record["message"]["content"].as_array().expect("assistant blocks");
+            for block in blocks {
+                if block["type"] == "thinking" {
+                    assert_eq!(blocks.len(), 1, "thinking has its own assistant record");
+                    assert_eq!(block["thinking"], "");
+                    assert!(block["signature"].as_str().is_some_and(|value| !value.is_empty()));
+                    if call_id.is_none() {
+                        thinking_id = Some(record["message"]["id"].as_str().expect("message ID").to_owned());
+                    }
+                }
+                if block["type"] == "tool_use" && block["name"] == "mcp__smith__echo" {
+                    assert_eq!(blocks.len(), 1, "the call has its own assistant record");
+                    call_id = Some(record["message"]["id"].as_str().expect("message ID").to_owned());
+                }
+            }
+        }
+        if record["type"] == "result" {
+            assert_eq!(record["is_error"], false);
+            assert!(start && notice && delta && signature, "all withheld-thinking stream shapes arrived");
+            assert!(thinking_id.is_some(), "thinking assistant record");
+            assert_eq!(thinking_id, call_id, "thinking and call belong to one message");
+            live.close_input();
+            return;
+        }
+    }
+    panic!("thinking probe did not finish");
 }

@@ -184,6 +184,8 @@ impl Default for Turn {
 /// A scripted action sent as stream messages or held until a signal.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Step {
+    /// Thinks for these estimated tokens before the wrapped text or tool message.
+    Think { tokens: u64, step: Box<Step> },
     /// Announces the program's own window compaction.
     Compact,
     /// Sends text and, when requested, its partial messages.
