@@ -33,7 +33,7 @@ fn run(turns: Vec<Turn>) -> Run {
     )
 }
 fn finish() -> Step {
-    Step::Call { tool: "finish".into(), input: json!({"form":"report","text":"done","fields":{}}) }
+    Step::Outcome { input: json!({"outcome":{"form":"report","text":"done","fields":{}}}) }
 }
 fn accepted(run: &Run) {
     assert!(matches!(run.answer().expect("answer").result(), RunResult::Accepted(_)), "{:?}", run.answer());
@@ -57,31 +57,33 @@ fn a_program_turn_runs_to_its_finish() {
     let run = run(vec![Turn { steps: vec![finish()], end: End::default() }]);
     accepted(&run);
     assert!(
-        run.seen.iter().any(|seen| matches!(seen, smith_fake_claude::Seen::Called {tool,..} if tool == "finish")),
-        "finish is settled; the stop can interrupt before its MCP verdict is read"
+        !run.seen.iter().any(|seen| matches!(seen, smith_fake_claude::Seen::Called {tool,..} if tool == "finish")),
+        "contract finish is never an MCP call"
     );
 }
 #[test]
 fn a_structured_output_without_finish_is_its_finish() {
     accepted(&run(vec![Turn {
         steps: vec![],
-        end: End::Success { structured_output: Some(json!({"form":"report","text":"done","fields":{}})) },
+        end: End::Success { structured_output: Some(json!({"outcome":{"form":"report","text":"done","fields":{}}})) },
     }]));
 }
 #[test]
 fn a_rejected_finish_reaches_the_model() {
-    let run = run(vec![Turn {
-        steps: vec![
-            Step::Call { tool: "finish".into(), input: json!({"form":"report","text":"x".repeat(129),"fields":{}}) },
-            finish(),
-        ],
-        end: End::default(),
-    }]);
+    let run = run(vec![
+        Turn {
+            steps: vec![Step::Outcome {
+                input: json!({"outcome":{"form":"report","text":"x".repeat(129),"fields":{}}}),
+            }],
+            end: End::default(),
+        },
+        Turn { steps: vec![finish()], end: End::default() },
+    ]);
     accepted(&run);
     assert!(
-        run.seen
-            .iter()
-            .any(|seen| matches!(seen,smith_fake_claude::Seen::Called { tool,error: true } if tool == "finish"))
+        run.received.iter().any(|message| message.to_string().contains("problem text-too-large form=report max=128")),
+        "rejected outcome reaches the next turn: {:?}",
+        run.received
     );
 }
 #[test]
@@ -182,9 +184,8 @@ fn an_undecodable_line_fails_the_run() {
 fn a_finished_tool_turn_resumes_without_an_extra_completion() {
     let run = run(vec![
         Turn {
-            steps: vec![Step::Call {
-                tool: "finish".into(),
-                input: json!({"form":"report","text":"x".repeat(129),"fields":{}}),
+            steps: vec![Step::Outcome {
+                input: json!({"outcome":{"form":"report","text":"x".repeat(129),"fields":{}}}),
             }],
             end: End::default(),
         },
@@ -192,4 +193,39 @@ fn a_finished_tool_turn_resumes_without_an_extra_completion() {
     ]);
     accepted(&run);
     assert_eq!(run.answer().expect("answer").turns(), 2);
+}
+
+#[test]
+fn a_structured_failure_ends_with_its_declared_failure() {
+    let mut parts =
+        smith_charter::Charter::decode(&smith_charter::CEILINGS, &mut skein_lib::Reader::new(&charter_turns()))
+            .expect("charter")
+            .into_parts();
+    let mut contract = parts.contract.into_parts();
+    contract.failure = contract.report.take();
+    parts.contract = smith_charter::Contract::new(&smith_charter::CEILINGS, contract).expect("failure contract");
+    let charter = smith_charter::Charter::new(&smith_charter::CEILINGS, parts).expect("charter");
+    let mut writer = skein_lib::Writer::new(usize::try_from(charter.measure()).expect("charter bytes"));
+    charter.encode(&mut writer).expect("charter");
+    let story = Story {
+        turns: vec![Turn {
+            steps: vec![Step::Outcome {
+                input: json!({"outcome":{"form":"failure","reason":"cannot proceed","fields":{}}}),
+            }],
+            end: End::default(),
+        }],
+        ..Story::default()
+    };
+    let run = program_world::run(Case::Turns, &story, Some(b"claude.ai"), &writer.finish(), &program(b"source"), None);
+    let answer = run.answer().expect("answer");
+    let RunResult::Accepted(accepted) = answer.result() else { panic!("declared result: {answer:?}") };
+    let result =
+        smith_charter::RunResult::decode(&smith_charter::CEILINGS, &mut skein_lib::Reader::new(accepted.result()))
+            .expect("outcome");
+    assert_eq!(result.form(), &smith_charter::Form::Failure);
+    assert_eq!(result.text(), b"cannot proceed");
+    assert_eq!(answer.turns(), 1);
+    assert!(
+        !run.seen.iter().any(|seen| matches!(seen, smith_fake_claude::Seen::Called { tool, .. } if tool == "finish"))
+    );
 }

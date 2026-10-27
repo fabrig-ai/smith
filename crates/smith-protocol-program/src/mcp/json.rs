@@ -207,6 +207,9 @@ fn object_type(document: &Document) -> Option<bool> {
             return Some(typed);
         }
         let value = next.checked_add(1)?;
+        if [b"oneOf".as_slice(), b"allOf", b"anyOf"].contains(&document.text(key)?) {
+            return None;
+        }
         if document.text(key)? == b"type" {
             if typed || text(document, value) != Some(b"object".as_slice()) {
                 return None;
@@ -234,6 +237,26 @@ fn object_schema(document: &Document, bound: u32) -> Option<Box<[u8]>> {
     let mut write = Encoder::write(length, &limits);
     spell_object(&mut write, document);
     Some(write.finish())
+}
+
+/// The API requires an object root with alternatives nested beneath a property.
+pub(crate) fn outcome_schema(schema: &[u8], bound: u32) -> Option<Box<[u8]>> {
+    let prefix = br#"{"type":"object","properties":{"outcome":"#;
+    let suffix = br#"},"required":["outcome"],"additionalProperties":false}"#;
+    let length = prefix.len().checked_add(schema.len())?.checked_add(suffix.len())?;
+    if length > usize::try_from(bound).ok()? {
+        return None;
+    }
+    Some(join(&[prefix, schema, suffix]))
+}
+
+/// Only the single required outcome member crosses into finish decoding.
+pub(crate) fn outcome_input(document: &Document, object: u32, bound: u32) -> Option<Box<[u8]>> {
+    let input = field(document, object, b"outcome")?;
+    if input != object.checked_add(2)? || document.token(after(document, input)?)?.kind != Kind::ObjectEnd {
+        return None;
+    }
+    raw(document, input, bound)
 }
 
 pub(crate) fn tool_list(tools: &[Tool], bound: u32, schema_bytes: u32) -> Result<Box<[u8]>, Refused> {

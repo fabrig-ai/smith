@@ -273,8 +273,6 @@ fn untyped_tool_schemas_gain_only_the_object_type() {
     for schema in [
         value!({}),
         value!({"properties":{"input":{"type":"string"}},"required":["input"]}),
-        value!({"oneOf":[{"type":"object","required":["answer"]}]}),
-        value!({"anyOf":[{"type":"object"},{"type":"object","required":["answer"]}]}),
         value!({"type":"object","properties":{"type":{"type":"string"}}}),
     ] {
         let mut tool = tool();
@@ -293,6 +291,10 @@ fn incompatible_tool_schemas_are_named_before_listening() {
         br#"{"type":"string"}"#.as_slice(),
         br#"{"type":["object","null"]}"#,
         br#"{"type":"object","type":"string"}"#,
+        br#"{"oneOf":[{"type":"object"}]}"#,
+        br#"{"type":"object","oneOf":[]}"#,
+        br#"{"type":"object","allOf":[]}"#,
+        br#"{"type":"object","anyOf":[]}"#,
         b"true",
         b"[]",
         b"{",

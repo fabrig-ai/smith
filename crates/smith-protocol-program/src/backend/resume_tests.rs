@@ -36,7 +36,7 @@ fn history(backend: &Backend) -> FromDomain {
     request
 }
 
-fn launchable() -> Backend {
+pub(super) fn launchable() -> Backend {
     let mut backend = backend();
     backend.settings.directory = Some(Root { file: Token::new(40), descriptor: kernel::Fd::new(41) });
     backend.grant = Some(Grant {

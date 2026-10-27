@@ -250,3 +250,26 @@ fn a_relay_sized_tool_list_fits_the_memory_envelope() {
     eprintln!("relay-sized tool list process (peak, envelope): {heap:?}");
     assert!(heap.iter().all(|(peak, envelope)| peak <= envelope));
 }
+
+#[test]
+fn an_invalid_mcp_schema_fails_the_first_model_call() {
+    for schema in [
+        json!({}),
+        json!({"type":"object","oneOf":[]}),
+        json!({"type":"object","allOf":[]}),
+        json!({"type":"object","anyOf":[]}),
+    ] {
+        let run = print::with_server(Story::default(), print::invocation(1), schema_script(schema));
+        let records = messages(&run);
+        let assistant = records.iter().find(|record| record["type"] == "assistant").expect("assistant error");
+        assert!(
+            assistant["message"]["content"][0]["text"].as_str().expect("error text").starts_with("API Error: 400 ")
+        );
+        let result = records.iter().find(|record| record["type"] == "result").expect("error result");
+        assert_eq!(result["is_error"], true);
+        assert_eq!(result["terminal_reason"], "api_error");
+        assert_eq!(result["api_error_status"], 400);
+        assert_eq!(result["result"], assistant["message"]["content"][0]["text"]);
+        assert!(run.calls.is_empty());
+    }
+}

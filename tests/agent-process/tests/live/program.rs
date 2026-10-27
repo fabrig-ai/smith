@@ -562,3 +562,34 @@ fn a_live_result_contract_lists_and_calls_structured_output() {
     }
     panic!("result contract probe did not finish");
 }
+
+#[test]
+fn a_live_contract_takes_a_wrapped_outcome() {
+    // Same record allowance as the other live turn probes; each form has its own run.
+    const TURN_RECORDS: usize = 1000;
+    const SCHEMA: &str = r#"{"type":"object","properties":{"outcome":{"oneOf":[{"type":"object","properties":{"form":{"const":"change"},"fields":{"type":"object","properties":{"title":{"type":"string"}},"required":["title"],"additionalProperties":false}},"required":["form","fields"],"additionalProperties":false},{"type":"object","properties":{"form":{"const":"failure"},"reason":{"type":"string"}},"required":["form","reason"],"additionalProperties":false}]}},"required":["outcome"],"additionalProperties":false}"#;
+    for (prompt, form) in [
+        (
+            "Return a structured outcome with form change and fields title equal to CSV. Do not edit any files.",
+            "change",
+        ),
+        (
+            "Return a structured outcome with form failure and reason equal to Cannot proceed. Do not edit any files.",
+            "failure",
+        ),
+    ] {
+        let mut live = Live::start_configured(prompt, false, false, Some(SCHEMA));
+        let mut result = None;
+        for _ in 0..TURN_RECORDS {
+            let record = live.message();
+            if record["type"] == "result" {
+                result = Some(record);
+                break;
+            }
+        }
+        let result = result.expect("wrapped outcome result");
+        assert_eq!(result["is_error"], false);
+        assert_eq!(result["structured_output"]["outcome"]["form"], form);
+        live.close_input();
+    }
+}

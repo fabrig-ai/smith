@@ -151,6 +151,7 @@ pub(crate) struct Print {
     cancelling: bool,
     server_config: Value,
     pending: Option<ToolCall>,
+    schema_error: Option<String>,
     acting: Option<crate::act::Act>,
     directory: std::path::PathBuf,
     next_tool: u64,
@@ -201,6 +202,7 @@ impl Print {
             cancelling: false,
             server_config: Value::Null,
             pending: None,
+            schema_error: None,
             acting: None,
             directory: directory.to_path_buf(),
             next_tool: 0,
@@ -486,6 +488,25 @@ impl Print {
 
     fn steps(&mut self) -> Vec<Effect> {
         let mut effects = Vec::new();
+        if self.step == 0 && self.texts == 0 {
+            let problem = self.schema_error.clone().or_else(|| {
+                self.flags.values.get("--json-schema").and_then(|schema| {
+                    crate::mcp::schema_problem(&serde_json::from_str::<Value>(schema).expect("parsed schema"))
+                        .map(|problem| format!("API Error: 400 tools.StructuredOutput.custom.{problem}"))
+                })
+            });
+            if let Some(problem) = problem {
+                let assistant = stream::assistant(
+                    &problem,
+                    &self.flags.values["--model"],
+                    self.session.messages,
+                    &self.story.usage,
+                );
+                effects.extend(self.message(assistant, None));
+                effects.extend(self.finish(json!({"type":"result","subtype":"success","is_error":true,"terminal_reason":"api_error","api_error_status":400,"result":problem})));
+                return effects;
+            }
+        }
         while let Some(step) = self.turn.steps.get(self.step).cloned() {
             self.step = self.step.checked_add(1).expect("step count fits");
             let (step, thinking) = match step {
@@ -508,6 +529,15 @@ impl Print {
             };
             match step {
                 Step::Think { .. } => return error("Think requires a text or tool message", 1),
+                Step::Outcome { input } => {
+                    if !self.flags.values.contains_key("--json-schema") {
+                        return error("Outcome requires --json-schema", 1);
+                    }
+                    self.turn.end = End::Success { structured_output: Some(input) };
+                    if self.step != self.turn.steps.len() {
+                        return error("Outcome must end its turn", 1);
+                    }
+                }
                 Step::Compact => effects.push(self.emit(json!({"type":"system", "subtype":"compact_boundary"}))),
                 Step::Text(text) => {
                     if self.texts > 0 {
@@ -680,7 +710,8 @@ impl Print {
 
     pub fn mcp(&mut self, notice: crate::mcp::Notice) -> Vec<Effect> {
         match notice {
-            crate::mcp::Notice::Settled { connected, tools } => {
+            crate::mcp::Notice::Settled { connected, tools, schema_error } => {
+                self.schema_error = schema_error;
                 if !matches!(self.phase, Phase::Connecting) {
                     return Vec::new();
                 }

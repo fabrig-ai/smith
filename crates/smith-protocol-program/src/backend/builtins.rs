@@ -10,6 +10,19 @@ use smith_domain::{llm, tools::Grants};
 use smith_protocol_llm::{self as protocol, FromDomain, ToDomain};
 
 impl Backend {
+    pub(super) fn result_contract(&self) -> bool {
+        match &self.request {
+            Some(FromDomain::Complete { prompt, outcome, .. }) => {
+                prompt.served.contains(&llm::Served::Finish)
+                    && (outcome.change.is_some()
+                        || !outcome.verdicts.is_empty()
+                        || outcome.report.is_some()
+                        || outcome.failure.is_some())
+            }
+            Some(FromDomain::Cancel { .. } | FromDomain::Yield { .. }) | None => false,
+        }
+    }
+
     pub(super) fn grants(&self) -> Grants {
         match &self.request {
             Some(FromDomain::Complete { prompt, .. }) => prompt.tools,
@@ -58,10 +71,7 @@ impl Backend {
             }
             return Some(b"smith: summary program offered tools".as_slice().into());
         }
-        let result_contract = match &self.request {
-            Some(FromDomain::Complete { prompt, .. }) => prompt.served.contains(&llm::Served::Finish),
-            Some(FromDomain::Cancel { .. } | FromDomain::Yield { .. }) | None => false,
-        };
+        let result_contract = self.result_contract();
         let error = init_error(bytes, self.grants(), result_contract, depth, tokens);
         if error.is_none() && stream::checked_init(bytes, &self.tools(), depth, tokens).is_some() {
             None

@@ -204,3 +204,17 @@ fn a_new_id_after_thinking_opens_a_new_completion() {
     assert_eq!(turns.ready.pop().expect("next message").usage.output_tokens, Some(7));
     assert!(turns.ready.is_empty());
 }
+
+#[test]
+fn structured_output_and_its_outcome_are_one_model_completion() {
+    let mut turns = turns();
+    feed(&mut turns, assistant(json!([{"type":"tool_use","id":"s","name":"StructuredOutput","input":{"outcome":{"form":"report","text":"done","fields":{}}}}]))).expect("structured message");
+    assert!(turns.ready.is_empty());
+    turns
+        .structured(br#"{"form":"report","text":"done","fields":{}}"#.as_slice().into())
+        .expect("finish in the same message");
+    let completion = turns.ready.pop().expect("model completion");
+    assert_eq!(completion.content.len(), 2);
+    assert_eq!(completion.usage.input_tokens, Some(13));
+    assert!(turns.ready.is_empty());
+}
