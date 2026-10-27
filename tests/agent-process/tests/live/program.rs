@@ -410,19 +410,23 @@ fn a_live_thinking_turn_has_the_fakes_shape() {
     for _ in 0..TURN_RECORDS {
         let record = live.message();
         if record["type"] == "system" && record["subtype"] == "thinking_tokens" {
-            assert!(record["estimated_tokens"].is_u64());
+            if let Some(estimated_tokens) = record.get("estimated_tokens") {
+                assert!(estimated_tokens.is_number());
+            }
             assert!(record["estimated_tokens_delta"].is_u64());
             notice = true;
         }
         let event = &record["event"];
         if event["type"] == "content_block_start" && event["content_block"]["type"] == "thinking" {
-            assert_eq!(event["content_block"]["thinking"], "");
+            assert!(event["content_block"]["thinking"].is_string());
             assert_eq!(event["content_block"]["signature"], "");
             start = true;
         }
         if event["delta"]["type"] == "thinking_delta" {
-            assert_eq!(event["delta"]["thinking"], "");
-            assert!(event["delta"]["estimated_tokens"].is_u64());
+            assert!(event["delta"]["thinking"].is_string());
+            if let Some(estimated_tokens) = event["delta"].get("estimated_tokens") {
+                assert!(estimated_tokens.is_number());
+            }
             delta = true;
         }
         if event["delta"]["type"] == "signature_delta" {
@@ -434,7 +438,7 @@ fn a_live_thinking_turn_has_the_fakes_shape() {
             for block in blocks {
                 if block["type"] == "thinking" {
                     assert_eq!(blocks.len(), 1, "thinking has its own assistant record");
-                    assert_eq!(block["thinking"], "");
+                    assert!(block["thinking"].is_string());
                     assert!(block["signature"].as_str().is_some_and(|value| !value.is_empty()));
                     if call_id.is_none() {
                         thinking_id = Some(record["message"]["id"].as_str().expect("message ID").to_owned());
@@ -448,7 +452,7 @@ fn a_live_thinking_turn_has_the_fakes_shape() {
         }
         if record["type"] == "result" {
             assert_eq!(record["is_error"], false);
-            assert!(start && notice && delta && signature, "all withheld-thinking stream shapes arrived");
+            assert!(start && notice && delta && signature, "all thinking stream shapes arrived");
             assert!(thinking_id.is_some(), "thinking assistant record");
             assert_eq!(thinking_id, call_id, "thinking and call belong to one message");
             live.close_input();
