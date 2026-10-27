@@ -61,7 +61,7 @@ fn charter_mode(mode: smith_charter::Mode) -> Box<[u8]> {
 }
 
 fn finish() -> Step {
-    Step::Call { tool: "finish".into(), input: json!({"form":"report","text":"done","fields":{}}) }
+    Step::Outcome { input: json!({"outcome":{"form":"report","text":"done","fields":{}}}) }
 }
 
 fn read(path: &str) -> Step {
@@ -272,9 +272,9 @@ fn a_nested_host_input_is_told_and_answered() {
 const THINKING_MESSAGES: u32 = 2;
 const THINKING_SPEND: u64 = 2;
 
-// Finite adds the program's StructuredOutput message and the synthetic finish;
-// the synthetic finish has zero usage, so only three messages spend tokens.
-const FINITE_THINKING_MESSAGES: u32 = 4;
+// Finite adds one StructuredOutput completion; its result supplies finish's
+// input within that same completion, without another model turn.
+const FINITE_THINKING_MESSAGES: u32 = 3;
 const FINITE_THINKING_SPEND: u64 = 3;
 
 fn thinking_story() -> Story {
@@ -291,7 +291,9 @@ fn thinking_story() -> Story {
                 },
                 Step::Text("Reply after found.".into()),
             ],
-            end: End::Success { structured_output: Some(json!({"form":"report","text":"done","fields":{}})) },
+            end: End::Success {
+                structured_output: Some(json!({"outcome":{"form":"report","text":"done","fields":{}}})),
+            },
         }],
         usage: smith_fake_claude::Usage { input_tokens: 600_000, output_tokens: 154 },
         ..Story::default()
@@ -331,7 +333,8 @@ fn a_finite_thinking_turn_calls_then_replies_once() {
     let run = run(&thinking_story());
     accepted(&run);
     thinking_reply(&run, FINITE_THINKING_MESSAGES, FINITE_THINKING_SPEND);
-    let result = told_result(&run, b"StructuredOutput", &json!({"form":"report","text":"done","fields":{}}));
+    let result =
+        told_result(&run, b"StructuredOutput", &json!({"outcome":{"form":"report","text":"done","fields":{}}}));
     let smith_transcript::Returned::Said(said) = result.returned() else { panic!("program result") };
     assert_eq!(said.text(), b"Structured output accepted");
     assert!(!said.error());

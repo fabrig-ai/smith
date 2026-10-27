@@ -16,9 +16,8 @@ fn scenario() -> Run {
 fn no_credential_variable_reaches_the_program() {
     let story = Story {
         turns: vec![smith_fake_claude::Turn {
-            steps: vec![smith_fake_claude::Step::Call {
-                tool: "finish".into(),
-                input: serde_json::json!({"form":"report","text":"done","fields":{}}),
+            steps: vec![smith_fake_claude::Step::Outcome {
+                input: serde_json::json!({"outcome":{"form":"report","text":"done","fields":{}}}),
             }],
             end: smith_fake_claude::End::default(),
         }],
@@ -110,7 +109,7 @@ fn a_program_grant_starts_claude_with_its_command() {
     assert!(arguments.iter().any(|argument| argument == "--strict-mcp-config"));
     assert_eq!(value("--session-id").len(), 36);
     let schema: serde_json::Value = serde_json::from_str(value("--json-schema")).expect("inline outcome schema");
-    assert!(schema.get("oneOf").is_some());
+    assert!(schema["properties"]["outcome"].get("oneOf").is_some());
     assert_eq!(
         run.seen,
         vec![

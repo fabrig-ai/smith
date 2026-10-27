@@ -184,6 +184,8 @@ impl Default for Turn {
 /// A scripted action sent as stream messages or held until a signal.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Step {
+    /// The model supplies StructuredOutput and ends this turn with that outcome.
+    Outcome { input: serde_json::Value },
     /// Thinks for these estimated tokens before the wrapped text or tool message.
     Think { tokens: u64, step: Box<Step> },
     /// Announces the program's own window compaction.

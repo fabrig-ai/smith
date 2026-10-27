@@ -271,8 +271,9 @@ impl Backend {
                 llm::ToolChoice::Auto => {}
             }
         }
-        let schema = if prompt.served.contains(&llm::Served::Finish) {
-            protocol::finish_schema(outcome, self.settings.contract_bytes).ok()?
+        let schema = if self.result_contract() {
+            let contract = protocol::finish_schema(outcome, self.settings.contract_bytes).ok()?;
+            mcp::json::outcome_schema(&contract, self.settings.contract_bytes)?
         } else {
             Box::default()
         };

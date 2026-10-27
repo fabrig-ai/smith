@@ -42,7 +42,7 @@ fn turn(steps: Vec<Step>) -> Turn {
 }
 
 fn finish() -> Step {
-    Step::Call { tool: "finish".into(), input: json!({"form":"report","text":"done","fields":{}}) }
+    Step::Outcome { input: json!({"outcome":{"form":"report","text":"done","fields":{}}}) }
 }
 
 fn winding(parts: &mut smith_charter::CharterParts) {
@@ -103,14 +103,16 @@ fn the_wind_down_sends_the_note() {
     let run = run(
         Case::Turns,
         &selected(winding),
-        vec![turn(vec![Step::Call { tool: "finish".into(), input: json!({}) }, Step::Hang]), turn(vec![finish()])],
+        vec![turn(vec![Step::Call { tool: "unoffered".into(), input: json!({}) }, Step::Hang]), turn(vec![finish()])],
     );
     assert!(
         matches!(run.answer().expect("bounded test fixture").result(), RunResult::Accepted(_)),
         "{:?}",
         run.answer()
     );
-    assert_eq!(run.seen.iter().filter(|seen| **seen == Seen::Interrupted).count(), 2);
+    // The wind-down interrupts the unfinished turn; the final outcome already
+    // has its result, so acceptance closes stdin without another interrupt.
+    assert_eq!(run.seen.iter().filter(|seen| **seen == Seen::Interrupted).count(), 1);
     let note = "The ordinary budget is spent. Finish now";
     assert!(
         run.received.iter().any(|message| {
@@ -157,7 +159,7 @@ fn a_wind_down_denies_a_built_in() {
         Case::Tools,
         &charter,
         vec![
-            turn(vec![Step::Call { tool: "finish".into(), input: json!({}) }, Step::Hang]),
+            turn(vec![Step::Call { tool: "unoffered".into(), input: json!({}) }, Step::Hang]),
             turn(vec![
                 Step::Builtin {
                     tool: "Read".into(),
@@ -191,7 +193,7 @@ fn spend_past_the_budget_fails_the_run() {
     let run = program_world::run(
         Case::Turns,
         &Story {
-            turns: vec![turn(vec![Step::Call { tool: "finish".into(), input: json!({}) }, Step::Hang])],
+            turns: vec![turn(vec![Step::Call { tool: "unoffered".into(), input: json!({}) }, Step::Hang])],
             usage: smith_fake_claude::Usage { input_tokens: 2_000_001, output_tokens: 5 },
             ..Story::default()
         },

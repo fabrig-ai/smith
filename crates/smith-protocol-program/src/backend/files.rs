@@ -224,12 +224,22 @@ impl Backend {
         for schema in schemas {
             match schema.kind {
                 protocol::ToolKind::SubAgent | protocol::ToolKind::Owned(_) => {}
+                protocol::ToolKind::Finish if self.result_contract() => {}
                 protocol::ToolKind::Wait | protocol::ToolKind::Deliver | protocol::ToolKind::Finish => {
                     tools
                         .push(mcp::Tool {
                             name: schema.name,
                             description: schema.description,
-                            input_schema: schema.schema,
+                            input_schema: match schema.kind {
+                                protocol::ToolKind::Finish => {
+                                    json::outcome_schema(&schema.schema, self.settings.contract_bytes)
+                                        .unwrap_or_default()
+                                }
+                                protocol::ToolKind::Wait | protocol::ToolKind::Deliver => schema.schema,
+                                protocol::ToolKind::SubAgent | protocol::ToolKind::Owned(_) => {
+                                    unreachable!("filtered tools")
+                                }
+                            },
                         })
                         .expect("inventory capacity");
                 }

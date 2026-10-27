@@ -220,13 +220,19 @@ impl Turns {
             return if boundary { None } else { Some(()) };
         }
         let mut calls = false;
+        let mut structured = false;
         for block in &message.blocks {
             match block {
-                llm::Said::ToolCall { .. } => calls = true,
+                llm::Said::ToolCall { name, .. } => {
+                    calls = true;
+                    structured |= name.as_ref() == b"StructuredOutput";
+                }
                 llm::Said::Text { .. } | llm::Said::Refusal { .. } | llm::Said::Opaque { .. } => {}
             }
         }
-        if !calls && !boundary {
+        // StructuredOutput's result supplies the finish input for this same
+        // model completion (programs.md 5.5), never an extra budgeted turn.
+        if (!calls || structured) && !boundary {
             return Some(());
         }
         if self.ready.room() == 0 {

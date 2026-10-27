@@ -43,9 +43,8 @@ fn story() -> Story {
     Story {
         summary: "portable summary".into(),
         turns: vec![Turn {
-            steps: vec![Step::Call {
-                tool: "finish".into(),
-                input: serde_json::json!({"form":"report","text":"done","fields":{}}),
+            steps: vec![Step::Outcome {
+                input: serde_json::json!({"outcome":{"form":"report","text":"done","fields":{}}}),
             }],
             ..Turn::default()
         }],
@@ -160,10 +159,7 @@ fn a_waiting_program_run_reads_its_message() {
                     input: serde_json::json!({}),
                     contains: "The next instruction".into(),
                 },
-                Step::Call {
-                    tool: "finish".into(),
-                    input: serde_json::json!({"form":"report", "text":"done", "fields":{}}),
-                },
+                Step::Outcome { input: serde_json::json!({"outcome":{"form":"report", "text":"done", "fields":{}}}) },
             ],
             end: End::default(),
         }],

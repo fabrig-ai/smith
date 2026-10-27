@@ -48,7 +48,7 @@ fn scripted(story: &Story, agents: bool) -> Run {
 }
 
 fn finish() -> Step {
-    Step::Call { tool: "finish".into(), input: json!({"form":"report","text":"done","fields":{}}) }
+    Step::Outcome { input: json!({"outcome":{"form":"report","text":"done","fields":{}}}) }
 }
 
 #[test]
@@ -77,7 +77,7 @@ fn a_program_run_s_events_name_its_backend() {
         })
         .expect("bounded event fixture");
     assert!(prompt.system.is_some());
-    assert!(prompt.tools.as_ref().expect("bounded event fixture").iter().any(|tool| tool.as_ref() == b"finish"));
+    assert!(!prompt.tools.as_ref().expect("bounded event fixture").iter().any(|tool| tool.as_ref() == b"finish"));
     assert!(!prompt.messages.is_empty(), "first hand-off carries the start's text");
 }
 

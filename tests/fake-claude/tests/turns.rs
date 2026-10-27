@@ -117,7 +117,7 @@ fn a_turn_without_finish_ends_with_its_structured_output() {
     let story = story(Vec::new(), End::Success { structured_output: Some(json!({"done":true})) });
     assert!(results(&normal(story.clone(), 1))[0].get("structured_output").is_none());
     let mut args = print::arguments();
-    args.extend(["--json-schema".into(), "{}".into()]);
+    args.extend(["--json-schema".into(), r#"{"type":"object"}"#.into()]);
     let run = print::run(
         story,
         print::invocation(1).arguments(&args.iter().map(String::as_str).collect::<Vec<_>>()),
@@ -597,4 +597,35 @@ fn an_idle_control_interrupt_only_acknowledges() {
     assert_eq!(output[2]["response"]["subtype"], "success");
     assert_eq!(output[2]["response"]["request_id"], "probe-1");
     assert_eq!(run.records[0].exit, Some(Exit::Code(0)));
+}
+
+#[test]
+fn an_invalid_structured_schema_fails_the_first_model_call() {
+    for schema in [
+        json!({}),
+        json!({"oneOf":[]}),
+        json!({"type":"object","oneOf":[]}),
+        json!({"type":"object","allOf":[]}),
+        json!({"type":"object","anyOf":[]}),
+    ] {
+        let mut args = print::arguments();
+        args.extend(["--json-schema".into(), schema.to_string()]);
+        let run = print::run(
+            Story::default(),
+            print::invocation(1).arguments(&args.iter().map(String::as_str).collect::<Vec<_>>()),
+            None,
+            Some(MCP),
+        );
+        let records = messages(&run);
+        let assistant = records.iter().find(|record| record["type"] == "assistant").expect("assistant error");
+        assert!(
+            assistant["message"]["content"][0]["text"].as_str().expect("error text").starts_with("API Error: 400 ")
+        );
+        let result = &results(&run)[0];
+        assert_eq!(result["is_error"], true);
+        assert_eq!(result["terminal_reason"], "api_error");
+        assert_eq!(result["api_error_status"], 400);
+        assert_eq!(result["result"], assistant["message"]["content"][0]["text"]);
+        assert!(run.calls.is_empty());
+    }
 }

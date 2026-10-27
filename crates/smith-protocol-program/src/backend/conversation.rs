@@ -150,13 +150,10 @@ impl Backend {
                     return;
                 }
                 self.turns.result = true;
-                let structured = match &self.request {
-                    Some(FromDomain::Complete { prompt, .. }) => prompt.served.contains(&llm::Served::Finish),
-                    Some(FromDomain::Cancel { .. } | FromDomain::Yield { .. }) | None => false,
-                };
+                let structured = self.result_contract();
                 let completed = match json::field(&document, 0, b"structured_output") {
-                    Some(index) if structured && token_kind(&document, Some(index)) != Some(Kind::Null) => {
-                        match json::raw(&document, index, self.settings.adapter.client.answer) {
+                    Some(index) if structured => {
+                        match json::outcome_input(&document, index, self.settings.adapter.client.answer) {
                             Some(input) => self.turns.structured(input),
                             None => None,
                         }
@@ -328,11 +325,29 @@ impl Backend {
         let mut decoded = 0_u64;
         for block in &mut completion.content {
             match block {
-                llm::Said::ToolCall { name, input, call, .. } => {
+                llm::Said::ToolCall { id, name, input, call, .. } => {
                     match call {
                         llm::Decoded::Builtin { .. } => {}
                         llm::Decoded::Owned { .. } | llm::Decoded::Served { .. } | llm::Decoded::Invalid { .. } => {
-                            *call = decode(name, input, prompt, outcome, deliver.as_ref(), &self.settings.adapter);
+                            let unwrapped;
+                            let decoded_input =
+                                if name.as_ref() == b"finish" && id.as_ref() != b"smith-structured-finish" {
+                                    unwrapped = match stream::collect(
+                                        input,
+                                        self.settings.adapter.client.depth,
+                                        self.settings.adapter.stated.call_input_bytes,
+                                    ) {
+                                        Some(document) => {
+                                            json::outcome_input(&document, 0, self.settings.adapter.client.answer)
+                                        }
+                                        None => None,
+                                    };
+                                    unwrapped.as_deref().unwrap_or(b"null")
+                                } else {
+                                    input.as_ref()
+                                };
+                            *call =
+                                decode(name, decoded_input, prompt, outcome, deliver.as_ref(), &self.settings.adapter);
                         }
                     }
                     decoded = match call.owned_bytes() {

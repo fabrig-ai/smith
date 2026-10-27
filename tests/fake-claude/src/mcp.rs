@@ -14,11 +14,21 @@ use skein_lib::{
 };
 use std::collections::{BTreeMap, VecDeque};
 
+pub(crate) fn schema_problem(schema: &Value) -> Option<&'static str> {
+    if !schema.is_object() || schema["type"] != "object" {
+        Some("input_schema.type: Field required")
+    } else if ["oneOf", "allOf", "anyOf"].iter().any(|key| schema.get(key).is_some()) {
+        Some("input_schema: input_schema does not support oneOf, allOf, or anyOf at the top level")
+    } else {
+        None
+    }
+}
+
 const OWNER: Token = Token::new(100);
 
 #[derive(Debug)]
 pub(crate) enum Notice {
-    Settled { connected: bool, tools: Vec<String> },
+    Settled { connected: bool, tools: Vec<String>, schema_error: Option<String> },
     Reply(Result<Value, String>),
 }
 
@@ -221,6 +231,12 @@ impl Mcp {
                 self.request("tools/list", json!({}), Pending::List);
             }
             Pending::List => {
+                let schema_error = value["result"]["tools"].as_array().and_then(|tools| {
+                    tools.iter().enumerate().find_map(|(index, tool)| {
+                        schema_problem(&tool["inputSchema"])
+                            .map(|problem| format!("API Error: 400 tools.{index}.custom.{problem}"))
+                    })
+                });
                 let tools = value["result"]["tools"].as_array().and_then(|tools| {
                     let names = tools
                         .iter()
@@ -243,7 +259,7 @@ impl Mcp {
                     Some(tools) if value.get("error").is_none() => {
                         self.settled = true;
                         self.connected = true;
-                        self.notices.push_back(Notice::Settled { connected: true, tools });
+                        self.notices.push_back(Notice::Settled { connected: true, tools, schema_error });
                     }
                     _ => self.failed(),
                 }
@@ -267,7 +283,7 @@ impl Mcp {
         self.ending = true;
         if !self.settled {
             self.settled = true;
-            self.notices.push_back(Notice::Settled { connected: false, tools: Vec::new() });
+            self.notices.push_back(Notice::Settled { connected: false, tools: Vec::new(), schema_error: None });
         }
     }
 
@@ -338,7 +354,7 @@ mod tests {
         }
         assert!(deliveries <= MAX_DELIVERIES, "tool-list deliveries: {deliveries}");
         assert!(
-            matches!(mcp.notices.pop_front(), Some(Notice::Settled { connected: true, tools }) if tools == ["finish"])
+            matches!(mcp.notices.pop_front(), Some(Notice::Settled { connected: true, tools, schema_error: None }) if tools == ["finish"])
         );
     }
 }
