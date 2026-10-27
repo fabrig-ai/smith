@@ -59,6 +59,80 @@ pub(crate) fn partials(text: &str, model: &str, id: usize) -> Vec<Value> {
     .collect()
 }
 
+// The owner recorded one assistant record per block before that block's stop.
+// Thinking is withheld; its estimated tokens are already in output_tokens.
+pub(crate) fn message(mut assistant: Value, thinking: Option<u64>, partial: bool) -> Vec<Value> {
+    const SIGNATURE_BYTES: usize = 1000;
+    let mut blocks = assistant["message"]["content"].as_array().expect("assistant blocks").clone();
+    if thinking.is_some() {
+        blocks.insert(0, json!({"type":"thinking","thinking":"","signature":"s".repeat(SIGNATURE_BYTES)}));
+    }
+    if !partial {
+        assistant["message"]["content"] = json!(blocks);
+        return vec![assistant];
+    }
+    let mut tokens = assistant["message"]["usage"].clone();
+    if let Some(estimated) = thinking {
+        tokens["output_tokens_details"] = json!({"thinking_tokens":estimated});
+        // Block records precede the final output-token count in message_delta.
+        assistant["message"]["usage"]["output_tokens"] = json!(0);
+    }
+    let mut values = vec![event(json!({"type":"message_start","message":{
+        "id":assistant["message"]["id"],"role":"assistant","model":assistant["message"]["model"],
+        "content":[],"usage":assistant["message"]["usage"]}}))];
+    let mut calls = false;
+    for (index, block) in blocks.into_iter().enumerate() {
+        let (start, deltas) = match block["type"].as_str().expect("block type") {
+            "thinking" => {
+                let estimated = thinking.expect("thinking tokens");
+                let first = estimated.checked_div(2).expect("two estimate updates");
+                (
+                    json!({"type":"thinking","thinking":"","signature":""}),
+                    vec![
+                        json!({"type":"system","subtype":"thinking_tokens","estimated_tokens":first,
+                        "estimated_tokens_delta":first}),
+                        event(json!({"type":"content_block_delta","index":index,
+                        "delta":{"type":"thinking_delta","thinking":"","estimated_tokens":first}})),
+                        json!({"type":"system","subtype":"thinking_tokens","estimated_tokens":estimated,
+                        "estimated_tokens_delta":estimated.checked_sub(first).expect("estimate grows")}),
+                        event(json!({"type":"content_block_delta","index":index,
+                        "delta":{"type":"signature_delta","signature":block["signature"]}})),
+                    ],
+                )
+            }
+            "text" => (
+                json!({"type":"text","text":""}),
+                vec![event(json!({
+                "type":"content_block_delta","index":index,"delta":{"type":"text_delta","text":block["text"]}}))],
+            ),
+            "tool_use" => {
+                calls = true;
+                (
+                    json!({"type":"tool_use","id":block["id"],"name":block["name"],"input":{},"caller":block["caller"]}),
+                    vec![event(json!({"type":"content_block_delta","index":index,
+                        "delta":{"type":"input_json_delta","partial_json":serde_json::to_string(&block["input"]).expect("tool JSON")}}))],
+                )
+            }
+            _ => unreachable!("scripted block"),
+        };
+        values.push(event(json!({"type":"content_block_start","index":index,"content_block":start})));
+        values.extend(deltas);
+        let mut record = assistant.clone();
+        record["message"]["content"] = json!([block]);
+        values.push(record);
+        values.push(event(json!({"type":"content_block_stop","index":index})));
+    }
+    values.push(event(
+        json!({"type":"message_delta","delta":{"stop_reason":if calls {"tool_use"} else {"end_turn"}},"usage":tokens}),
+    ));
+    values.push(event(json!({"type":"message_stop"})));
+    values
+}
+
+fn event(value: Value) -> Value {
+    json!({"type":"stream_event","event":value,"parent_tool_use_id":null})
+}
+
 pub(crate) fn failure(status: Option<u16>, reason: Option<String>, errors: Vec<String>) -> Value {
     json!({"type":"result", "subtype":"error_during_execution", "is_error":true,
         "api_error_status":status, "terminal_reason":reason, "errors":errors})

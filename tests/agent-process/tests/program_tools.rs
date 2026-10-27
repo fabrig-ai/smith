@@ -11,14 +11,26 @@ use smith_channel::{ModelFault, RunFailure, RunResult};
 use smith_fake_claude::{Decision, End, Seen, Step, Story, Turn};
 
 fn charter_tools() -> Box<[u8]> {
+    charter_mode(smith_charter::Mode::Finite)
+}
+
+fn charter_mode(mode: smith_charter::Mode) -> Box<[u8]> {
     let mut parts = smith_charter::Charter::decode(&smith_charter::CEILINGS, &mut Reader::new(&charter()))
         .expect("charter")
         .into_parts();
+    parts.mode = mode;
+    if parts.mode == smith_charter::Mode::Open {
+        parts.waiting = skein_lib::Duration::from_millis(10);
+    }
     let mut budget = parts.budget.into_parts();
     budget.turns = 8;
     budget.spend = 20;
     parts.budget = smith_charter::Budget::new(&smith_charter::CEILINGS, budget).expect("budget");
     let mut tools = parts.tools.into_parts();
+    if parts.mode == smith_charter::Mode::Open {
+        tools.wait = true;
+        tools.deliver = None;
+    }
     tools.families = smith_charter::Families::new(
         &smith_charter::CEILINGS,
         smith_charter::FamiliesParts { skein_bools: [true, true, true, false] },
@@ -253,4 +265,72 @@ fn a_nested_host_input_is_told_and_answered() {
     assert_eq!(said.text(), b"found");
     assert!(!said.error());
     assert!(run.seen.contains(&Seen::Called { tool: "lookup".into(), error: false }));
+}
+
+// Two API messages (lookup, then reply) at the existing per-message spend
+// fixture's input count. The thinking estimate is included in output_tokens.
+const THINKING_MESSAGES: u32 = 2;
+const THINKING_SPEND: u64 = 2;
+
+fn thinking_story() -> Story {
+    Story {
+        turns: vec![Turn {
+            steps: vec![
+                Step::Think {
+                    tokens: 100,
+                    step: Box::new(Step::CallChecked {
+                        tool: "lookup".into(),
+                        input: json!({}),
+                        contains: "found".into(),
+                    }),
+                },
+                Step::Text("Reply after found.".into()),
+            ],
+            end: End::Success { structured_output: Some(json!({"form":"report","text":"done","fields":{}})) },
+        }],
+        usage: smith_fake_claude::Usage { input_tokens: 600_000, output_tokens: 154 },
+        ..Story::default()
+    }
+}
+
+fn thinking_reply(run: &Run) {
+    assert_eq!(run.answer().expect("answer").turns(), THINKING_MESSAGES);
+    assert_eq!(run.answer().expect("answer").spent(), THINKING_SPEND);
+    assert!(run.seen.contains(&Seen::Called { tool: "lookup".into(), error: false }));
+    let result = told_result(run, b"lookup", &json!({}));
+    let smith_transcript::Returned::Said(said) = result.returned() else { panic!("host answer") };
+    assert_eq!(said.text(), b"found");
+    let replies: Vec<_> = turns(run)
+        .into_iter()
+        .flat_map(|turn| {
+            turn.messages()
+                .as_slice()
+                .iter()
+                .filter(|message| message.role() == &smith_transcript::Role::Assistant)
+                .flat_map(|message| message.blocks().as_slice())
+                .filter_map(|block| match block {
+                    smith_transcript::Block::Text(text) => Some(text.text().to_vec()),
+                    smith_transcript::Block::Call(_)
+                    | smith_transcript::Block::Result(_)
+                    | smith_transcript::Block::Refusal(_)
+                    | smith_transcript::Block::Opaque(_) => None,
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    assert_eq!(replies, [b"Reply after found.".to_vec()]);
+}
+
+#[test]
+fn a_finite_thinking_turn_calls_then_replies_once() {
+    let run = run(&thinking_story());
+    accepted(&run);
+    thinking_reply(&run);
+}
+
+#[test]
+fn an_open_thinking_turn_calls_then_replies_once() {
+    let run = program_world::open(&thinking_story(), &charter_mode(smith_charter::Mode::Open), &[]);
+    assert!(matches!(run.answer().expect("answer").result(), RunResult::Parked), "{:?}", run.answer());
+    thinking_reply(&run);
 }
