@@ -123,12 +123,20 @@ impl Backend {
         up: &mut Queue<ToDomain>,
         below: &mut Queue<Below>,
     ) -> bool {
+        // A natural end has no control request. A yield keeps the sequence
+        // after its acknowledgement and result, until this finishing input.
+        let prefix = if self.interrupt_sequence == 0 {
+            b"".as_slice()
+        } else {
+            b"(The agent paused your last turn to send the finishing note.)\n".as_slice()
+        };
         let rendered = match &mut self.request {
             Some(FromDomain::Complete { prompt, observation, .. }) => tail::render_observed(
                 prompt,
                 &self.ledger,
                 &self.settings.adapter,
                 self.settings.input_bytes,
+                prefix,
                 observation.is_some(),
             ),
             Some(FromDomain::Cancel { .. } | FromDomain::Yield { .. }) | None => unreachable!("finishing Complete"),
