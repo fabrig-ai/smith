@@ -179,7 +179,6 @@ impl Backend {
                 Some(())
             }
             Some(b"system") => match json::text_in(&document, json::field(&document, 0, b"subtype")) {
-                Some(b"status" | b"thinking_tokens") => return,
                 Some(b"init") => {
                     // Admission collects the line itself; reuse the one-document
                     // workspace rather than retaining this dispatch document too.
@@ -204,7 +203,9 @@ impl Backend {
                     }
                     Some(())
                 }
-                Some(_) | None => None,
+                // programs.md 5.5: future system subtypes are notices too.
+                Some(_) => return,
+                None => None,
             },
             Some(b"user") => self.builtin_results(&document, up),
             Some(_) | None => None,

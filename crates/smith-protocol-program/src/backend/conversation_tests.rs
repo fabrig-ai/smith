@@ -224,12 +224,17 @@ fn finished_reply(up: &Queue<ToDomain>) -> &llm::Completion {
     panic!("completed reply")
 }
 
-#[test]
-fn status_before_a_completion_preserves_the_reply() {
+fn reply_after_notice(notice: &[u8]) -> (Backend, Queue<ToDomain>) {
     let (mut backend, mut up, mut below) = active_with_queues();
-    backend.line(&env(0), STATUS, &mut up, &mut below);
+    backend.line(&env(0), notice, &mut up, &mut below);
     backend.line(&env(0), REPLY, &mut up, &mut below);
     backend.line(&env(0), RESULT, &mut up, &mut below);
+    (backend, up)
+}
+
+#[test]
+fn status_before_a_completion_preserves_the_reply() {
+    let (backend, up) = reply_after_notice(STATUS);
     assert_eq!(finished_reply(&up).content, expected_reply());
     assert_eq!(backend.phase, Phase::Running);
 }
@@ -318,11 +323,10 @@ fn a_later_init_rechecks_the_runs_builtin_grants() {
 }
 
 #[test]
-fn an_unknown_system_subtype_still_fails_the_run() {
-    let (mut backend, mut up, mut below) = active_with_queues();
-    backend.line(&env(0), br#"{"type":"system","subtype":"future"}"#, &mut up, &mut below);
-    let Some(ToDomain::Failed { failure, .. }) = up.pop() else { panic!("unknown subtype failure") };
-    assert_eq!(failure, llm::Failure::Program { exit: None });
+fn an_unknown_system_subtype_preserves_the_reply() {
+    let (backend, up) = reply_after_notice(br#"{"type":"system","subtype":"something_new"}"#);
+    assert_eq!(finished_reply(&up).content, expected_reply());
+    assert_eq!(backend.phase, Phase::Running);
 }
 
 #[test]
