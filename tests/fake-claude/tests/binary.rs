@@ -312,6 +312,8 @@ fn the_binary_keeps_reading_after_a_control_interrupt() {
     assert_eq!(result.get("stop_reason"), Some(&serde_json::Value::Null));
     assert_eq!(result["is_error"], true);
     send_user(&mut child);
+    assert_eq!(read_message(&mut reader)["subtype"], "init");
+    assert_eq!(read_message(&mut reader)["subtype"], "status");
     assert_eq!(read_message(&mut reader)["type"], "assistant");
     assert_eq!(read_message(&mut reader)["subtype"], "success");
     child.stdin.take();
