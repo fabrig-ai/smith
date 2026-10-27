@@ -31,6 +31,10 @@ impl Live {
     }
 
     fn start_configured(text: &str, permission: bool, thinking: bool, schema: Option<&str>) -> Self {
+        Self::start_inventory(text, permission, thinking, schema, false)
+    }
+
+    fn start_inventory(text: &str, permission: bool, thinking: bool, schema: Option<&str>, non_object: bool) -> Self {
         let root = std::env::var_os("SMITH_LIVE").filter(|value| !value.is_empty()).expect("$SMITH_LIVE unset");
         let root = smith_bench::guard::write_path(std::path::Path::new(&root)).expect("guarded $SMITH_LIVE");
         let configuration = std::env::var_os("SMITH_LIVE_CLAUDE")
@@ -42,8 +46,8 @@ impl Live {
             "no configured Claude directory: set SMITH_LIVE_CLAUDE or prepare $SMITH_LIVE/programs/claude"
         );
         let probe = Probe::new();
-        let mcp = if permission || thinking || schema.is_some() {
-            prompt_server(&probe, thinking || schema.is_some())
+        let mcp = if permission || thinking || schema.is_some() || non_object {
+            prompt_server(&probe, thinking || schema.is_some(), non_object)
         } else {
             r#"{"mcpServers":{}}"#.into()
         };
@@ -322,7 +326,7 @@ fn a_live_resume_continues() {
 }
 
 // A bounded fixture records only the prompt's shape, never the program's input.
-fn prompt_server(probe: &Probe, thinking: bool) -> String {
+fn prompt_server(probe: &Probe, thinking: bool, non_object: bool) -> String {
     assert!(
         std::fs::symlink_metadata("/usr/bin/python3").is_ok(),
         "`/usr/bin/python3` is missing: the prompt-shape probe's MCP fixture needs it"
@@ -339,8 +343,10 @@ for line in sys.stdin:
         result = {'protocolVersion':'2025-06-18', 'capabilities':{'tools':{}}, 'serverInfo':{'name':'smith-live-probe','version':'1'}}
     elif method == 'tools/list':
         result = {'tools':[{'name':'permission_prompt','description':'Ask before Read', 'inputSchema':{'type':'object','properties':{'tool_name':{'type':'string'},'input':{'type':'object'},'tool_use_id':{'type':'string'}},'required':['tool_name','input']}}]}
-        if sys.argv[2] == 'thinking':
+        if sys.argv[2] in ('thinking', 'non-object'):
             result['tools'].append({'name':'echo','description':'Echo the thinking probe answer','inputSchema':{'type':'object','properties':{'text':{'type':'string'}},'required':['text']}})
+        if sys.argv[2] == 'non-object':
+            result['tools'].append({'name':'finish','description':'Declare the probe result','inputSchema':{'oneOf':[{'type':'object','properties':{'answer':{'type':'string'}},'required':['answer']}]}})
     elif method == 'tools/call':
         params = request['params']
         args = params.get('arguments', {})
@@ -356,7 +362,29 @@ for line in sys.stdin:
     print(json.dumps({'jsonrpc':'2.0','id':request['id'],'result':result}), flush=True)
 ").expect("private prompt fixture");
     std::fs::write(probe.home.join("read-me.txt"), b"probe input\n").expect("private Read input");
-    serde_json::json!({"mcpServers":{"smith":{"command":"/usr/bin/python3","args":[script,probe.home.join("prompt-shape"),if thinking {"thinking"} else {"prompt"}]}}}).to_string()
+    serde_json::json!({"mcpServers":{"smith":{"command":"/usr/bin/python3","args":[script,probe.home.join("prompt-shape"),if non_object {"non-object"} else if thinking {"thinking"} else {"prompt"}]}}}).to_string()
+}
+
+#[test]
+fn a_live_server_with_a_non_object_schema_lists_no_tools() {
+    // The existing live turn probes allow this many records before a terminal.
+    const INIT_RECORDS: usize = 1000;
+    let live = Live::start_inventory("Reply with OK.", false, false, None, true);
+    for _ in 0..INIT_RECORDS {
+        let message = live.message();
+        if message["type"] == "system" && message["subtype"] == "init" {
+            assert_eq!(message["mcp_servers"], serde_json::json!([{"name":"smith","status":"connected"}]));
+            assert!(
+                message["tools"]
+                    .as_array()
+                    .expect("init tools")
+                    .iter()
+                    .all(|tool| !tool.as_str().expect("tool name").starts_with("mcp__smith__"))
+            );
+            return;
+        }
+    }
+    panic!("init did not arrive");
 }
 
 #[test]

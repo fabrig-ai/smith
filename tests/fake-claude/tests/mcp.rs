@@ -38,6 +38,37 @@ fn init_reports_the_configured_server_connected_with_its_tools() {
     assert_eq!(run.server_exit, Some(Exit::Code(0)));
 }
 
+fn schema_script(schema: Value) -> ServerScript {
+    ServerScript {
+        tools: vec![
+            Tool { name: "echo".into(), answer: Answer::default() },
+            Tool { name: "finish".into(), answer: Answer::default() },
+        ],
+        input_schemas: [("finish".into(), schema)].into(),
+        ..ServerScript::default()
+    }
+}
+
+#[test]
+fn one_non_object_schema_hides_every_server_tool_at_init() {
+    for schema in [json!({"oneOf":[{"type":"object","required":["answer"]}]}), json!({"type":"string"}), json!(true)] {
+        let run = print::with_server(Story::default(), print::invocation(0), schema_script(schema));
+        let init = &messages(&run)[0];
+        assert_eq!(init["tools"], json!(["Read", "Bash"]));
+        assert_eq!(init["mcp_servers"], json!([{"name":"smith", "status":"connected"}]));
+    }
+}
+
+#[test]
+fn object_schemas_expose_every_server_tool_at_init() {
+    let run = print::with_server(
+        Story::default(),
+        print::invocation(0),
+        schema_script(json!({"type":"object","oneOf":[{"type":"object","required":["answer"]}]})),
+    );
+    assert_eq!(messages(&run)[0]["tools"], json!(["Read", "Bash", "mcp__smith__echo", "mcp__smith__finish"]));
+}
+
 #[test]
 fn a_server_that_cannot_start_is_reported_failed() {
     let config = br#"{"mcpServers":{"smith":{"command":"missing"}}}"#;
