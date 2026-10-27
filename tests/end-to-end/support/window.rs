@@ -9,6 +9,9 @@ use smith_local_process_world::process::Proc;
 /// How long non-program shipped-binary worlds may take to settle.
 pub(super) const WORLD_PATIENCE: Duration = Duration::from_secs(2);
 
+/// How long program shipped-binary worlds may take to settle.
+pub(super) const PROGRAM_WORLD_PATIENCE: Duration = Duration::from_secs(30);
+
 #[derive(Clone, Copy)]
 pub(super) enum Story {
     None,
@@ -146,30 +149,32 @@ impl Referee<Process> for Judge {
 }
 
 impl Story {
-    pub(super) fn budget(self, sign_in: bool) -> Duration {
+    pub(super) fn budget(self) -> Duration {
         match self {
-            // Widths are this story's subject, so its referee uses the world's
-            // patience (testing-strategy.md, 2.8; director 1294).
-            Self::Resize => WORLD_PATIENCE,
-            Self::ProgramRun | Self::ProgramCheck => Duration::from_secs(30),
-            Self::None | Self::Modes => Duration::from_secs(if sign_in { 5 } else { 1 }),
+            // These stories judge outcomes, modes and widths, not durations.
+            // Their referees share their world's patience (director 1294).
+            Self::None | Self::Modes | Self::Resize => WORLD_PATIENCE,
+            // The five-second interruption assertion stays in program_interrupt.
+            Self::ProgramRun | Self::ProgramCheck => PROGRAM_WORLD_PATIENCE,
         }
     }
 }
 
 #[test]
-fn resize_referee_uses_world_patience() {
+fn non_program_referees_use_world_patience() {
     let now = Time::ZERO;
-    let referee = Refusal::new(now, now.saturating_add(Story::Resize.budget(false)));
-    assert_eq!(referee.overdue(now.saturating_add(Duration::from_millis(1118))), None);
-    let deadline = now.saturating_add(WORLD_PATIENCE);
-    assert_eq!(referee.next_deadline(), Some(deadline));
-    assert!(referee.overdue(deadline).is_some());
+    for story in [Story::None, Story::Modes, Story::Resize] {
+        let referee = Refusal::new(now, now.saturating_add(story.budget()));
+        assert_eq!(referee.overdue(now.saturating_add(Duration::from_millis(1118))), None);
+        let deadline = now.saturating_add(WORLD_PATIENCE);
+        assert_eq!(referee.next_deadline(), Some(deadline));
+        assert!(referee.overdue(deadline).is_some());
+    }
 }
 
 #[test]
 fn program_stories_allow_thirty_seconds_total() {
     for story in [Story::ProgramRun, Story::ProgramCheck] {
-        assert_eq!(story.budget(false), Duration::from_secs(30));
+        assert_eq!(story.budget(), Duration::from_secs(30));
     }
 }

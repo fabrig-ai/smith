@@ -300,7 +300,7 @@ fn run_fixture(
                 .windows(2)
                 .find(|pair| pair.first().is_some_and(|flag| *flag == "--trace"))
                 .map(|pair| (scratch.path().join(pair.get(1).expect("trace path")), false)),
-            ..Refusal::new(now, now.saturating_add(watching.budget(sign_in)))
+            ..Refusal::new(now, now.saturating_add(watching.budget()))
         },
         watching,
         master,
@@ -327,13 +327,7 @@ fn run_fixture(
         });
         world.spawn(|| Process::Script(Proc::Browser(Box::default())));
     }
-    let outcome = world.run(
-        &clock,
-        match watching {
-            window::Story::ProgramRun | window::Story::ProgramCheck => watching.budget(sign_in),
-            window::Story::None | window::Story::Modes | window::Story::Resize => window::WORLD_PATIENCE,
-        },
-    );
+    let outcome = world.run(&clock, watching.budget());
     assert!(outcome.procs.iter().all(Host::is_empty), "product and peers drain");
     let Process::Binary(binary) = outcome.procs.first().expect("binary") else { unreachable!("binary") };
     let Process::Script(Proc::Terminal(person)) = outcome.procs.get(1).expect("person") else { unreachable!("person") };
