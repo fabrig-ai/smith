@@ -147,6 +147,7 @@ pub(crate) struct Print {
     texts: u64,
     last_text: String,
     interrupted: bool,
+    cancelling: bool,
     server_config: Value,
     pending: Option<ToolCall>,
     acting: Option<crate::act::Act>,
@@ -195,6 +196,7 @@ impl Print {
             texts: 0,
             last_text: String::new(),
             interrupted: false,
+            cancelling: false,
             server_config: Value::Null,
             pending: None,
             acting: None,
@@ -391,6 +393,23 @@ impl Print {
                 if self.input.last() != Some(&b'\n') {
                     return vec![Effect::ReadCode];
                 }
+                let value = serde_json::from_slice::<Value>(&self.input).ok();
+                if let Some(value) = value
+                    && value["type"] == "control_request"
+                    && value["request"]["subtype"] == "interrupt"
+                    && value["request_id"].is_string()
+                {
+                    self.input.clear();
+                    let mut response = serde_json::to_vec(&json!({"type":"control_response", "response":{
+                        "subtype":"success", "request_id":value["request_id"], "response":{"still_queued":[]}
+                    }}))
+                    .expect("control response JSON");
+                    response.push(b'\n');
+                    let mut effects = vec![Effect::Output(response), Effect::Seen(Seen::Interrupted)];
+                    effects.extend(self.interrupt_turn());
+                    effects.push(Effect::ReadCode);
+                    return effects;
+                }
                 if !stream::user(&self.input) {
                     return error("invalid user message", 1);
                 }
@@ -543,10 +562,12 @@ impl Print {
                 }
                 Step::Deaf => {
                     self.phase = Phase::Deaf;
+                    effects.push(Effect::ReadCode);
                     return effects;
                 }
                 Step::Hang => {
                     self.phase = Phase::Hanging;
+                    effects.push(Effect::ReadCode);
                     return effects;
                 }
             }
@@ -627,7 +648,7 @@ impl Print {
         } else {
             effects.push(self.emit(assistant));
         }
-        effects.push(Effect::McpCall { tool: call, input: arguments });
+        effects.extend([Effect::McpCall { tool: call, input: arguments }, Effect::ReadCode]);
         effects
     }
 
@@ -803,7 +824,7 @@ impl Print {
         if self.texts > 1 {
             effects.push(self.emit(stream::status()));
         }
-        effects.extend([self.emit(assistant), call]);
+        effects.extend([self.emit(assistant), call, Effect::ReadCode]);
         effects
     }
 
@@ -816,7 +837,14 @@ impl Print {
         self.interrupted = false;
         self.together.clear();
         self.expected_reply = None;
-        self.finish(stream::failure(None, Some("interrupted".into()), Vec::new()))
+        let mut result = stream::failure(None, Some("aborted_streaming".into()), Vec::new());
+        result["stop_reason"] = Value::Null;
+        if self.cancelling {
+            self.phase = Phase::Done;
+            vec![self.emit(result), Effect::End(0)]
+        } else {
+            self.finish(result)
+        }
     }
 
     pub fn stop(&mut self) -> Vec<Effect> {
@@ -837,6 +865,15 @@ impl Print {
     }
 
     pub fn interrupt(&mut self) -> Vec<Effect> {
+        self.cancelling = true;
+        if matches!(self.phase, Phase::Idle | Phase::Done) {
+            self.phase = Phase::Done;
+            return vec![Effect::End(0)];
+        }
+        self.interrupt_turn()
+    }
+
+    fn interrupt_turn(&mut self) -> Vec<Effect> {
         match self.phase {
             Phase::Hanging => self.interrupt_result(),
             Phase::Calling => {

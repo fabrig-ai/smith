@@ -364,6 +364,7 @@ impl Backend {
             io::Event::Spawned { child, pipes, .. } => {
                 self.spawning = false;
                 self.child = Some(child);
+                self.interrupt_sequence = 0;
                 for (slot, pipe) in self.pipes.iter_mut().zip(pipes) {
                     *slot = Some(pipe);
                 }
@@ -450,7 +451,7 @@ impl Backend {
             }
             io::Event::Stream { up: stream::Up::Room, .. } => {}
             io::Event::Output { up: stream::OutputUp::Settled { right, outcome }, .. } => {
-                if self.phase != Phase::Ending {
+                if self.phase != Phase::Ending || self.stop == super::stop::Stop::Parking {
                     match outcome {
                         stream::OutputOutcome::Granted => {
                             if self.exit.is_some() || self.pipes[0].is_none() {
@@ -463,7 +464,14 @@ impl Backend {
                                 );
                                 return;
                             }
-                            if let Some(bytes) = &self.outgoing {
+                            if right == Token::new(2) {
+                                if let Some(bytes) = self.interrupt_line.take() {
+                                    self.io.push(io::Request::Output {
+                                        stream: self.pipes[0].expect("interrupt write"),
+                                        down: stream::OutputDown::Send { right, bytes },
+                                    });
+                                }
+                            } else if let Some(bytes) = &self.outgoing {
                                 let start = usize::try_from(self.written).expect("input cursor");
                                 let end = start.checked_add(4096).expect("input chunk").min(bytes.len());
                                 let chunk = Box::from(bytes.get(start..end).expect("input range"));
@@ -477,6 +485,7 @@ impl Backend {
                                     self.outgoing = None;
                                     self.written = 0;
                                     self.remember_session();
+                                    self.send_interrupt();
                                 } else {
                                     self.send_input();
                                 }

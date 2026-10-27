@@ -175,6 +175,9 @@ pub struct Backend {
     pipes: [Option<Token>; 3],
     outgoing: Option<Box<[u8]>>,
     written: u32,
+    interrupt_sequence: u64,
+    interrupt_pending: Option<u64>,
+    interrupt_line: Option<Box<[u8]>>,
     exit: Option<u32>,
     deadline: Option<Time>,
     eof_deadline: Option<Time>,
@@ -248,6 +251,9 @@ impl Backend {
             pipes: [None; 3],
             outgoing: None,
             written: 0,
+            interrupt_sequence: 0,
+            interrupt_pending: None,
+            interrupt_line: None,
             exit: None,
             deadline: None,
             eof_deadline: None,
@@ -602,6 +608,16 @@ impl Backend {
 
     /// End the conversation, closing input before terminating at its grace (5.7).
     pub fn close(&mut self, env: &Env<protocol::ComponentLimits>, up: &mut Queue<ToDomain>, below: &mut Queue<Below>) {
+        self.close_turn(env, self.parking_wait(), up, below);
+    }
+
+    fn close_turn(
+        &mut self,
+        env: &Env<protocol::ComponentLimits>,
+        parking: bool,
+        up: &mut Queue<ToDomain>,
+        below: &mut Queue<Below>,
+    ) {
         match self.phase {
             Phase::Ending | Phase::Ended => return,
             Phase::Idle | Phase::Checking | Phase::Starting | Phase::Running => {}
@@ -615,7 +631,10 @@ impl Backend {
         self.request = None;
         self.outgoing = None;
         self.eof_deadline = None;
-        self.stop(env.now, active, false);
+        self.stop(env, active, parking, up, below);
+        if parking && self.stop == stop::Stop::WindDown {
+            self.stop = stop::Stop::Parking;
+        }
         self.read_stdout();
         if let Some(check) = &mut self.check {
             check.fire(Time::from_nanos(u64::MAX), &mut self.io);
@@ -676,10 +695,10 @@ impl Backend {
             self.switching = true;
             self.phase = Phase::Running;
             self.outgoing = None;
-            self.stop(env.now, active, false);
+            self.stop(env, active, false, up, below);
             self.request = None;
         } else {
-            self.close(env, up, below);
+            self.close_turn(env, false, up, below);
         }
     }
 }

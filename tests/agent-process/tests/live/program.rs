@@ -158,6 +158,19 @@ impl Live {
         panic!("program turn did not finish");
     }
 
+    fn wait_for_turn_start(&self) {
+        // Same bounded record allowance as these live turn probes.
+        const START_RECORDS: usize = 1000;
+        for _ in 0..START_RECORDS {
+            let message = self.message();
+            assert!(message["type"] != "result", "the turn must still run when interrupted");
+            if message["event"]["type"] == "message_start" {
+                return;
+            }
+        }
+        panic!("message_start before interrupt");
+    }
+
     fn close_input(&mut self) {
         drop(self.child.stdin.take());
         assert!(self.child.wait().expect("program exit").success(), "input closure exits successfully");
@@ -184,20 +197,26 @@ fn a_live_second_message_needs_the_first_turns_context() {
 #[test]
 fn a_live_interrupted_turn_is_followed_by_another() {
     let mut live = Live::start("Count from one to ten thousand, writing every number.");
-    let mut started = false;
-    for _ in 0..1000 {
-        let message = live.message();
-        assert!(message["type"] != "result", "the turn must still run when interrupted");
-        if message["type"] == "assistant" || message["type"] == "stream_event" {
-            started = true;
-            break;
-        }
-    }
-    assert!(started, "first assistant or partial message before interrupt");
-    assert!(Command::new("/bin/kill").args(["-INT", &live.child.id().to_string()]).status().expect("SIGINT").success());
+    live.wait_for_turn_start();
+    writeln!(
+        live.child.stdin.as_mut().expect("open input"),
+        "{}",
+        serde_json::json!({"type":"control_request","request_id":"probe-1","request":{"subtype":"interrupt"}})
+    )
+    .expect("interrupt request");
+    let mut acknowledged = false;
     let mut interrupted = false;
     for _ in 0..1000 {
-        if live.message()["type"] == "result" {
+        let message = live.message();
+        if message["type"] == "control_response" {
+            assert_eq!(message["response"]["subtype"], "success");
+            assert_eq!(message["response"]["request_id"], "probe-1");
+            acknowledged = true;
+        }
+        if message["type"] == "result" {
+            assert!(acknowledged, "interrupt acknowledged before its result");
+            assert_eq!(message["is_error"], true);
+            assert_eq!(message["terminal_reason"], "aborted_streaming");
             interrupted = true;
             break;
         }
@@ -212,18 +231,13 @@ fn a_live_interrupted_turn_is_followed_by_another() {
 #[test]
 fn a_live_interrupt_ends_the_turn() {
     let mut live = Live::start("Count from one to ten thousand, writing every number.");
-    for _ in 0..1000 {
-        let message = live.message();
-        assert!(message["type"] != "result", "the turn must still run when interrupted");
-        if message["event"]["type"] == "message_start" {
-            break;
-        }
-    }
+    live.wait_for_turn_start();
     assert!(Command::new("/bin/kill").args(["-INT", &live.child.id().to_string()]).status().expect("SIGINT").success());
     for _ in 0..1000 {
         let message = live.message();
         if message["type"] == "result" {
-            assert!(message["terminal_reason"] == "interrupted", "interrupt terminal");
+            assert_eq!(message["is_error"], true);
+            assert_eq!(message["terminal_reason"], "aborted_streaming");
             drop(live.child.stdin.take());
             return;
         }
