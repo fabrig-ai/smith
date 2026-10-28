@@ -180,6 +180,13 @@ impl Effects {
         work_pending(&self.service, now)
     }
 
+    /// Entries in the effects' own handoffs for the colocated host's
+    /// backlog (protocol/limits.md 3.8).
+    #[must_use]
+    pub fn backlog(&self) -> u64 {
+        super::backlog(&self.service)
+    }
+
     /// Adopt the product's append descriptor under its configured delivery policy.
     pub fn adopt_destination(
         &mut self,

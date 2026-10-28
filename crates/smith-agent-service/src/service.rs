@@ -700,7 +700,7 @@ pub fn next_policy_deadline(service: &Service) -> Option<Time> {
 }
 
 // Count internal handoffs, including the optional program's lower queue.
-fn backlog(service: &Service) -> u64 {
+pub(super) fn backlog(service: &Service) -> u64 {
     let mut total = u64::from(program::backlog(service));
     for entries in [
         service.llm_events.len(),

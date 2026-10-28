@@ -565,6 +565,21 @@ fn host_message(name: u64) -> channel::OpenEvent {
 }
 
 #[test]
+fn effects_report_their_handoffs_backlog() {
+    let mut effects = Effects::new(configuration(), 1).expect("bounded effects");
+    let owner = Token::new(17);
+    assert_eq!(effects.backlog(), 0);
+    effects.request(domain::Request::Cancel { owner });
+    assert_eq!(effects.backlog(), 1, "one domain request waits for the lower stages");
+    effects.io_event(io::Event::Resized);
+    assert_eq!(effects.backlog(), 2, "one IO event waits for routing");
+    effects.io_requests().push(io::Request::Close { entity: owner });
+    assert_eq!(effects.backlog(), 3, "one IO request waits for the colocated owner");
+    effects.io_requests().pop().expect("the colocated owner takes its request");
+    assert_eq!(effects.backlog(), 2);
+}
+
+#[test]
 fn a_message_waits_at_the_watermark_and_is_taken_once_the_backlog_falls() {
     let mut service = at_watermark();
     service.channel_events.push(host_message(31));

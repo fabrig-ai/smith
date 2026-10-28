@@ -101,9 +101,11 @@ fn the_backlog_counts_internal_queues_and_never_edges() {
     assert_eq!(service.backlog(), 4);
     service.below.process_mut().store_request(smith_local_protocol::StoreRequest::Load);
     assert_eq!(service.backlog(), 5, "process internal handoffs contribute too");
-    let held = a_service_with_held_inline_facts();
+    let mut held = a_service_with_held_inline_facts();
     let child_entries = held.local.backlog();
     assert!(child_entries > 0, "native facts wait for the service");
+    held.below.inline_mut().expect("inline effects").io_event(skein_io::Event::Resized);
+    assert_eq!(held.backlog(), u64::from(child_entries) + 1, "inline effects' handoffs contribute too");
     service.local = held.local;
     assert_eq!(service.backlog(), 5 + u64::from(child_entries), "the local domain contributes its child entries");
 }
