@@ -16,7 +16,7 @@ pub struct View {
 }
 
 impl Local {
-    /// Prepare and price the product's startup record before any local resources move.
+    /// Prepare the product's startup record before any local resources move.
     pub fn prepare_header(
         configuration: &mut config::Configuration,
         limits: &mut service::Limits,
@@ -25,19 +25,13 @@ impl Local {
         pid: u64,
         view: View,
         result_file: skein_lib::Duration,
-    ) -> Result<(Option<smith_events::SessionStarted>, u64), crate::startup::Failure> {
+    ) -> Result<Option<smith_events::SessionStarted>, crate::startup::Failure> {
         match trace {
             Some(trace) => {
                 let header = Self::trace_header(configuration, limits, trace, chat.into(), pid, view, result_file)?;
-                let bytes = Self::header_memory(&header)
-                    .ok_or_else(|| configuration_failure(derivation_refusal("local_header")))?;
-                smith_agent_service::profile::validate::memory(bytes, configuration.memory)
-                    .map_err(super::profile_refusal)
-                    .map_err(configuration_failure)?;
-                let memory = configuration.memory.checked_sub(bytes).expect("header fits declared memory");
-                Ok((Some(header), memory))
+                Ok(Some(header))
             }
-            None => Ok((None, configuration.memory)),
+            None => Ok(None),
         }
     }
 

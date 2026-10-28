@@ -323,11 +323,6 @@ struct BytePair {
     machine: u64,
 }
 
-/// Refuse a composed service and shell footprint above declared process memory.
-pub fn memory(required: u64, available: u64) -> Result<(), Refusal> {
-    at_most(Check::Memory, bytes(Layer::Service, "worst_case", required), bytes(Layer::Declared, "memory", available))
-}
-
 fn bytes(layer: Layer, field: &'static str, value: u64) -> Limit {
     LimitName::deployment(layer, field).value(Value::Bytes(value))
 }

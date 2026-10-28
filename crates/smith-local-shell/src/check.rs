@@ -340,15 +340,6 @@ fn derive_invocation(
     wall: skein_lib::Wall,
     interactive: bool,
 ) -> Result<(smith_local_service::Limits, skein_lib::Duration), String> {
-    price_invocation(resolved, invocation, wall, interactive).map(|(limits, bound, _)| (limits, bound))
-}
-
-fn price_invocation(
-    resolved: &mut settings::resolve::Resolved,
-    invocation: &command::Exec,
-    wall: skein_lib::Wall,
-    interactive: bool,
-) -> Result<(smith_local_service::Limits, skein_lib::Duration, u64), String> {
     if let Some(chat) = crate::compose::invocation_chat(&invocation.shared, 0) {
         resolved.local.chat = chat;
     }
@@ -360,7 +351,7 @@ fn price_invocation(
     )
     .map_err(|why| String::from_utf8_lossy(&smith_agent_service::profile::words(&why)).into_owned())?;
     let mut limits = crate::compose::service_limits(resolved.limits.clone(), host, &resolved.agent.service)?;
-    let available = if interactive {
+    if interactive {
         interactive_header(resolved, &mut limits, result_file)?
     } else {
         crate::compose::prepare_stream(
@@ -372,9 +363,8 @@ fn price_invocation(
             result_file,
             false,
         )
-        .map_err(|why| why.line())?
-        .2
-    };
+        .map_err(|why| why.line())?;
+    }
     match limits.local.agent {
         smith_local_domain::AgentLimits::Inline(_) => {
             limits.inline = Some(
@@ -390,7 +380,7 @@ fn price_invocation(
         limits.local.show_bytes,
         limits.local.smith.run.outcome_bytes,
     );
-    let available = files.reserve(&mut front, available).map_err(|why| why.line())?;
+    files.reserve(&mut front).map_err(|why| why.line())?;
     let handed = handed_accounts(resolved)?;
     let screen = if interactive {
         Some(
@@ -404,7 +394,7 @@ fn price_invocation(
         smith_local_domain::AgentLimits::Inline(_) => resolved.agent.service.limits.routes,
         smith_local_domain::AgentLimits::Spawned(_) => 0,
     };
-    let (mut required, _) = crate::Local::startup_memory(
+    crate::Local::startup_memory(
         &limits,
         lower_routes,
         Some(&handed),
@@ -412,23 +402,7 @@ fn price_invocation(
         screen.as_ref(),
     )
     .map_err(|why| why.detail().to_owned())?;
-    match limits.local.agent {
-        smith_local_domain::AgentLimits::Inline(_) => {}
-        smith_local_domain::AgentLimits::Spawned(_) => {
-            required = crate::Local::producer_memory(&resolved.agent.service)
-                .and_then(|bytes| required.checked_add(bytes))
-                .ok_or_else(|| "spawned trace memory bound overflows".to_owned())?;
-        }
-    }
-    smith_agent_service::profile::validate::memory(required, available)
-        .map_err(|why| String::from_utf8_lossy(&smith_agent_service::profile::words(&why)).into_owned())?;
-    let complete = resolved
-        .agent
-        .memory
-        .checked_sub(available)
-        .and_then(|reservation| required.checked_add(reservation))
-        .ok_or_else(|| "complete startup memory bound overflows".to_owned())?;
-    Ok((limits, result_file, complete))
+    Ok((limits, result_file))
 }
 
 fn handed_accounts(resolved: &settings::resolve::Resolved) -> Result<crate::credentials::Prepared, String> {
@@ -458,7 +432,7 @@ fn interactive_header(
     resolved: &mut settings::resolve::Resolved,
     limits: &mut smith_local_service::Limits,
     result_file: skein_lib::Duration,
-) -> Result<u64, String> {
+) -> Result<(), String> {
     let destinations = u32::from(resolved.agent.trace.is_some());
     let trace = resolved.agent.trace.take().unwrap_or(smith_agent_shell::trace::TraceConfig {
         path: "stdout".into(),
@@ -474,7 +448,7 @@ fn interactive_header(
         crate::local_host::View { destinations, front: true },
         result_file,
     )
-    .map(|(_, available)| available)
+    .map(|_| ())
     .map_err(|why| why.detail().to_owned())
 }
 

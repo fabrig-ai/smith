@@ -24,11 +24,10 @@ pub(crate) fn read_prompt(
     clock: &Clock,
     limits: io::Limits,
     maximum: u32,
-    available: u64,
 ) -> Result<Box<[u8]>, Usage> {
-    let bound = footprint(&limits, maximum).ok_or_else(|| Usage("the prompt phase's memory bound overflows".into()))?;
-    smith_agent_service::profile::validate::memory(bound, available)
-        .map_err(|_| Usage("the prompt phase exceeds declared memory".into()))?;
+    if io::worst_case(&limits).is_none() {
+        return Err(Usage("the prompt phase's IO limits are unusable".into()));
+    }
     let mut io = io::Io::new(&limits);
     let owner = io.adopt_read_pipe(kernel::Fd::new(0)).map_err(|_| Usage("standard input cannot be adopted".into()))?;
     let mut input = Input {

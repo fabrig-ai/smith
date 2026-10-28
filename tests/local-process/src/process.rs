@@ -656,7 +656,6 @@ pub fn make_local(spawn: &kernel::Spawn, inherited: &Inherited) -> Proc {
             oauth_entropy: [31; 32],
         },
         Box::new(writer),
-        u64::MAX,
         Some(handed),
         interactive,
     )
@@ -664,7 +663,7 @@ pub fn make_local(spawn: &kernel::Spawn, inherited: &Inherited) -> Proc {
     if let Some(configuration) = &spawned
         && launch.traced
     {
-        local.prepare_trace(configuration, u64::MAX).expect("priced trace");
+        local.prepare_trace(configuration).expect("priced trace");
     }
     if launch.traced {
         let fd = inherited.appends.iter().find(|(name, _)| name.as_ref() == b"product-trace").expect("trace fd").1;

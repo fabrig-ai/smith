@@ -10,7 +10,6 @@ use smith_local_service as service;
 
 /// Product startup owners admitted together before a destination is adopted.
 pub(crate) struct Admission {
-    pub available_bytes: u64,
     pub handed: Option<crate::credentials::Prepared>,
     pub front: Option<crate::front::Front>,
     pub producer: Option<agent::Config>,

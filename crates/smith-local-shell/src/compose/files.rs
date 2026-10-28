@@ -20,7 +20,6 @@ pub(crate) struct Files {
     target: Option<PathBuf>,
     maximum: u32,
     timeout: Duration,
-    reservation: u64,
 }
 
 impl Files {
@@ -48,17 +47,6 @@ impl Files {
         } else {
             None
         };
-        // The private path, compose's chat-path copy, and a token-directory
-        // path whose append can double its allocation coexist at startup.
-        let paths = u64::from(target.is_some())
-            .checked_mul(2)
-            .and_then(|paths| paths.checked_add(if temporary.is_some() { 4 } else { 0 }))
-            .expect("bounded product paths");
-        let reservation = PATH_BYTES
-            .checked_mul(paths)
-            .and_then(|bytes| bytes.checked_add(if temporary.is_some() { ResultFile::footprint(1)? } else { 0 }))
-            .and_then(|bytes| bytes.checked_add(u64::try_from(size_of::<Self>()).ok()?))
-            .expect("bounded paths and file choices");
         Ok(Self {
             target,
             temporary,
@@ -68,21 +56,14 @@ impl Files {
             output: None,
             maximum,
             timeout: resolved.agent.service.limits.file_timeout,
-            reservation,
         })
     }
 
-    pub(crate) fn reserve(&self, front: &mut crate::front::headless::Headless, available: u64) -> Result<u64, Refused> {
+    pub(crate) fn reserve(&self, front: &mut crate::front::headless::Headless) -> Result<(), Refused> {
         front.file_memory =
             self.live_memory().ok_or_else(|| Refused::Usage(Usage("the product file bound overflows".into())))?;
         front.cleanup_memory = self.cleanup_memory();
-        self.reserve_available(available)
-    }
-
-    pub(crate) fn reserve_available(&self, available: u64) -> Result<u64, Refused> {
-        available
-            .checked_sub(self.reservation)
-            .ok_or_else(|| Refused::Usage(Usage("the file choices exceed declared memory".into())))
+        Ok(())
     }
 
     pub(crate) fn teardown_bound(&self) -> Result<Duration, Refused> {
@@ -104,8 +85,7 @@ impl Files {
         json: bool,
         wall: Wall,
         front: bool,
-    ) -> Result<(Option<smith_agent_shell::trace::TraceConfig>, Option<smith_events::SessionStarted>, u64), Refused>
-    {
+    ) -> Result<(Option<smith_agent_shell::trace::TraceConfig>, Option<smith_events::SessionStarted>), Refused> {
         super::prepare_stream(agent, chat, limits, json, wall, self.teardown_bound()?, front)
     }
 

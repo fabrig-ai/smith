@@ -403,14 +403,6 @@ fn composed_machine_refuses_a_file_cap_below_the_tools() {
 }
 
 #[test]
-fn process_memory_refusal_retains_the_measured_and_declared_bytes() {
-    let refusal = validate::memory(101, 100).expect_err("memory target");
-    assert_eq!(refusal.check(), Some(Check::Memory));
-    assert_eq!(words(&refusal).as_ref(), b"memory: service.worst_case=101 bytes; declared.memory=100 bytes");
-    validate::memory(100, 100).expect("exact fit");
-}
-
-#[test]
 fn a_larger_inbox_does_not_raise_the_rooms_offer_bound() {
     let mut profile = profile();
     let original = super::derive(&profile, &declarations()).expect("bounded room").domain.run;

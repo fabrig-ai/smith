@@ -603,7 +603,6 @@ fn measure_product() {
         Some(resolved.agent.service),
         resources,
         Box::new(Vec::<u8>::new()),
-        available,
         None,
         None,
     )

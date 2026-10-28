@@ -87,7 +87,6 @@ impl Invocation {
                 oauth_entropy: [17; 32],
             },
             Box::new(std::io::sink()),
-            u64::MAX,
             Some(prepared),
             None,
         )

@@ -137,14 +137,10 @@ fn open_settings(
     };
     let prompt = match invocation.prompt {
         Prompt::Argument(bytes) => bytes,
-        Prompt::Stdin => crate::front::headless::read_prompt(
-            &mut kernel,
-            clock,
-            resolved.agent.service.limits.io,
-            maximum,
-            resolved.agent.memory,
-        )
-        .map_err(Refused::Usage)?,
+        Prompt::Stdin => {
+            crate::front::headless::read_prompt(&mut kernel, clock, resolved.agent.service.limits.io, maximum)
+                .map_err(Refused::Usage)?
+        }
     };
     if prompt.len() > usize::try_from(maximum).expect("message bound fits usize") {
         return Err(Refused::Usage(Usage("the prompt exceeds the message bound".into())));
@@ -215,7 +211,7 @@ fn compose(
     }
     let mut limits = service_limits(resolved.limits, host_limits, &resolved.agent.service)
         .map_err(|detail| Refused::Local(startup::Failure::Configuration { detail }))?;
-    let (trace, header, available) = files.prepare_stream(
+    let (trace, header) = files.prepare_stream(
         &mut resolved.agent,
         &resolved.local.chat,
         &mut limits,
@@ -223,8 +219,7 @@ fn compose(
         wall,
         interactive.is_some(),
     )?;
-    let (front, available) =
-        prepare_front(interactive, input_closed, invocation.json, &resolved.agent, &limits, files, available)?;
+    let front = prepare_front(interactive, input_closed, invocation.json, &resolved.agent, &limits, files)?;
     let environment = resolved.agent.service.environment.command_entries();
     let launch = spawned::Startup {
         document,
@@ -257,13 +252,7 @@ fn compose(
         lower,
         resources,
         Box::new(std::io::stderr()),
-        crate::local_host::Admission {
-            available_bytes: available,
-            handed: Some(prepared),
-            front: Some(front),
-            producer,
-            programs: rechecks,
-        },
+        crate::local_host::Admission { handed: Some(prepared), front: Some(front), producer, programs: rechecks },
     )
     .map_err(Refused::Local)?;
     files.attach_private(&mut local)?;
@@ -337,12 +326,11 @@ fn prepare_front(
     agent: &smith_agent_shell::config::Configuration,
     limits: &smith_local_service::Limits,
     files: &Files,
-    available: u64,
-) -> Result<(crate::front::Front, u64), Refused> {
+) -> Result<crate::front::Front, Refused> {
     if let Some(plain) = interactive {
         let front = crate::front::interactive::Interactive::new(plain, &agent.service.limits)
             .ok_or_else(|| Refused::Usage(Usage("interactive footprint overflows".into())))?;
-        return Ok((crate::front::Front::Interactive(front), files.reserve_available(available)?));
+        return Ok(crate::front::Front::Interactive(front));
     }
     let mut front = crate::front::headless::Headless::new(
         json,
@@ -352,8 +340,8 @@ fn prepare_front(
         limits.local.smith.run.outcome_bytes,
     );
     front.input_closed = input_closed;
-    let available = files.reserve(&mut front, available)?;
-    Ok((crate::front::Front::Headless(front), available))
+    files.reserve(&mut front)?;
+    Ok(crate::front::Front::Headless(front))
 }
 
 fn start_stream(
@@ -494,7 +482,7 @@ pub(crate) fn prepare_stream(
     wall: Wall,
     result_file: skein_lib::Duration,
     front: bool,
-) -> Result<(Option<smith_agent_shell::trace::TraceConfig>, Option<smith_events::SessionStarted>, u64), Refused> {
+) -> Result<(Option<smith_agent_shell::trace::TraceConfig>, Option<smith_events::SessionStarted>), Refused> {
     use std::path::PathBuf;
     let trace = agent.trace.take();
     let capture = if front && !json {
@@ -508,7 +496,7 @@ pub(crate) fn prepare_stream(
         delivery: trace.as_ref().map_or(smith_agent_service::sinks::Delivery::Complete, |trace| trace.delivery),
     };
     let destinations = u32::from(trace.is_some()).checked_add(u32::from(json)).expect("two destinations");
-    let (mut header, available) = crate::Local::prepare_header(
+    let mut header = crate::Local::prepare_header(
         agent,
         limits,
         (destinations != 0 || front).then_some(&specification),
@@ -522,7 +510,7 @@ pub(crate) fn prepare_stream(
         header.mode = if front { smith_events::Mode::Chat } else { smith_events::Mode::Exec };
         header.wall_ms = wall.as_nanos() / 1_000_000;
     }
-    Ok((trace, header, available))
+    Ok((trace, header))
 }
 
 fn host(why: &std::io::Error) -> Refused {
