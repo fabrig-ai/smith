@@ -486,6 +486,20 @@ below (the domain, the inline agent, the host domain) reserve no room
 for their own children; each exposes `backlog()` for the root above it,
 and only the service has a watermark.
 
+In the local service, a person's line or slash command is its new work:
+it waits at the terminal's head while the backlog is at the watermark,
+`service.watermark` (by default `queue`); the answers to admitted work
+never wait. A queue the shell reaches only through a service method is
+internal and uncapped; its edges are the queues it hands out (`&mut
+Queue`) and the terminal's input. The backlog counts the queues between
+the service's children, and what a child holds through its `backlog()`
+(the local domain's counts its agent's, and drains its spawned agent's
+host facts, which nothing local reads); the inline effects expose
+theirs, and the credential owner keeps its queues. Two orders are stated:
+a local entrance waits for the previous entrance's requests (an
+interrupt or a drop passes it), and a store's actions go out before the
+next file terminal.
+
 ### 3.9 A window's room
 
 A window is counted in tokens and most of what fills it in bytes. A
