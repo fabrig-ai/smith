@@ -85,6 +85,9 @@ fn configuration_for(
     tools: bool,
     lower: agent::Config,
 ) -> (service::Config, agent::Config) {
+    // Fixed fixture allowance for external IO and terminal edges.
+    const EXTERNAL_QUEUE_SLOTS: u32 = 256;
+
     let endpoints = lower.channel_endpoints.clone();
     let mut policy = local_policy(&lower, change, tools);
     let mut host = smith_host_world::limits();
@@ -106,9 +109,8 @@ fn configuration_for(
     host.path_bytes = 4096;
     // Actual provider spans carry the charter's whole-session deadline.
     host.long_span = policy.0.budget.time;
-    let inline_out = local::max_out(&policy.1);
     policy.1.agent = local::AgentLimits::Spawned(host);
-    let queue = local::max_out(&policy.1).max(inline_out).max(smith_host_domain::max_out(&host)).max(256);
+    let queue = EXTERNAL_QUEUE_SLOTS;
     let mut process = service::ProcessLimits {
         io: lower.limits.io,
         channel: smith_host_protocol::Limits {

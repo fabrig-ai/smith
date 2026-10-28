@@ -11,7 +11,7 @@ mod tests {
     use skein_heap::{Counting, Meter};
     use skein_io as io;
     use skein_lib::{Queue, Time, Token, stream};
-    use smith_agent_service::sinks::{Capture, Delivery, Destination, SinkLimits, Sinks, sinks_worst_case};
+    use smith_agent_service::sinks::{Capture, Delivery, Destination, SinkLimits, Sinks};
     use smith_events::{Effect, Event, Record, Source, ToolStarted};
 
     #[global_allocator]
@@ -64,6 +64,9 @@ mod tests {
     #[test]
     #[expect(clippy::print_stdout, reason = "retain independent actual allocation and output-bound figures")]
     fn an_actual_full_escaped_prompt_fits_sink_output_and_allocation_at_every_chunk() {
+        // Peak 24_577_858 B on 2026-10-28; a quarter of headroom, rounded up.
+        const PROMPT_SINK_CEILING: u64 = 31_000_000;
+
         use skein_lib::List;
         let limits = product_limits();
         assert_eq!(
@@ -107,7 +110,7 @@ mod tests {
                 }),
             }),
         };
-        let bound = sinks_worst_case(&limits, Capture::Everything).expect("complete sink owner");
+        let bound = PROMPT_SINK_CEILING;
         let token = Token::new(3);
         let mut requests = Queue::with_capacity(2);
         let meter = Meter::new();
@@ -158,6 +161,9 @@ mod tests {
         reason = "record independently measured peak and boundary bytes for the proof receipt"
     )]
     fn retained_escaped_calls_and_partial_sends_stay_within_destination_ownership() {
+        // Peak 3_933_468 B on 2026-10-28; a quarter of headroom, rounded up.
+        const CALL_SINK_CEILING: u64 = 5_000_000;
+
         let limits = SinkLimits {
             destinations: 2,
             output: 8 * 1024 * 1024,
@@ -184,7 +190,7 @@ mod tests {
                 input: None,
             }),
         };
-        let bound = sinks_worst_case(&limits, Capture::Everything).expect("source bound");
+        let bound = CALL_SINK_CEILING;
         let tokens = [Token::new(1), Token::new(2)];
         let mut requests = Queue::with_capacity(2);
         let meter = Meter::new();

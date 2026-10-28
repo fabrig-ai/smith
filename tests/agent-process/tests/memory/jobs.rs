@@ -20,12 +20,6 @@ pub(super) struct Jobs {
     down: Queue<Below>,
 }
 
-pub(super) fn bound(limits: &Limits) -> u64 {
-    smith_protocol_machine::worst_case(limits).expect("machine bound")
-        + Queue::<ToDomain>::worst_case(QUEUE_SLOTS).expect("machine answers")
-        + Queue::<Below>::worst_case(QUEUE_SLOTS).expect("machine effects")
-}
-
 pub(super) fn fill() -> Jobs {
     let limits = smith_agent_process_world::limits();
     let mut jobs = Jobs {

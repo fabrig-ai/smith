@@ -93,7 +93,7 @@ pub struct Seen {
 }
 
 /// Real host domain and generic harness machinery, with a single scripted tree.
-/// Every input goes through the same room-first step/fire path; every lower
+/// Every input goes through the same ordered step/fire path; every lower
 /// terminal consumes its independent ledger before the domain sees it.
 #[derive(Debug)]
 pub struct World {
@@ -190,7 +190,7 @@ impl World {
         Self {
             seed,
             domain: host::Domain::new(&bounds),
-            stage: Stage::new(bounds, host::max_out(&bounds), host::max_out(&bounds) + 2),
+            stage: Stage { out: skein_lib::Queue::uncapped(), ..Stage::new(bounds, 0, 0) },
             schedule: Schedule::new(),
             lower: Ledger::new("host lower operation"),
             seen: Seen::default(),
@@ -198,7 +198,7 @@ impl World {
         }
     }
 
-    /// Deliver one typed input, with actual lower accounting and room-first flow.
+    /// Deliver one typed input, with actual lower accounting and ordered outputs.
     pub fn event(&mut self, event: Input) {
         match &event {
             Input::Parent(parent::Event::Spawn { start, .. }) => {

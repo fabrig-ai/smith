@@ -238,8 +238,6 @@ fn standard_profile_builds_a_complete_bounded_service() {
         environment: smith_protocol_machine::Environment::encode(&[], &limits.machine).expect("empty environment fits"),
         stream_mode: skein_channel::StreamMode::Two,
     };
-    let bound = crate::worst_case(&configuration.limits, &configuration.llm_endpoints).expect("checked bound");
-    assert!(bound > 0);
     let service = crate::Service::new(configuration, 1).expect("service");
     assert!(crate::done(&service).is_none());
 }

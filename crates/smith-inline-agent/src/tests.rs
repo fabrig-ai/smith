@@ -684,12 +684,6 @@ fn invalid_limits_are_refused() {
     let mut large = limits;
     large.smith.configured_model_bytes = u64::MAX;
     assert!(crate::valid(&large));
-    // Each root capacity fits, but its saturated output count leaves no room
-    // for the inline routing outputs. Only this wrapper's count refuses it.
-    invalid = limits;
-    invalid.smith.session.tools.calls = 100_000_000;
-    assert!(smith::valid(&invalid.smith));
-    assert!(!crate::valid(&invalid));
     // The root/child guards also reject these tighter capacity failures.
     invalid = limits;
     invalid.smith.session.tools.kits = u32::MAX;

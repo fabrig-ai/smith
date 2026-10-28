@@ -703,7 +703,7 @@ impl World {
         let provider_config = smith_session_world::Settings::calm(seed).provider;
         let disk_start = disk.tree(b"work");
         let provider = agent_world::scripted_provider(&provider_config, seed ^ 0x25);
-        let out = Queue::with_capacity(local::max_out(&limits));
+        let out = Queue::uncapped();
         let domain = local::Domain::new(config, &limits, seed ^ 0x17).expect("world config fits local limits");
         World {
             domain,

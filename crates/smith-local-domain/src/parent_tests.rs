@@ -16,7 +16,7 @@ fn running(config: Config) -> (Domain, Env<Limits>, Queue<Request>) {
     let mut domain = Domain::new(config, &limits, 71).expect("bounded local parent");
     domain.chat.phase = Phase::Running;
     domain.run = Some(Token::new(1));
-    let out = Queue::with_capacity(crate::max_out(&limits));
+    let out = Queue::uncapped();
     (domain, env, out)
 }
 
@@ -73,7 +73,7 @@ fn the_first_drop_cause_survives_store_failure_and_the_childs_later_fault() {
         );
         assert_eq!(domain.end_cause(), Some(cause), "later child terminals cannot replace the cause");
         let mut status = None;
-        for _ in 0..crate::max_out(&env.limits) {
+        for _ in 0..out.len() {
             let Some(request) = out.pop() else { break };
             if let Request::Exit { status: value } = request {
                 status = Some(value);
@@ -500,6 +500,9 @@ fn an_unconfigured_host_call_receives_one_unavailable_parent_answer() {
         }),
         &mut out,
     );
+    assert!(domain.is_ready(), "the routed call keeps its generated answer ready");
+    crate::resume(&mut domain, &env, &mut out);
+    assert!(!domain.is_ready(), "the answer drained without another external event");
     let mut replies = 0_u32;
     while let Some(request) = out.pop() {
         if let Request::Process(process::Request::Send {
@@ -612,7 +615,7 @@ fn gone_after_a_late_turn_save_shows_the_answer_once() {
 
 fn shown_requests(out: &mut Queue<Request>) -> u32 {
     let mut shown = 0_u32;
-    for _ in 0..out.capacity() {
+    for _ in 0..out.len() {
         match out.pop() {
             Some(Request::Show { .. }) => shown = shown.checked_add(1).expect("bounded output"),
             Some(
@@ -661,7 +664,7 @@ fn gone_fills_the_agents_first_cause_with_the_exit_the_kit_reported() {
     assert_eq!(domain.end_cause(), Some(crate::EndCause::Agent { ended: Some(smith_events::AgentExit::Signal(9)) }));
     let mut notices = 0_u32;
     let mut completed = 0_u32;
-    for _ in 0..out.capacity() {
+    for _ in 0..out.len() {
         match out.pop() {
             Some(Request::Notice {
                 notice:
@@ -697,7 +700,7 @@ fn gone_without_observed_process_evidence_keeps_ended_absent() {
         );
         assert_eq!(domain.end_cause(), Some(crate::EndCause::Agent { ended: None }));
         let mut completed = 0_u32;
-        for _ in 0..out.capacity() {
+        for _ in 0..out.len() {
             if let Some(Request::Unanswered { cause: crate::EndCause::Agent { ended: None }, .. }) = out.pop() {
                 completed = completed.checked_add(1).expect("bounded output");
             }

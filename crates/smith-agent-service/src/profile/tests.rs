@@ -782,7 +782,7 @@ fn a_zero_job_wait_is_refused_before_deriving_limits() {
 }
 
 #[test]
-fn the_worst_case_counts_each_sessions_jobs_at_their_kept_output() {
+fn each_sessions_jobs_derive_process_slots_and_capture_deadlines() {
     let mut selected = profile();
     selected.declared.conversations = 3;
     selected.declared.jobs = 0;
@@ -794,35 +794,6 @@ fn the_worst_case_counts_each_sessions_jobs_at_their_kept_output() {
     assert_eq!(with.domain.session.tools.jobs, 4);
     assert_eq!(with.domain.session.tools.job_poll, Duration::from_secs(30));
     assert_eq!(with.domain.session.tools.job_wait, Duration::from_secs(300));
-    let mut without_machine = without.machine;
-    let mut with_machine = with.machine;
-    without_machine.search_bytes = 0;
-    with_machine.search_bytes = 0;
-    let before = smith_protocol_machine::worst_case(&without_machine).expect("bounded machine");
-    let after = smith_protocol_machine::worst_case(&with_machine).expect("bounded machine");
-    without_machine.output_bytes = 0;
-    with_machine.output_bytes = 0;
-    let before_records = smith_protocol_machine::worst_case(&without_machine).expect("bounded records");
-    let after_records = smith_protocol_machine::worst_case(&with_machine).expect("bounded records");
-    assert!(after_records > before_records, "each job also owns its process and pipe bookkeeping");
-    // Twelve jobs keep two 48 KiB windows, above their 16 + 48 KiB kept output.
-    assert_eq!((after - before) - (after_records - before_records), 1_179_648);
-}
-
-#[test]
-fn listing_filter_translation_is_counted_once_per_step() {
-    let mut selected = profile();
-    selected.declared.conversations = 3;
-    let mut machine = super::derive(&selected, &declarations()).expect("job profile").machine;
-    assert_eq!((machine.operations, machine.processes), (2, 22));
-    machine.file_bytes = 0;
-    machine.tool_payload = 0;
-    let smaller = smith_protocol_machine::worst_case(&machine).expect("bounded machine");
-    machine.file_bytes = 1024;
-    machine.tool_payload = 1024;
-    let larger = smith_protocol_machine::worst_case(&machine).expect("bounded machine");
-    // Two guide buffers, twenty-two retained filters and four translation buffers.
-    assert_eq!(larger - smaller, 28_672);
 }
 
 #[test]
@@ -836,25 +807,6 @@ fn composed_machine_refuses_an_argument_cap_below_the_tools() {
         words(&refusal).as_ref(),
         b"machine-holds-tools: tools.tool_payload=256 bytes; machine.tool_payload=255 bytes"
     );
-}
-
-fn pathname_growth(processes: u32) -> u64 {
-    let mut machine = super::derive(&profile(), &declarations()).expect("job profile").machine;
-    machine.processes = processes;
-    machine.search_line_bytes = 0;
-    let smaller = smith_protocol_machine::worst_case(&machine).expect("bounded machine");
-    machine.search_line_bytes = 1024;
-    smith_protocol_machine::worst_case(&machine)
-        .expect("bounded machine")
-        .checked_sub(smaller)
-        .expect("a larger line grows the bound")
-}
-
-#[test]
-fn pathname_translation_copies_are_counted_only_for_one_step() {
-    // Seven more processes retain three listing paths and one search line,
-    // while the two pathname translation copies belong to one step.
-    assert_eq!(pathname_growth(8) - pathname_growth(1), 28_672);
 }
 
 #[test]

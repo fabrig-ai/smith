@@ -46,6 +46,9 @@ fn a_resize_during_a_window_read_is_read_after_its_terminal() {
     assert_eq!(size.columns, 80);
 }
 
+// Fixed fixture allowance for the external IO and terminal edges.
+const EXTERNAL_QUEUE_SLOTS: u32 = 64;
+
 pub(crate) fn config() -> Config {
     let mut local_limits = local::Limits {
         smith: smith_agent_world::LIMITS,
@@ -69,7 +72,7 @@ pub(crate) fn config() -> Config {
     host_limits.agents = 1;
     host_limits.accounts = 1;
     local_limits.agent = local::AgentLimits::Spawned(host_limits);
-    let queue = local::max_out(&local_limits).max(smith_host_domain::max_out(&host_limits)).max(64);
+    let queue = EXTERNAL_QUEUE_SLOTS;
     let agent_limits = smith_agent_process_world::limits();
     let mut process = ProcessLimits {
         io: skein_io::Limits {
@@ -1083,7 +1086,6 @@ fn colocated_config() -> Config {
         Duration::from_secs(5),
     )
     .expect("bounded inline child");
-    config.limits.queue = config.limits.queue.max(local::max_out(&config.limits.local));
     config.limits.watermark = config.limits.queue;
     config.agent = crate::AgentConfig::Inline { configuration: lower, roots: Box::new([]) };
     config

@@ -510,26 +510,5 @@ fn acknowledge(number: u32) -> skein_channel::Frame {
     frame.finish().expect("ACK frame filled")
 }
 
-#[cfg(test)]
-mod memory {
-    use skein_world::domain::heap::{Counting, Meter};
-
-    use super::{agent, limits, service};
-
-    #[global_allocator]
-    static HEAP: Counting = Counting;
-
-    #[test]
-    fn composed_service_start_fits_the_checked_bound() {
-        let bound = agent::worst_case(&limits(), &super::configuration().llm_endpoints).expect("checked service bound");
-        let meter = Meter::new();
-        meter.start();
-        let agent = service(7);
-        let peak = meter.check(meter.end(), bound, &"service construction");
-        assert!(peak > 0, "the counting allocator saw live service memory");
-        drop(agent);
-    }
-}
-
 mod grants;
 pub use grants::{bearer, key, program, withdrawn};

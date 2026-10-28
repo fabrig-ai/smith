@@ -66,7 +66,7 @@ fn a_local_domain_with_every_line_slot_full_stays_under_its_ceiling() {
     };
     let env = Env { now: Time::ZERO, wall: Wall::EPOCH, limits };
     let meter = Meter::new();
-    let mut out = Queue::<Request>::with_capacity(local::max_out(&env.limits));
+    let mut out = Queue::<Request>::uncapped();
     meter.start();
     let mut domain = local::Domain::new(config, &env.limits, 83).expect("valid local domain");
     meter.check(meter.end(), FULL_LOCAL_CEILING, &env.limits);

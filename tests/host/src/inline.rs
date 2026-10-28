@@ -178,7 +178,7 @@ impl World {
         trace.log(Time::ZERO, format!("seed {seed}"));
         Self {
             agent: inline::Domain::new(&bounds, configuration_value(), seed),
-            stage: Stage::new(bounds, inline::max_out(&bounds), inline::max_out(&bounds) + 2),
+            stage: Stage { out: Queue::uncapped(), ..Stage::new(bounds, 0, 0) },
             schedule: Schedule::new(),
             seen: BTreeMap::new(),
             history: BTreeMap::new(),

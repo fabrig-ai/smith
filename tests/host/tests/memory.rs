@@ -85,7 +85,7 @@ struct Measured {
 }
 impl Measured {
     fn new(limits: Limits, ceiling: u64) -> Self {
-        let out = Queue::with_capacity(host::max_out(&limits));
+        let out = Queue::uncapped();
         let held_messages = Vec::with_capacity(usize::try_from(limits.agents).expect("finite agent count"));
         let meter = Meter::new();
         let domain = host::Domain::new(&limits);

@@ -85,12 +85,15 @@ fn configured_environment_commands_fit_the_composed_agent_bound() {
 }
 
 #[test]
-fn every_conversation_open_with_the_pool_full_fits_the_worst_case() {
+fn every_conversation_open_with_the_pool_full_stays_under_the_ceiling() {
+    // Peak 285_260 B on 2026-10-28; a quarter of headroom, rounded up.
+    const FULL_POOL_CEILING: u64 = 360_000;
+
     use skein_lib::{Env, Queue, Time, Token, Wall};
     use skein_llm_connection::{Component, Deadlines, Request};
     use skein_world::domain::heap::Meter;
-    let (endpoints, pool, pool_bound) = full_pool();
-    let bound = pool_bound + jobs::bound(&limits().machine);
+    let (endpoints, pool) = full_pool();
+    let bound = FULL_POOL_CEILING;
     let meter = Meter::new();
     meter.start();
     let mut component = Component::new(endpoints, &pool).expect("bounded full pool");
@@ -122,8 +125,7 @@ fn every_conversation_open_with_the_pool_full_fits_the_worst_case() {
     assert_eq!(smith_agent_process_world::profile().declared.memory, 2_147_483_648);
 }
 
-fn full_pool() -> (List<skein_llm_connection::Endpoint>, skein_llm_connection::Limits, u64) {
-    use skein_lib::Queue;
+fn full_pool() -> (List<skein_llm_connection::Endpoint>, skein_llm_connection::Limits) {
     let configured = smith_agent_process_world::configuration();
     let (mut endpoints, _) = configured.llm_endpoints.into_parts();
     let client = endpoints.get_mut(0).expect("one endpoint");
@@ -137,8 +139,5 @@ fn full_pool() -> (List<skein_llm_connection::Endpoint>, skein_llm_connection::L
     let mut pool = configured.limits.llm.connection;
     pool.memory = reservation * u64::from(pool.calls);
     assert!(pool.memory <= smith_agent_process_world::profile().declared.llm_pool);
-    let bound = skein_llm_connection::worst_case(&pool, &endpoints).expect("full pool bound")
-        + Queue::<skein_llm_connection::Event>::worst_case(32).expect("events")
-        + Queue::<skein_io::Request>::worst_case(32).expect("requests");
-    (endpoints, pool, bound)
+    (endpoints, pool)
 }

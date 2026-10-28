@@ -14,7 +14,7 @@ fn idle_chat(seed: u64) -> (Domain, Env<Limits>, Queue<Request>) {
     let limits = limits();
     let env = Env { now: Time::ZERO, wall: Wall::EPOCH, limits: limits.clone() };
     let mut domain = Domain::new(config(), &limits, seed).unwrap();
-    let mut out = Queue::with_capacity(crate::max_out(&limits));
+    let mut out = Queue::uncapped();
     crate::resume(&mut domain, &env, &mut out);
     drop(drain_requests(&mut out));
     crate::step(&mut domain, &env, Event::Loaded { state: None, transcript: None, deliveries: Box::new([]) }, &mut out);
@@ -97,7 +97,7 @@ fn selecting_an_idle_chat_loads_its_saved_identity_after_a_fresh_one() {
 fn selection_refuses_while_loading() {
     let limits = limits();
     let env = Env { now: Time::ZERO, wall: Wall::EPOCH, limits: limits.clone() };
-    let mut out = Queue::with_capacity(crate::max_out(&limits));
+    let mut out = Queue::uncapped();
     let mut domain = Domain::new(config(), &limits, 11).unwrap();
     crate::step(&mut domain, &env, Event::SelectChat { name: b"new".as_slice().into(), create: true }, &mut out);
     let Some(Request::Notice { notice: crate::Notice::ChatRefused { reason: crate::ChatRefusal::Busy, .. } }) =
@@ -446,7 +446,7 @@ pub(super) fn spawned_chat_with_saved_hello() -> (Domain, Env<Limits>, Queue<Req
     limits.agent = crate::AgentLimits::Spawned(child_limits);
     let env = Env { now: Time::ZERO, wall: Wall::from_nanos(0), limits: limits.clone() };
     let mut domain = Domain::new(config(), &limits, 11).expect("spawned local domain");
-    let mut out = Queue::with_capacity(crate::max_out(&limits));
+    let mut out = Queue::uncapped();
     crate::resume(&mut domain, &env, &mut out);
     assert!(match out.pop() {
         Some(Request::Load) => true,
@@ -673,7 +673,7 @@ fn an_inline_runs_facts_wait_for_the_service() {
     let limits = limits();
     let env = Env { now: Time::ZERO, wall: Wall::EPOCH, limits: limits.clone() };
     let mut domain = Domain::new(config(), &limits, 11).expect("inline chat");
-    let mut out = Queue::with_capacity(crate::max_out(&limits));
+    let mut out = Queue::uncapped();
     crate::resume(&mut domain, &env, &mut out);
     drop(drain_requests(&mut out));
     let loaded = Event::Loaded { state: None, transcript: None, deliveries: Box::default() };
@@ -790,7 +790,7 @@ fn slash_model_selects_a_startup_model_only_at_idle() {
     configured.progress = Box::new([configured.progress[0], configured.progress[0]]);
     configured.protocol_allowances = Box::new([0, 0]);
     let mut domain = Domain::new(configured, &limits, 11).unwrap();
-    let mut out = Queue::with_capacity(crate::max_out(&limits));
+    let mut out = Queue::uncapped();
     domain.chat.phase = crate::chat::Phase::Running;
     crate::step(
         &mut domain,
@@ -818,7 +818,7 @@ fn slash_model_keeps_an_effort_the_new_model_accepts() {
         configured.progress = Box::new([configured.progress[0], configured.progress[0]]);
         configured.protocol_allowances = Box::new([0, 0]);
         let mut domain = Domain::new(configured, &limits, 11).unwrap();
-        let mut out = Queue::with_capacity(crate::max_out(&limits));
+        let mut out = Queue::uncapped();
         domain.chat.phase = crate::chat::Phase::Idle;
         domain.effort = Some(b"high".as_slice().into());
         crate::step(
@@ -848,7 +848,7 @@ fn a_headless_start_reading_its_repository_head() -> (Domain, Env<Limits>, Queue
         }]),
     });
     let mut domain = Domain::new(config, &limits, 11).expect("headless domain");
-    let mut out = Queue::with_capacity(crate::max_out(&limits));
+    let mut out = Queue::uncapped();
     crate::resume(&mut domain, &env, &mut out);
     drop(drain_requests(&mut out));
     crate::step(&mut domain, &env, Event::Loaded { state: None, transcript: None, deliveries: Box::new([]) }, &mut out);

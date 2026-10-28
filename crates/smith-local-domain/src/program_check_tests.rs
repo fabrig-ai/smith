@@ -12,7 +12,7 @@ fn a_program_failure_drops_the_headless_start() {
     domain.chat.start_saved = true;
     domain.grants.awaiting = 1;
     domain.lines.name(Token::new(1));
-    let mut out = Queue::with_capacity(max_out(&limits));
+    let mut out = Queue::uncapped();
     step(
         &mut domain,
         &env,

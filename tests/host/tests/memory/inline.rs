@@ -15,7 +15,7 @@ fn two_full_inline_slots_and_their_emitted_prompts_stay_under_the_ceiling() {
     let env = Env { now: Time::ZERO, wall: Wall::EPOCH, limits };
     let meter = Meter::new();
     let mut domain = Domain::new(&limits, inline::configuration(), 319);
-    let mut out = Queue::with_capacity(smith_inline_agent::max_out(&limits));
+    let mut out = Queue::uncapped();
     for client in 1..=2 {
         let mut start = inline::start(319, Job::HostTools);
         start.messages = (1..=limits.smith.run.messages)
