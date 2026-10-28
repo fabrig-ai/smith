@@ -6,10 +6,10 @@ fn program_invocations_fit_the_standard_memory() {
     // Agent program paths are bounded at 4096 bytes; /programs consumes nine.
     const PROGRAM_PATH_BYTES: usize = 4096;
     const PROGRAMS_SUFFIX_BYTES: usize = 9;
-    let memory = smith_agent_service::profile::standard().declared.memory;
     const BEFORE_CHAT: u64 = 885_273_688;
     const LIVE_GROWTH: u64 = 64 * 1024;
     const MARGIN: u64 = 134_217_728;
+    let memory = smith_agent_service::profile::standard().declared.memory;
     let credentials = format!(
         "/{}",
         "c".repeat(
