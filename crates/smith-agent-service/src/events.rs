@@ -613,6 +613,9 @@ fn message_refusal(reason: run::MessageRefusal) -> smith_events::MessageRefusal 
 
 #[must_use]
 pub fn worst_case(limits: &crate::Limits) -> Option<u64> {
+    if !valid(limits) {
+        return None;
+    }
     let events = limits.events?;
     // The component moves each observed completion into the response join.
     // It stays there until the corresponding accounting/terminal fact, and
@@ -641,6 +644,19 @@ pub fn worst_case(limits: &crate::Limits) -> Option<u64> {
             u64::from(limits.domain.run.host_tools.checked_add(1)?)
                 .checked_mul(u64::from(events.sinks.metadata_string))?,
         )
+}
+
+/// Whether configured event sinks and joins fit (programming-model.md, 6.3).
+#[must_use]
+pub fn valid(limits: &crate::Limits) -> bool {
+    match limits.events {
+        Some(events) => {
+            crate::sinks::valid(&events.sinks, events.capture)
+                && crate::messages::valid(limits, events.capture)
+                && crate::calls::valid(&limits.domain.session)
+        }
+        None => true,
+    }
 }
 
 /// The live queue owns exactly its slots times one projection's bound.

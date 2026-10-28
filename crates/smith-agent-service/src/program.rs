@@ -137,6 +137,9 @@ pub(crate) fn bound(config: Option<&ProgramBackend>) -> Option<&ProgramBackend> 
 /// Includes the protocol, queues, routes, file slots and native I/O growth (5.1).
 #[must_use]
 pub fn program_worst_case(config: &Config) -> Option<u64> {
+    if !program_valid(config) {
+        return None;
+    }
     let program = match bound(config.program.as_ref()) {
         Some(program) => program,
         None => return Some(0),
@@ -161,6 +164,26 @@ pub fn program_worst_case(config: &Config) -> Option<u64> {
                 .checked_mul(u64::try_from(program.endpoints.len()).ok()?)?
                 .checked_mul(2)?,
         )
+}
+
+/// Whether a named program's settings and reserved service fit (programming-model.md, 6.3).
+#[must_use]
+pub fn program_valid(config: &Config) -> bool {
+    let program = match bound(config.program.as_ref()) {
+        Some(program) => program,
+        None => return true,
+    };
+    let settings = match settings(program, &config.limits, &config.environment) {
+        Some(settings) => settings,
+        None => return false,
+    };
+    let reserved = match reserved(&config.limits, &settings) {
+        Some(reserved) => reserved,
+        None => return false,
+    };
+    backend::backend_valid(&settings)
+        && super::valid(&config.limits, &config.llm_endpoints)
+        && super::valid(&reserved, &config.llm_endpoints)
 }
 
 /// Native operation route capacity after reserving the configured program's I/O.
@@ -702,3 +725,4 @@ mod tests {
         assert_eq!(service.file_events.len(), 1, "file terminals still await their consumer");
     }
 }
+

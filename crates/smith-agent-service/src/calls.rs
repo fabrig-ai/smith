@@ -488,6 +488,9 @@ fn verdict_kind(verdict: tools::Verdict) -> smith_events::Verdict {
 }
 
 pub(crate) fn worst_case(limits: &session::Limits, string: u32) -> Option<u64> {
+    if !valid(limits) {
+        return None;
+    }
     let bounds = Bounds::derive(limits)?;
     Map::<Token, Call>::worst_case(bounds.slots)?
         .checked_add(crate::children::worst_case(bounds.slots)?)?
@@ -495,6 +498,12 @@ pub(crate) fn worst_case(limits: &session::Limits, string: u32) -> Option<u64> {
         .checked_add(bounds.bytes)?
         .checked_add(List::<Record>::worst_case(2)?)?
         .checked_add(u64::from(string).checked_mul(4)?)
+}
+
+/// Whether call joins and their metadata counter fit (programming-model.md, 6.3).
+#[must_use]
+pub(crate) fn valid(limits: &session::Limits) -> bool {
+    Bounds::derive(limits).is_some() && builtin::valid(limits)
 }
 
 #[cfg(test)]

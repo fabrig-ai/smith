@@ -12,6 +12,12 @@ pub(super) struct Book {
     started: Map<Token, Time>,
 }
 
+/// Whether every owed program call can be named (programming-model.md, 6.3).
+#[must_use]
+pub(super) fn valid(limits: &session::Limits) -> bool {
+    limits.sessions.checked_mul(limits.completion_blocks).is_some()
+}
+
 impl Book {
     pub(super) fn new(limits: &session::Limits) -> Book {
         Book {
@@ -22,6 +28,9 @@ impl Book {
     }
 
     pub(super) fn worst_case(limits: &session::Limits) -> Option<u64> {
+        if !valid(limits) {
+            return None;
+        }
         Map::<Token, Time>::worst_case(limits.sessions.checked_mul(limits.completion_blocks)?)
     }
 
@@ -100,3 +109,4 @@ impl Book {
         true
     }
 }
+

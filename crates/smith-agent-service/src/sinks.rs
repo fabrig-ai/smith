@@ -1138,9 +1138,13 @@ pub(crate) fn largest_line(
     }
 }
 
-/// Peak heap of the destination queues and their bounded output, including codec construction.
+/// Whether receiving vocabulary and output credit fit (programming-model.md, 6.3).
 #[must_use]
-pub fn sinks_worst_case(limits: &SinkLimits, capture: Capture) -> Option<u64> {
+pub fn valid(limits: &SinkLimits, capture: Capture) -> bool {
+    receiving_valid(limits, capture).is_some()
+}
+
+fn receiving_valid(limits: &SinkLimits, capture: Capture) -> Option<()> {
     if limits.metadata_string > limits.records.string || limits.records.items < u32::try_from(TYPES).ok()? {
         return None;
     }
@@ -1149,10 +1153,20 @@ pub fn sinks_worst_case(limits: &SinkLimits, capture: Capture) -> Option<u64> {
             return None;
         }
     }
-    let line = limits.line_ceiling(capture)?;
+    limits.line_ceiling(capture)?;
     if limits.output < output_bound(limits, capture)? {
         return None;
     }
+    Some(())
+}
+
+/// Peak heap of the destination queues and their bounded output, including codec construction.
+#[must_use]
+pub fn sinks_worst_case(limits: &SinkLimits, capture: Capture) -> Option<u64> {
+    if !valid(limits, capture) {
+        return None;
+    }
+    let line = limits.line_ceiling(capture)?;
     let writer = Queue::<Line>::worst_case(LINE_SLOTS)?.checked_add(u64::from(limits.output))?;
     // The measured writer can retain its encoded body and final newline-owning line together.
     List::<Writer>::worst_case(limits.destinations)?

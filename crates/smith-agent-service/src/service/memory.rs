@@ -15,6 +15,9 @@ use smith_protocol_machine as machine;
 /// The effects' retained parts, with no domain, channel or native IO.
 #[must_use]
 pub fn effects_parts(limits: &Limits, endpoints: &llm::Endpoints) -> Option<[(&'static str, u64); 5]> {
+    if !super::effects_valid(limits, endpoints) {
+        return None;
+    }
     let mut parts = lower_parts(limits, endpoints, false)?;
     let routing = (*parts.get(4)?)
         .checked_add(Map::<u32, domain::GrantName>::worst_case(limits.llm.accounts)?)?

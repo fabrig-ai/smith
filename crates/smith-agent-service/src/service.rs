@@ -29,7 +29,7 @@ use up::{component_up, domain_up, io_up, lower_events};
 mod program;
 
 pub(crate) use program::bound;
-pub use program::{AdoptError, ProgramBackend, program_operations, program_worst_case};
+pub use program::{AdoptError, ProgramBackend, program_operations, program_valid, program_worst_case};
 #[path = "teardown.rs"]
 pub mod teardown;
 
@@ -206,6 +206,9 @@ const USAGE_OWNER: Token = Token::new(u64::MAX - 1);
 /// with its configured endpoint request heads.
 #[must_use]
 pub fn effects_worst_case(limits: &Limits, endpoints: &llm::Endpoints) -> Option<u64> {
+    if !effects_valid(limits, endpoints) {
+        return None;
+    }
     let mut total = 0_u64;
     for (_, part) in effects_parts(limits, endpoints)? {
         total = total.checked_add(part)?;
@@ -218,11 +221,70 @@ pub fn effects_worst_case(limits: &Limits, endpoints: &llm::Endpoints) -> Option
 /// endpoints supply the request-head and credential bounds.
 #[must_use]
 pub fn worst_case(limits: &Limits, endpoints: &llm::Endpoints) -> Option<u64> {
+    if !valid(limits, endpoints) {
+        return None;
+    }
     parts_worst_case(limits, endpoints, true)?
         .checked_add(domain::worst_case_drained_content(&limits.domain, limits.llm.receiving.max_completion_bytes)?)?
         .checked_add(channel::worst_case(&limits.channel)?)?
         .checked_add(crate::live::worst_case()?)?
         .checked_add(io_worst_case(limits)?)
+}
+
+/// Whether the owned lower parts can be built (programming-model.md, 6.3).
+#[must_use]
+pub fn effects_valid(limits: &Limits, endpoints: &llm::Endpoints) -> bool {
+    // FileIo's sum checked the four positive capacities; its constructor
+    // additionally requires a positive timeout. Do not probe its heap sum.
+    limits.file_slots > 0
+        && limits.file_read > 0
+        && limits.file_entries > 0
+        && limits.file_bytes > 0
+        && limits.file_timeout.as_nanos() > 0
+        && limits.machine.processes.checked_mul(2).is_some()
+        && llm::component_valid(&limits.llm, endpoints)
+        && machine::valid(&limits.machine)
+        && crate::events::valid(limits)
+}
+
+/// Whether all service parts and their IO composition fit (programming-model.md, 6.3).
+#[must_use]
+pub fn valid(limits: &Limits, endpoints: &llm::Endpoints) -> bool {
+    effects_valid(limits, endpoints)
+        && domain::valid(&limits.domain)
+        && channel::valid(&limits.channel)
+        && io_valid(limits)
+}
+
+/// Whether native IO tables and the shared socket composition fit (programming-model.md, 6.3).
+#[must_use]
+pub fn io_valid(limits: &Limits) -> bool {
+    // Skein's IO constructor needs flights = 2 * operations and timers =
+    // 2 * sockets; these checks previously lived under its heap sum.
+    let operations = match io::operations(&limits.io) {
+        Some(operations) => operations,
+        None => return false,
+    };
+    let other = match limits.io.sockets.checked_sub(limits.llm.connection.connections) {
+        Some(other) => other,
+        None => return false,
+    };
+    let writers = match limits.events {
+        Some(events) => match events.sinks.destinations.checked_add(1) {
+            Some(writers) => writers,
+            None => return false,
+        },
+        None => 1,
+    };
+    let child = limits.llm.connection.io;
+    limits.io.is_usable()
+        && operations.checked_mul(2).is_some()
+        && limits.io.sockets.checked_mul(2).is_some()
+        && other >= writers
+        && child.intake == limits.io.intake
+        && child.receive == limits.io.receive
+        && child.output == limits.io.output
+        && child.sends == limits.io.sends
 }
 
 // One physical LLM socket is already included by its connection owner. The
@@ -232,21 +294,15 @@ pub fn worst_case(limits: &Limits, endpoints: &llm::Endpoints) -> Option<u64> {
 /// The single native IO ownership, excluding the connection owners' socket buffers.
 #[must_use]
 pub fn io_worst_case(limits: &Limits) -> Option<u64> {
+    if !io_valid(limits) {
+        return None;
+    }
     let physical = limits.llm.connection.connections;
     let other = limits.io.sockets.checked_sub(physical)?;
-    let child = limits.llm.connection.io;
     let writers = match limits.events {
         Some(events) => events.sinks.destinations.checked_add(1)?,
         None => 1,
     };
-    if other < writers
-        || child.intake != limits.io.intake
-        || child.receive != limits.io.receive
-        || child.output != limits.io.output
-        || child.sends != limits.io.sends
-    {
-        return None;
-    }
     let socket = skein_lib::Intake::worst_case(limits.io.intake)?
         .checked_add(u64::from(limits.io.receive))?
         .checked_add(u64::from(limits.io.output))?
