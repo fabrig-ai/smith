@@ -724,6 +724,29 @@ fn admits(service: &Service) -> bool {
     backlog(service) < u64::from(service.limits.queue)
 }
 
+// The drain and shell readiness agree on both admission and the retained
+// pending-message edge credit before offering the head channel event.
+fn channel_event_ready(service: &Service) -> bool {
+    if service.admitted.is_none() && service.pending_messages.room() == 0 {
+        return false;
+    }
+    match service.channel_events.iter().next() {
+        Some(channel::OpenEvent::Start { .. } | channel::OpenEvent::Message { .. }) => admits(service),
+        Some(
+            channel::OpenEvent::Opened { .. }
+            | channel::OpenEvent::HostReturned { .. }
+            | channel::OpenEvent::Delivered { .. }
+            | channel::OpenEvent::DeliveryUnsent { .. }
+            | channel::OpenEvent::Acknowledged { .. }
+            | channel::OpenEvent::Grant { .. }
+            | channel::OpenEvent::Cancel
+            | channel::OpenEvent::WriteFailed
+            | channel::OpenEvent::Ended { .. },
+        ) => true,
+        None => false,
+    }
+}
+
 /// Whether another iteration can progress without waiting on the kernel.
 #[must_use]
 pub fn work_pending(service: &Service, now: Time) -> bool {
@@ -752,8 +775,8 @@ pub fn work_pending(service: &Service, now: Time) -> bool {
         || !service.completions.is_empty()
         || !service.io_events.is_empty()
         || !service.file_events.is_empty()
-        || !service.channel_events.is_empty()
-        || (!service.pending_messages.is_empty() && service.admitted.is_some())
+        || channel_event_ready(service)
+        || (!service.pending_messages.is_empty() && service.admitted.is_some() && admits(service))
         || (takes && !service.llm_events.is_empty())
         || !service.machine_events.is_empty()
         || (takes && !service.domain_events.is_empty())
@@ -763,8 +786,9 @@ pub fn work_pending(service: &Service, now: Time) -> bool {
         || !service.llm_below.is_empty()
         || !service.machine_below.is_empty()
         || !service.io_requests.is_empty()
-        || !service.io_submissions.is_empty()
-        || !service.file_submissions.is_empty()
+        || ((!service.io_submissions.is_empty() || !service.file_submissions.is_empty())
+            && service.submissions.room() > 0
+            && service.operations.len() < service.operations.capacity())
 }
 
 /// The channel has ended, every lower child has settled, and the final

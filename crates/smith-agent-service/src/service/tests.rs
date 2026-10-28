@@ -743,3 +743,34 @@ fn kernel_submission_credit_holds_both_lower_routes() {
     assert_eq!(submit.kind, kernel::Op::Close { fd: kernel::Fd::new(92) });
     assert_eq!(backlog(&service), 0);
 }
+
+#[test]
+fn work_pending_waits_on_the_kernel_for_a_message_at_the_watermark() {
+    let mut service = at_watermark();
+    service.channel_events.push(host_message(31));
+    assert!(!work_pending(&service, Time::ZERO), "the kernel holds the only runnable route");
+    assert!(!channel_event_ready(&service));
+    service.submissions.pop().expect("kernel takes one submission");
+    assert!(work_pending(&service, Time::ZERO), "IO can now leave the backlog");
+    io_down(&mut service);
+    assert!(channel_event_ready(&service), "the message now fits admission");
+    component_up(&mut service);
+    assert!(service.channel_events.is_empty());
+}
+
+#[test]
+fn work_pending_waits_on_the_kernel_for_a_pending_message_at_the_watermark() {
+    let mut service = at_watermark();
+    service.pending_messages.push(PendingMessage {
+        finish_requested: false,
+        name: Token::new(31),
+        label: Box::from(b"host".as_slice()),
+        text: Box::from(b"hello".as_slice()),
+    });
+    assert!(!work_pending(&service, Time::ZERO));
+    service.submissions.pop().expect("kernel takes one submission");
+    assert!(work_pending(&service, Time::ZERO));
+    io_down(&mut service);
+    domain_down(&mut service);
+    assert!(service.pending_messages.is_empty());
+}

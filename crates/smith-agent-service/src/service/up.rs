@@ -262,22 +262,7 @@ pub(super) fn component_up(service: &mut Service) {
         service.machine.fire(&service.machine_env, &mut service.machine_events, &mut service.machine_below);
     }
     for _ in 0..service.channel_events.capacity() {
-        let waits = match service.channel_events.iter().next() {
-            Some(channel::OpenEvent::Start { .. } | channel::OpenEvent::Message { .. }) => !super::admits(service),
-            Some(
-                channel::OpenEvent::Opened { .. }
-                | channel::OpenEvent::HostReturned { .. }
-                | channel::OpenEvent::Delivered { .. }
-                | channel::OpenEvent::DeliveryUnsent { .. }
-                | channel::OpenEvent::Acknowledged { .. }
-                | channel::OpenEvent::Grant { .. }
-                | channel::OpenEvent::Cancel
-                | channel::OpenEvent::WriteFailed
-                | channel::OpenEvent::Ended { .. },
-            )
-            | None => false,
-        };
-        if waits || (service.admitted.is_none() && service.pending_messages.room() == 0) {
+        if !super::channel_event_ready(service) {
             break;
         }
         let event = match service.channel_events.pop() {
