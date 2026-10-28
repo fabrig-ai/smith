@@ -214,7 +214,7 @@ impl Config {
             }
         }
         self.check_models(limits)?;
-        if crate::worst_case(limits).is_none() {
+        if !crate::valid(limits) {
             return Err(Invalid::Limits);
         }
         Ok(())

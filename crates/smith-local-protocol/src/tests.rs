@@ -289,6 +289,7 @@ fn invalid_limits_are_refused() {
         assert!(crate::Plain::new(owner, root, invalid, deadline).is_none(), "positive scan limit {check}");
     }
     let terminal = crate::TerminalLimits { line_bytes: 32, show_bytes: 64 };
+    assert!(crate::terminal_valid(&terminal));
     assert!(crate::Terminal::new(terminal).is_some(), "valid terminal limits");
     assert!(crate::Terminal::new(crate::TerminalLimits { line_bytes: 0, ..terminal }).is_none(), "positive line limit");
     assert!(
@@ -305,6 +306,7 @@ fn invalid_limits_are_refused() {
             smith_protocol_channel::Endpoints::new(skein_lib::List::with_capacity(0)),
         )
     };
+    assert!(crate::Store::valid(&store));
     assert!(construct(store).is_some(), "valid store limits");
     for invalid in [
         crate::StoreLimits { file_bytes: 0, ..store },
@@ -312,7 +314,9 @@ fn invalid_limits_are_refused() {
         crate::StoreLimits { deliveries: 0, ..store },
         crate::StoreLimits { scan_bytes: 0, ..store },
         crate::StoreLimits { turns: u32::MAX - 5, ..store },
+        crate::StoreLimits { turns: u32::MAX, ..store },
     ] {
+        assert!(!crate::Store::valid(&invalid));
         assert!(construct(invalid).is_none(), "store file, scan and record limits are checked");
     }
     assert!(

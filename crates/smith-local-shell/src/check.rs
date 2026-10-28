@@ -365,14 +365,11 @@ fn derive_invocation(
         )
         .map_err(|why| why.line())?;
     }
-    match limits.local.agent {
-        smith_local_domain::AgentLimits::Inline(_) => {
-            limits.inline = Some(
-                smith_local_service::InlineLimits::new(&resolved.agent.service)
-                    .ok_or_else(|| "inline memory bound overflows".to_owned())?,
-            );
-        }
-        smith_local_domain::AgentLimits::Spawned(_) => {}
+    if matches!(limits.local.agent, smith_local_domain::AgentLimits::Inline(_))
+        && (!smith_agent_service::effects_valid(&resolved.agent.service.limits, &resolved.agent.service.llm_endpoints)
+            || !smith_agent_service::io_valid(&resolved.agent.service.limits))
+    {
+        return Err("invalid inline limits".to_owned());
     }
     let handed = handed_accounts(resolved)?;
     if interactive {
@@ -469,7 +466,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_declared_memory_below_the_old_worst_case_checks() {
+    fn a_small_declared_memory_checks() {
         let files = crate::credentials::tests::Files::new();
         crate::credentials::tests::private_key(&files);
         let certificate = skein_scratch::paths::workspace().join("tests/protocol-llm/fixtures/root.der");
@@ -519,7 +516,7 @@ mod tests {
         let (limits, _) = interactive_limits(&mut resolved).expect("interactive admission");
         let events = resolved.agent.service.limits.events.expect("interactive sink");
         assert!(events.front);
-        assert!(smith_local_service::worst_case(&limits).is_some());
+        assert!(smith_local_service::valid(&limits));
     }
 
     fn resolved(trace: bool) -> settings::resolve::Resolved {

@@ -2,7 +2,6 @@
 //! Values remain private; hosts take the subject only to enforce account identity.
 use super::{Accounts, Origin, oauth};
 use alloc::boxed::Box;
-use skein_lib::List;
 
 /// A requested account operation's last terminal, taken by its shell owner.
 #[expect(missing_debug_implementations, reason = "subjects must never enter diagnostics")]
@@ -13,16 +12,6 @@ pub enum Settled {
     SignedOut { revoked: bool },
     /// The named operation failed before its successful terminal.
     Failed { ends: oauth::Ends, failure: oauth::Failure },
-}
-
-pub(super) fn worst_case(limits: &oauth::Limits) -> Option<u64> {
-    List::<Option<(u32, Settled)>>::worst_case(limits.accounts)?.checked_add(
-        u64::from(limits.accounts).checked_mul(
-            u64::from(limits.client.document.subject_bytes)
-                .checked_mul(2)?
-                .checked_add(u64::from(limits.client.scope_bytes))?,
-        )?,
-    )
 }
 
 impl Accounts {

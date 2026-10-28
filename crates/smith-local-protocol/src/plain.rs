@@ -15,7 +15,6 @@
 #![expect(clippy::manual_let_else, reason = "explicit bounded transition matches")]
 
 use alloc::boxed::Box;
-use core::mem::size_of;
 use skein_io::{digest, file, kernel};
 use skein_lib::{List, Time, Token, Writer};
 
@@ -60,17 +59,6 @@ pub struct Plain {
     deadline: Time,
     snapshot: Snapshot,
     next: u32,
-}
-
-/// Bound for one complete snapshot and a scan's transient path and file bytes.
-#[must_use]
-pub fn plain_worst_case(limits: &PlainLimits) -> Option<u64> {
-    u64::try_from(size_of::<Plain>())
-        .ok()?
-        .checked_add(List::<Entry>::worst_case(limits.entries)?)?
-        .checked_add(u64::from(limits.entries).checked_mul(u64::from(limits.path_bytes))?)?
-        .checked_add(u64::from(limits.path_bytes))?
-        .checked_add(u64::from(limits.file_bytes))
 }
 
 impl Plain {

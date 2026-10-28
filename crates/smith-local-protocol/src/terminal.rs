@@ -36,13 +36,10 @@ pub const fn max_out() -> u32 {
     1
 }
 
-/// Checked retained upper bound for the terminal.
+/// Whether the terminal's line and notice edges are nonzero.
 #[must_use]
-pub fn worst_case(limits: &Limits) -> Option<u64> {
-    if limits.line_bytes == 0 || limits.show_bytes == 0 {
-        return None;
-    }
-    List::<u8>::worst_case(limits.line_bytes)?.checked_add(u64::from(limits.show_bytes))
+pub fn valid(limits: &Limits) -> bool {
+    limits.line_bytes > 0 && limits.show_bytes > 0
 }
 
 /// One line accumulator and the live run's interrupt count.
@@ -58,7 +55,7 @@ impl Terminal {
     /// Build the bounded terminal translator.
     #[must_use]
     pub fn new(limits: Limits) -> Option<Self> {
-        if limits.line_bytes == 0 || limits.show_bytes == 0 {
+        if !valid(&limits) {
             return None;
         }
         Some(Self { line: List::with_capacity(limits.line_bytes), limits, discarding: false, cancelled: false })

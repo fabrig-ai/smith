@@ -2,7 +2,7 @@
 //! File operations keep the low namespace; socket cancellations retain theirs.
 use super::{Accounts, oauth};
 use skein_io::{self as io, kernel};
-use skein_lib::{Env, Queue, Time, Token, Wall};
+use skein_lib::{Env, Time, Token, Wall};
 
 const SOCKET_OPERATION: u64 = 1 << 61;
 
@@ -95,16 +95,4 @@ fn socket_submit(submit: kernel::Submit) -> kernel::Submit {
     };
     assert!(submit.op.raw() & SOCKET_OPERATION == 0, "account socket operation space");
     kernel::Submit { op: Token::new(submit.op.raw() | SOCKET_OPERATION), kind }
-}
-
-pub(super) fn worst_case(limits: &oauth::Limits) -> Option<u64> {
-    let operations = io::operations(&limits.io)?;
-    Queue::<kernel::Complete>::worst_case(operations)?
-        .checked_add(Queue::<kernel::Submit>::worst_case(8)?)?
-        .checked_add(Queue::<io::Event>::worst_case(3)?)?
-        .checked_add(u64::from(limits.io.intake).checked_mul(3)?)?
-        .checked_add(Queue::<io::Request>::worst_case(3)?)?
-        .checked_add(u64::from(limits.io.output).checked_mul(3)?)?
-        .checked_add(Queue::<oauth::FileLower>::worst_case(limits.accounts.checked_mul(2)?.checked_add(1)?)?)?
-        .checked_add(u64::from(limits.client.document.record_bytes).checked_add(4095)?)
 }

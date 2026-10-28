@@ -183,11 +183,12 @@ impl Local {
                         domain::AgentLimits::Spawned(limits) => limits.cancel_grace,
                     },
                 )
-                .ok_or_else(|| configuration_failure(derivation_refusal("local_worst_case")))?;
-                config.limits.inline = Some(
-                    service::InlineLimits::new(&configuration)
-                        .ok_or_else(|| configuration_failure(derivation_refusal("local_worst_case")))?,
-                );
+                .ok_or_else(|| configuration_failure(derivation_refusal("local_limits")))?;
+                if !smith_agent_service::effects_valid(&configuration.limits, &configuration.llm_endpoints)
+                    || !smith_agent_service::io_valid(&configuration.limits)
+                {
+                    return Err(configuration_failure(derivation_refusal("local_limits")));
+                }
                 service::AgentConfig::Inline { configuration, roots: resources.effect_roots }
             }
             None if resources.effect_roots.is_empty() => service::AgentConfig::Spawned,

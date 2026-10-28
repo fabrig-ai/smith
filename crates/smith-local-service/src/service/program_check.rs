@@ -14,7 +14,6 @@ mod binding;
 mod driver;
 mod lifecycle;
 mod pending;
-pub use binding::program_checks_worst_case;
 
 #[derive(Debug)]
 struct Account {

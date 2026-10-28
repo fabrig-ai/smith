@@ -15,7 +15,6 @@
 //! | Push | push | Pushed, Stale or Failed |
 
 use alloc::boxed::Box;
-use core::mem::size_of;
 use skein_lib::{List, bytes};
 use smith_domain::run;
 use smith_local_domain::{GitOp, GitResult};
@@ -33,21 +32,6 @@ pub struct GitLimits {
     pub path_bytes: u32,
     /// Maximum git diagnostic tail bytes.
     pub detail_bytes: u32,
-}
-
-/// Checked bound for retained command output and conflict paths.
-#[must_use]
-pub fn git_worst_case(limits: &GitLimits) -> Option<u64> {
-    if limits.output_bytes == 0 || limits.conflicts == 0 || limits.path_bytes == 0 {
-        return None;
-    }
-    u64::try_from(size_of::<Git>())
-        .ok()?
-        .checked_add(u64::from(limits.argument_bytes).checked_mul(2)?)?
-        .checked_add(u64::try_from(size_of::<Box<[u8]>>()).ok()?.checked_mul(8)?)?
-        .checked_add(u64::from(limits.output_bytes))?
-        .checked_add(u64::from(limits.conflicts).checked_mul(u64::from(limits.path_bytes))?)?
-        .checked_add(u64::from(limits.detail_bytes))
 }
 
 /// A child command or filesystem marker read for the local service.

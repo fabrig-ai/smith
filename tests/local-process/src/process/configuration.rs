@@ -131,7 +131,6 @@ fn configuration_for(
             local: policy.0,
             limits: service::Limits {
                 local: policy.1,
-                inline: None,
                 envelope_bytes: host.answer_bytes,
                 process,
                 queue,

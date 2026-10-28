@@ -67,10 +67,13 @@ impl Local {
             configuration.service.limits.events.as_mut().expect("derived event limits").front = view.front;
             match limits.local.agent {
                 AgentLimits::Inline(_) => {
-                    limits.inline = Some(
-                        service::InlineLimits::new(&configuration.service)
-                            .ok_or_else(|| configuration_failure(derivation_refusal("local_header")))?,
-                    );
+                    if !smith_agent_service::effects_valid(
+                        &configuration.service.limits,
+                        &configuration.service.llm_endpoints,
+                    ) || !smith_agent_service::io_valid(&configuration.service.limits)
+                    {
+                        return Err(configuration_failure(derivation_refusal("local_header")));
+                    }
                 }
                 AgentLimits::Spawned(_) => {}
             }

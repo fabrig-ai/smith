@@ -5,24 +5,7 @@ use alloc::boxed::Box;
 use skein_io::kernel;
 use skein_lib::{Duration, List, Queue};
 use smith_host_domain::SourceName;
-use smith_protocol_program::{ENVIRONMENT_BYTES, ENVIRONMENT_ENTRIES, Programs};
-
-/// One serial check, bounded names, environment and queued requests, without I/O.
-/// Paths use the program configuration's 4096-byte bound (protocol/agent.md, section 4).
-#[must_use]
-pub fn program_checks_worst_case(accounts: u32, detail_bytes: u32) -> Option<u64> {
-    smith_host_protocol::program_source_worst_case(detail_bytes)?
-        .checked_add(u64::try_from(size_of::<Checks>()).ok()?)?
-        .checked_add(List::<Account>::worst_case(accounts)?)?
-        .checked_add(Queue::<u32>::worst_case(accounts)?)?
-        .checked_add(u64::try_from(ENVIRONMENT_BYTES).ok()?.checked_mul(3)?)?
-        .checked_add(List::<Box<[u8]>>::worst_case(ENVIRONMENT_ENTRIES)?.checked_mul(3)?)?
-        .checked_add(4096_u64.checked_mul(4)?)?
-        .checked_add(List::<Box<[u8]>>::worst_case(2)?)?
-        .checked_add(11)?
-        .checked_add(u64::try_from(size_of::<kernel::Pipe>()).ok()?.checked_mul(2)?)?
-        .checked_add(u64::from(accounts).checked_mul(u64::from(detail_bytes))?.checked_mul(8)?)
-}
+use smith_protocol_program::Programs;
 
 impl Service {
     /// Install checked program accounts and transfer their root before the first pass.

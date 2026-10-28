@@ -138,6 +138,26 @@ pub(crate) struct ProcessAdapter {
     close_root_pending: bool,
 }
 
+/// IO table capacities and the selected process channel's framing edges.
+pub(crate) fn valid(limits: &ProcessLimits, framed: bool) -> bool {
+    if !io_valid(&limits.io) || !local_protocol::Store::valid(&store_limits()) {
+        return false;
+    }
+    if framed {
+        let Ok(schema) = smith_protocol_channel::schema_for_start(&limits.channel.bodies, limits.channel.start_bytes)
+        else {
+            return false;
+        };
+        return schema.check(skein_channel::Role::Initiator, &limits.channel.channel).is_ok();
+    }
+    true
+}
+
+pub(crate) fn io_valid(limits: &io::Limits) -> bool {
+    let Some(operations) = io::operations(limits) else { return false };
+    limits.is_usable() && operations.checked_mul(2).is_some() && limits.sockets.checked_mul(2).is_some()
+}
+
 impl ProcessAdapter {
     pub(crate) fn new(
         limits: &ProcessLimits,
@@ -199,49 +219,6 @@ impl ProcessAdapter {
             signal_operation: None,
             close_root_pending: false,
         })
-    }
-
-    // Internal queues retain their former pricing as an estimate (limits.queue entries, store actions three).
-    pub(crate) fn memory_parts(limits: &ProcessLimits, framed: bool) -> Option<[u64; 3]> {
-        let child = if framed {
-            io::worst_case(&limits.io)?
-                .checked_add(protocol::process_worst_case(&limits.channel, limits.detail_bytes)?)?
-        } else {
-            0
-        };
-        let store = file_layer::FileIo::worst_case(66, 4096, 8196, 64 << 20)?
-            .checked_add(local_protocol::Store::worst_case(store_limits())?)?
-            .checked_add(
-                smith_protocol_channel::Endpoints::worst_case(
-                    limits.channel.endpoints,
-                    limits.channel.charter.llm_endpoint,
-                )?
-                .checked_mul(2)?,
-            )?
-            .checked_add(Queue::<local_protocol::StoreRequest>::worst_case(limits.queue)?)?
-            .checked_add(Queue::<local_protocol::Action>::worst_case(3)?)?;
-        let delivery = local_protocol::plain_worst_case(&plain_limits())?
-            .checked_mul(65)?
-            .checked_add(Map::<u32, Option<local_protocol::Snapshot>>::worst_case(64)?)?
-            .checked_add(List::<u32>::worst_case(64)?)?
-            .checked_add(local_protocol::markers_worst_case(&git_limits(limits))?)?
-            .checked_add(local_protocol::git_child_worst_case(&git_limits(limits))?)?
-            .checked_add(4096)?
-            .checked_add(List::<Box<[u8]>>::worst_case(64)?)?;
-        let routing = child
-            .checked_add(crate::live::Live::worst_case()?)?
-            .checked_add(Queue::<(file::Request, Time)>::worst_case(limits.queue)?)?
-            .checked_add(Queue::<file::Event>::worst_case(limits.queue)?)?
-            .checked_add(Queue::<kernel::Submit>::worst_case(limits.queue)?.checked_mul(2)?)?
-            .checked_add(Map::<Token, Operation>::worst_case(limits.queue)?)?
-            .checked_add(64_u64.checked_mul(u64::try_from(size_of::<Token>()).ok()?)?)?
-            .checked_add(Queue::<io::Event>::worst_case(limits.queue)?.checked_mul(2)?)?
-            .checked_add(Queue::<io::Request>::worst_case(limits.queue)?)?
-            .checked_add(Queue::<protocol::ProcessEvent>::worst_case(limits.queue)?)?
-            .checked_add(u64::try_from(size_of::<protocol::OpenEvent>()).ok()?.checked_mul(u64::from(limits.queue))?)?
-            .checked_add(Queue::<kernel::Submit>::worst_case(limits.queue)?)?
-            .checked_add(Queue::<kernel::Complete>::worst_case(limits.queue)?)?;
-        Some([store, delivery, routing])
     }
 
     // Internal handoffs count toward admission; edges never contribute.

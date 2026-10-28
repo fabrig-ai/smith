@@ -3,7 +3,6 @@
 //! descriptors, account identifiers, socket and private file routing. Env
 //! records are handed in once; refresh bytes stay in private sign-in records.
 use alloc::boxed::Box;
-use core::mem::size_of;
 use skein_io::{self as io, file, file_layer, kernel};
 use skein_lib::{CryptoRng, Env, List, Queue, Secret, Time, Token, Wall};
 use skein_oauth_accounts as oauth;
@@ -25,7 +24,7 @@ const ROOT_FILE: u64 = 1 << 63;
 
 /// One account source handed to the local service before its loop.
 #[expect(missing_debug_implementations, reason = "environment records contain credentials")]
-#[expect(clippy::large_enum_variant, reason = "bounded source registrations are priced in accounts_worst_case")]
+#[expect(clippy::large_enum_variant, reason = "source registrations move once through the account adoption boundary")]
 pub enum Source {
     /// A variable read once by the shell, with its endpoint's account identifier.
     Env { account: u32, borrowed: Borrowed },
@@ -102,36 +101,23 @@ pub struct Accounts {
     settled: List<Option<(u32, Settled)>>,
 }
 
-/// The driver, source descriptors, file operations and bounded output queues.
+/// Whether account file routing, socket tables and OAuth documents can be represented.
 #[must_use]
-pub fn accounts_worst_case(limits: &oauth::Limits) -> Option<u64> {
-    oauth::worst_case(limits)?
-        .checked_add(transport::worst_case(limits)?)?
-        .checked_add(file_layer::FileIo::worst_case(
-            limits.accounts.checked_mul(4)?,
-            4096,
-            1,
-            limits.client.document.document_bytes.max(limits.client.document.record_bytes),
-        )?)?
-        .checked_add(lock::worst_case(limits)?)?
-        .checked_add(subject::worst_case(limits)?)?
-        .checked_add(sign_out::worst_case(limits)?)?
-        .checked_add(List::<Account>::worst_case(limits.accounts)?)?
-        .checked_add(List::<Source>::worst_case(limits.accounts)?)?
-        .checked_add(
-            u64::from(limits.accounts).checked_mul(
-                4095_u64
-                    .checked_add(u64::from(limits.client.document.record_bytes))?
-                    .checked_add(1024)?
-                    .checked_add(u64::from(limits.client.document.string_bytes).checked_mul(2)?)?,
-            )?,
-        )?
-        .checked_add(Queue::<file::Event>::worst_case(3)?)?
-        .checked_add(u64::from(limits.client.document.document_bytes).checked_mul(3)?)?
-        .checked_add(Queue::<oauth::Event>::worst_case(3)?)?
-        .checked_add(u64::from(limits.client.document.token_bytes.max(limits.client.url_bytes)).checked_mul(3)?)?
-        .checked_add(Queue::<kernel::Submit>::worst_case(8)?)?
-        .checked_add(u64::try_from(size_of::<Accounts>()).ok()?)
+pub fn accounts_valid(limits: &oauth::Limits) -> bool {
+    let Some(file_requests) = limits.accounts.checked_mul(2) else { return false };
+    limits.accounts.checked_mul(4).is_some()
+        && file_requests.checked_add(1).is_some()
+        && crate::process::io_valid(&limits.io)
+        // Skein's client owns the document/record codec and parser checks.
+        && skein_oauth::Client::new(limits.client).is_ok()
+        && limits.http.head >= 2
+        && limits.http.read > 0
+        && limits.http.send > 0
+        && limits.tls.read > 0
+        && limits.tls.send > 0
+        && limits.tls.records >= skein_tls::client::MAX_RECORD
+        && limits.tls.read.checked_add(skein_tls::client::MAX_PLAINTEXT).is_some()
+        && skein_tls::client::room_for(limits.tls.send).is_some()
 }
 
 fn number(source: &Source) -> u32 {
@@ -141,7 +127,9 @@ fn number(source: &Source) -> u32 {
 }
 
 fn validate_sources(sources: &List<Source>, limits: &oauth::Limits) -> Result<Option<u32>, crate::Error> {
-    accounts_worst_case(limits).ok_or(crate::Error::Memory)?;
+    if !accounts_valid(limits) {
+        return Err(crate::Error::Memory);
+    }
     if limits.file_stall == skein_lib::Duration::ZERO || limits.accounts == 0 {
         return Err(crate::Error::Process);
     }

@@ -32,14 +32,14 @@ impl Local {
         let operations = Self::kernel_operations(&io_limits, lower_routes, handed.is_some())
             .and_then(|operations| operations.checked_add(if result_file { 4 } else { 0 }))
             .ok_or_else(|| configuration_failure(derivation_refusal("local_routes")))?;
-        if service::worst_case(limits).is_none() {
-            return Err(configuration_failure(derivation_refusal("local_worst_case")));
+        if !service::valid(limits) {
+            return Err(configuration_failure(derivation_refusal("local_limits")));
         }
         if programs {
             let mut checked = limits.clone();
             checked.process.io = io_limits;
-            if service::worst_case(&checked).is_none() {
-                return Err(configuration_failure("program check memory overflows".into()));
+            if !service::valid(&checked) {
+                return Err(configuration_failure("invalid program check limits".into()));
             }
         }
         Ok(operations)

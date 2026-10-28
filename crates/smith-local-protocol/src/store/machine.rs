@@ -10,7 +10,7 @@ use selection::Selection;
 use super::boundary::{Action, History, RecordName, StoreFault, StoreLimits, StoreRequest};
 use super::{File, decode_state, decode_turns_bounded, save_state, save_turn, turn_opens_window_bounded};
 use alloc::boxed::Box;
-use core::mem::{replace, size_of};
+use core::mem::replace;
 use skein_io::{
     digest::{Digest, digest},
     file::{self, Expect},
@@ -93,12 +93,7 @@ impl Store {
         limits: StoreLimits,
         endpoints: Endpoints,
     ) -> Option<Self> {
-        limits.turns.checked_add(limits.deliveries)?.checked_add(4)?;
-        if limits.file_bytes < crate::format::max_bytes()
-            || limits.turns == 0
-            || limits.deliveries == 0
-            || limits.scan_bytes < Self::marker_entry_bytes()
-        {
+        if !Self::valid(&limits) {
             return None;
         }
         let records = limits.turns.checked_add(limits.deliveries)?.checked_add(2)?;
@@ -130,28 +125,15 @@ impl Store {
         })
     }
 
-    /// Loading, decoding and a retry's owned replacement can coexist.
+    /// Whether record capacities and the format marker fit the store's file and scan edges.
     #[must_use]
-    pub fn worst_case(limits: StoreLimits) -> Option<u64> {
-        limits.turns.checked_add(limits.deliveries)?.checked_add(4)?;
-        let records = limits.turns.checked_add(limits.deliveries)?.checked_add(2)?;
-        // Three aggregate file bounds cover retained envelopes, the combined
-        // transcript piece and typed decoding (or a write and its retry).
-        // Charge a fourth for the generated envelope's owned body. The
-        // intermediate body list is released before typed decoding.
-        u64::from(limits.file_bytes)
-            .checked_mul(3)?
-            .checked_add(u64::from(limits.file_bytes))?
-            .checked_add(limits.scan_bytes)?
-            .checked_add(Map::<Box<[u8]>, Digest>::worst_case(records)?)?
-            .checked_add(u64::from(records).checked_mul(42)?)?
-            .checked_add(List::<Box<[u8]>>::worst_case(limits.turns)?)?
-            .checked_add(List::<DeliveryRecord>::worst_case(limits.deliveries)?)?
-            // A private parent leaf and one copied known removal name.
-            .checked_add(255)?
-            .checked_add(42)?
-            .checked_add(255)?
-            .checked_add(u64::try_from(size_of::<Self>()).ok()?)
+    pub fn valid(limits: &StoreLimits) -> bool {
+        let Some(records) = limits.turns.checked_add(limits.deliveries) else { return false };
+        records.checked_add(4).is_some()
+            && limits.file_bytes >= crate::format::max_bytes()
+            && limits.turns > 0
+            && limits.deliveries > 0
+            && limits.scan_bytes >= Self::marker_entry_bytes()
     }
 
     /// Room for exactly one serial domain request.

@@ -14,6 +14,7 @@ fn the_products_header_carries_its_local_limits() {
         let memory = header.limits.iter().find(|limit| limit.name.as_ref() == b"declared.memory");
         assert_eq!(local.map(|limit| limit.value), Some(smith_events::LimitValue::Integer(248)));
         assert_eq!(memory.map(|limit| limit.value), Some(smith_events::LimitValue::Integer(2_147_483_648)));
+        assert!(!header.limits.iter().any(|limit| limit.name.as_ref() == b"inline.memory"));
         let inline = header.limits.iter().any(|limit| limit.name.as_ref() == b"inline.window.bytes");
         let host = header.limits.iter().any(|limit| limit.name.as_ref() == b"host.process.io.sockets");
         assert_eq!(inline, matches!(placement, Placement::InProcess));

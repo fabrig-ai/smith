@@ -1,9 +1,9 @@
 //! Record directory locks for shared writes (shell.md, 7.3; oauth.md, 6.4).
 //! Each successful lock answer owns one root until Unlock closes it.
-use super::{Accounts, oauth};
+use super::Accounts;
 use alloc::boxed::Box;
 use skein_io::{file, file_layer};
-use skein_lib::{Duration, List, Time, Token, Writer};
+use skein_lib::{Duration, Time, Token, Writer};
 
 mod events;
 
@@ -45,10 +45,6 @@ impl Lock {
         }
         Self { number, base, path: path.finish(), root: None, state: State::Idle, again: false, until: None }
     }
-}
-
-pub(super) fn worst_case(limits: &oauth::Limits) -> Option<u64> {
-    List::<Lock>::worst_case(limits.accounts)?.checked_add(u64::from(limits.accounts).checked_mul(8196)?)
 }
 
 impl Accounts {

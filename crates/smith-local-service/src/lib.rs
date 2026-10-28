@@ -23,11 +23,7 @@ pub mod profile;
 #[cfg(test)]
 mod tests;
 
-pub use credentials::{ACCOUNTS_MAX_OUT, Accounts, CredentialRequest, Settled, Source, accounts_worst_case};
+pub use credentials::{ACCOUNTS_MAX_OUT, Accounts, CredentialRequest, Settled, Source, accounts_valid};
 pub use live::{LIVE_BYTES, LIVE_SLOTS, LivePiece, RemoteTurn};
 pub use process::{Launch, ProcessLimits, to_host_exit};
-pub use service::{
-    AgentConfig, Config, Error, InlineLimits, Limits, Service, StartValues, iterate, memory_parts, worst_case,
-};
-
-pub use service::program_check::program_checks_worst_case;
+pub use service::{AgentConfig, Config, Error, Limits, Service, StartValues, iterate, valid};

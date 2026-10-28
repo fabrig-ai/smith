@@ -1,12 +1,10 @@
-//! Checked ownership bound for local policy and its in-process agent
+//! Limit validity for local policy and its selected child agent
 //! (domain/host.md, sections 6 and 8; programming-model.md, section 6.3).
+//! Keeps only receiving limits, never chat state or lower IO. `valid` checks
+//! notice and inbox bounds; `AgentLimits::inline` derives the single child.
 
 use alloc::boxed::Box;
-use core::mem::size_of;
-use skein_lib::{Map, Queue};
 use smith_domain::{self as agent, run};
-
-use crate::{DeliveryRecord, Fact, IntentDirectory, Request};
 
 /// Capacity of one local chat and its child agent.
 #[derive(Clone, Debug)]
@@ -63,7 +61,9 @@ impl AgentLimits {
             cancel_grace,
             facts: 32,
         };
-        smith_inline_agent::worst_case(&limits)?;
+        if !smith_inline_agent::valid(&limits) {
+            return None;
+        }
         Some(Self::Inline(limits))
     }
 
@@ -74,10 +74,10 @@ impl AgentLimits {
         }
     }
 
-    fn worst_case(self) -> Option<u64> {
+    fn valid(self) -> bool {
         match self {
-            Self::Inline(limits) => smith_inline_agent::worst_case(&limits),
-            Self::Spawned(limits) => smith_host_domain::worst_case(&limits),
+            Self::Inline(limits) => smith_inline_agent::valid(&limits),
+            Self::Spawned(limits) => smith_host_domain::valid(&limits),
         }
     }
 }
@@ -89,88 +89,14 @@ pub fn max_line_bytes(message_bytes: u32) -> Option<u32> {
     message_bytes.checked_sub(label_bytes)?.checked_sub(2)
 }
 
-/// Bound on owned local state, including the child domain.
+/// Whether local notices, inbox capacity and child limits can be represented.
 #[must_use]
-pub fn worst_case(limits: &Limits) -> Option<u64> {
-    if limits.models == 0 || limits.unsaved == 0 || limits.show_bytes < limits.chat_bytes.checked_add(52)?.max(64) {
-        return None;
-    }
-    agent::worst_case(&limits.smith)?;
-    let agent = limits.agent.worst_case()?;
-    let endpoints = u64::from(limits.models)
-        .checked_mul(u64::try_from(size_of::<run::charter::Llm>()).ok()?)?
-        .checked_add(u64::from(limits.models).checked_mul(u64::try_from(size_of::<agent::session::Progress>()).ok()?)?)?
-        .checked_add(u64::from(limits.models).checked_mul(u64::try_from(size_of::<u64>()).ok()?)?)?
-        .checked_add(u64::from(limits.models).checked_mul(u64::from(limits.text_bytes))?)?;
-    let accounts = u64::from(limits.smith.accounts).checked_mul(u64::try_from(size_of::<u32>()).ok()?)?;
-    let targets = u64::from(limits.smith.run.directories).checked_mul(u64::from(limits.text_bytes))?.checked_mul(2)?;
-    let configuration = u64::from(limits.chat_bytes)
-        .checked_add(limits.smith.configured_model_bytes)?
-        .checked_add(u64::from(limits.text_bytes).checked_mul(2)?)?
-        .checked_add(endpoints)?
-        .checked_add(accounts)?
-        .checked_add(targets)?
-        .checked_add(limits.smith.run.run_bytes)?;
-    let inbox = limits.smith.run.messages.checked_add(1)?;
-    let lines = Queue::<crate::person::Line>::worst_case(inbox)?
-        .checked_add(u64::from(inbox).checked_mul(u64::from(limits.line_bytes))?.checked_mul(2)?)?;
-    // Each retained turn can open a window, owning one opener box at most.
-    let record = limits
-        .smith
-        .session
-        .history_bytes
-        .checked_add(u64::try_from(size_of::<agent::session::record::Opener>()).ok()?)?
-        .checked_add(
-            u64::from(limits.smith.session.history_messages)
-                .checked_mul(u64::try_from(size_of::<agent::Turn>()).ok()?)?,
-        )?;
-    let unsaved = u64::from(limits.unsaved).checked_mul(record)?;
-    let detail = match limits.agent {
-        AgentLimits::Inline(_) => u64::from(limits.smith.session.failure_bytes),
-        AgentLimits::Spawned(child) => u64::from(child.detail_bytes),
-    };
-    let out = Queue::<Request>::worst_case(crate::max_out(limits))?
-        .checked_add(u64::from(limits.show_bytes))?
-        .checked_add(detail.checked_mul(2)?)?;
-    let child_out = match limits.agent {
-        AgentLimits::Inline(_) => Queue::<smith_inline_agent::Output>::worst_case(crate::max_out(limits))?,
-        AgentLimits::Spawned(_) => Queue::<smith_host_domain::Output>::worst_case(crate::max_out(limits))?,
-    };
-    let held = Queue::<crate::domain::Held>::worst_case(1)?.checked_add(limits.smith.session.completion_bytes)?;
-    let intent = skein_lib::List::<IntentDirectory>::worst_case(run::MAX_DIRECTORIES)?
-        .checked_add(u64::from(run::MAX_DIRECTORIES).checked_mul(u64::try_from(run::Receipt::CAPACITY).ok()?)?)?
-        .checked_add(targets)?;
-    let answered = Map::<run::CallName, DeliveryRecord>::worst_case(limits.smith.run.answered_calls)?.checked_add(
-        u64::from(limits.smith.run.answered_calls).checked_mul(run::Delivered::worst_case().max(intent))?,
-    )?;
-    let heads = Map::<u32, Box<[u8]>>::worst_case(limits.smith.run.directories)?
-        .checked_add(u64::from(limits.smith.run.directories).checked_mul(u64::try_from(run::Receipt::CAPACITY).ok()?)?)?
-        .checked_mul(2)?;
-    let delivery = skein_lib::List::<run::Receipt>::worst_case(run::MAX_DIRECTORIES)?
-        .checked_add(u64::try_from(size_of::<crate::delivery::InPlace>()).ok()?)?
-        .checked_add(run::Delivered::worst_case().checked_mul(4)?)?
-        .checked_add(limits.smith.run.outcome_bytes.checked_mul(2)?)?
-        .checked_add(skein_lib::List::<IntentDirectory>::worst_case(run::MAX_DIRECTORIES)?.checked_mul(3)?)?
-        .checked_add(targets.checked_mul(3)?)?
-        .checked_add(
-            u64::from(run::MAX_DIRECTORIES).checked_mul(u64::try_from(run::Receipt::CAPACITY).ok()?)?.checked_mul(3)?,
-        )?
-        .checked_add(run::Delivered::worst_case().checked_mul(2)?)?;
-    agent
-        .checked_add(configuration)?
-        .checked_add(lines)?
-        .checked_add(skein_lib::List::<smith_host_domain::Grant>::worst_case(limits.smith.accounts)?)?
-        .checked_add(u64::from(limits.line_bytes.max(20)))?
-        .checked_add(32)?
-        .checked_add(Queue::<smith_host_domain::Message>::worst_case(inbox)?)?
-        .checked_add(u64::from(inbox).checked_mul(u64::try_from(crate::person::LABEL.len()).ok()?)?)?
-        .checked_add(unsaved)?
-        .checked_add(out)?
-        .checked_add(child_out)?
-        .checked_add(smith_host_domain::ModelFault::BYTES.checked_mul(3)?)?
-        .checked_add(held)?
-        .checked_add(delivery)?
-        .checked_add(answered)?
-        .checked_add(heads)?
-        .checked_add(Queue::<Fact>::worst_case(limits.facts)?)
+pub fn valid(limits: &Limits) -> bool {
+    let Some(show_minimum) = limits.chat_bytes.checked_add(52) else { return false };
+    limits.models > 0
+        && limits.unsaved > 0
+        && limits.show_bytes >= show_minimum.max(64)
+        && limits.smith.run.messages.checked_add(1).is_some()
+        && agent::valid(&limits.smith)
+        && limits.agent.valid()
 }

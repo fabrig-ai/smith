@@ -48,10 +48,6 @@ pub fn effective(
             (channel::bodies(&limits.process.channel.bodies), channel::transcript(&limits.process.channel.transcript))
         }
     };
-    let inline: Box<[Limit]> = match &limits.inline {
-        Some(bounds) => Box::new([entry(Layer::Inline, "memory", Value::Bytes(bounds.memory))]),
-        None => Box::from([]),
-    };
     let count = agent
         .len()
         .checked_add(local.len())?
@@ -59,8 +55,7 @@ pub fn effective(
         .checked_add(process.len())?
         .checked_add(bodies.len())?
         .checked_add(transcript.len())?
-        .checked_add(service.len())?
-        .checked_add(inline.len())?;
+        .checked_add(service.len())?;
     let mut result = List::with_capacity(u32::try_from(count).ok()?);
     for slice in [
         agent.as_ref(),
@@ -70,7 +65,6 @@ pub fn effective(
         bodies.as_ref(),
         transcript.as_ref(),
         service.as_slice(),
-        inline.as_ref(),
     ] {
         for value in slice {
             result.push(*value).ok()?;

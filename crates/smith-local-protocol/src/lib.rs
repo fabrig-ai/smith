@@ -37,15 +37,15 @@ mod tests;
 
 pub use borrowed::Borrowed;
 pub use delivery_store::{decode_delivery, save_delivery};
-pub use git::{Git, GitAction, GitCompletion, GitLimits, git_worst_case};
-pub use git_child::{GitChild, git_child_worst_case};
-pub use markers::{MarkerAction, Markers, markers_worst_case};
-pub use plain::{Plain, PlainAction, PlainLimits, Snapshot, plain_worst_case};
+pub use git::{Git, GitAction, GitCompletion, GitLimits};
+pub use git_child::GitChild;
+pub use markers::{MarkerAction, Markers};
+pub use plain::{Plain, PlainAction, PlainLimits, Snapshot};
 pub use store::{
     Action, CHAT_STORE_VERSION, File, History, RecordName, Store, StoreError, StoreFault, StoreLimits, StoreRequest,
     decode_state, decode_turns, save_state, save_turn, turn_name, turn_opens_window,
 };
 pub use terminal::{
     Entered, Event as TerminalEvent, Limits as TerminalLimits, Slash, Terminal, entered, max_out as terminal_max_out,
-    notice_text, run_failure_text, worst_case as terminal_worst_case,
+    notice_text, run_failure_text, valid as terminal_valid,
 };

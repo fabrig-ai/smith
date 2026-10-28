@@ -46,7 +46,6 @@ fn program_invocations_select_spawned_placement_and_the_consumed_producer() {
         let (limits, _) = derive_invocation(&mut resolved, &invocation, skein_lib::Wall::EPOCH, interactive)
             .expect("program invocation checks");
         assert!(matches!(limits.local.agent, smith_local_domain::AgentLimits::Spawned(_)), "program placement");
-        assert!(limits.inline.is_none(), "spawned composition has no inline effects");
         assert_eq!(resolved.agent.memory, MEMORY);
         assert_eq!(resolved.agent.service.limits.events.is_some(), interactive || json);
     }

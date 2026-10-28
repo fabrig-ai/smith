@@ -108,11 +108,6 @@ impl Live {
     pub(crate) const fn lost(&self) -> u64 {
         self.lost
     }
-
-    pub(crate) fn worst_case() -> Option<u64> {
-        Queue::<LivePiece>::worst_case(LIVE_SLOTS)?
-            .checked_add(u64::from(LIVE_SLOTS.checked_add(1)?).checked_mul(u64::from(LIVE_BYTES))?)
-    }
 }
 
 // Sent-unread names share the domain inbox: messages + one completed line.
@@ -154,12 +149,6 @@ impl Timing {
             smith_local_domain::AgentLimits::Spawned(host) => (host.messages.saturating_add(1), host.turns),
             smith_local_domain::AgentLimits::Inline(_) => (0, 0),
         }
-    }
-
-    pub(crate) fn worst_case(limits: &smith_local_domain::AgentLimits) -> Option<u64> {
-        let (messages, turns) = Self::bounds(limits);
-        Queue::<(Token, Time)>::worst_case(messages)?
-            .checked_add(Queue::<(u32, Option<Token>, Time, Duration)>::worst_case(turns)?)
     }
 
     pub(crate) fn activate(&mut self, now: Time) {

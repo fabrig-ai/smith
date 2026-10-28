@@ -2,9 +2,10 @@
 //! Local policy owns durability and delivery; the host kit owns child lifecycle and channel rights. The saved
 //! conversation position continues across activation-local channel turn numbers
 //! (protocol/channel.md, section 5; protocol/hosts.md, section 5.3).
+//! `valid` and `Service::new` keep edge and child composition checks
+//! (domain/host.md, sections 6 and 8), without knowing a process heap total.
 
 use alloc::boxed::Box;
-use core::mem::size_of;
 use skein_io::kernel;
 use skein_lib::{Env, List, Map, Queue, Time, Token, Wall};
 use smith_agent_service as agent_service;
@@ -29,7 +30,6 @@ use crate::process::{Launch, ProcessAdapter, ProcessLimits};
 #[derive(Clone, Debug)]
 pub struct Limits {
     pub local: local::Limits,
-    pub inline: Option<InlineLimits>,
     /// Maximum tagged grant payload bytes retained by the owner.
     pub envelope_bytes: u64,
     pub process: ProcessLimits,
@@ -50,24 +50,6 @@ pub struct Config {
     pub agent: AgentConfig,
 }
 
-/// Receiving bounds of the LLM and machine components for the inline kind.
-#[derive(Clone, Debug)]
-pub struct InlineLimits {
-    /// Complete checked lower-component ownership, including endpoint inventory.
-    pub memory: u64,
-}
-
-impl InlineLimits {
-    /// Price the exact LLM and machine configuration before moving its endpoint inventory.
-    #[must_use]
-    pub fn new(configuration: &agent_service::Config) -> Option<Self> {
-        Some(Self {
-            memory: agent_service::effects_worst_case(&configuration.limits, &configuration.llm_endpoints)?
-                .checked_add(agent_service::io_worst_case(&configuration.limits)?)?,
-        })
-    }
-}
-
 /// Lower configuration chosen with the local agent kind at construction.
 #[derive(Debug)]
 #[expect(
@@ -83,7 +65,7 @@ pub enum AgentConfig {
 
 /// Components below the chosen child, plus common terminal and delivery IO.
 #[derive(Debug)]
-#[expect(clippy::large_enum_variant, reason = "bounded component ownership is priced directly")]
+#[expect(clippy::large_enum_variant, reason = "the selected lower components move once into the service")]
 enum Effects {
     /// The process adapter here owns only common terminal, git and plain-directory IO.
     Inline { agent: agent_service::Effects, local: ProcessAdapter },
@@ -128,77 +110,26 @@ pub enum Error {
     Local(local::Invalid),
     /// Account adoption cannot reserve its shell and terminal output.
     Queue,
-    /// The requested retained bound or directory table cannot be represented.
+    /// The requested edge bound or directory table cannot be represented.
     Memory,
     /// The lower agent or process configuration cannot be composed.
     Process,
 }
 
-/// Checked memory bound for both domains and their routing queues.
+/// Whether local, terminal, process and turn edges can be represented.
 #[must_use]
-pub fn worst_case(limits: &Limits) -> Option<u64> {
-    let mut total = 0_u64;
-    for (_, part) in memory_parts(limits)? {
-        total = total.checked_add(part)?;
-    }
-    Some(total)
-}
-
-/// Local ownership by part, with the inline effects' single IO priced by their admission.
-#[must_use]
-pub fn memory_parts(limits: &Limits) -> Option<[(&'static str, u64); 6]> {
-    let effects = match limits.local.agent {
-        local::AgentLimits::Inline(_) => {
-            let bounds = limits.inline.as_ref()?;
-            bounds.memory
-        }
-        local::AgentLimits::Spawned(_) => {
-            if limits.inline.is_some() {
-                return None;
-            }
-            0
-        }
+pub fn valid(limits: &Limits) -> bool {
+    let framed = match limits.local.agent {
+        local::AgentLimits::Inline(_) => false,
+        local::AgentLimits::Spawned(_) => true,
     };
-
-    let process = ProcessAdapter::memory_parts(
-        &limits.process,
-        match limits.local.agent {
-            local::AgentLimits::Inline(_) => false,
-            local::AgentLimits::Spawned(_) => true,
-        },
-    )?;
-    let terminal = protocol::terminal_worst_case(&protocol::TerminalLimits {
-        line_bytes: limits.local.line_bytes,
-        show_bytes: limits.local.show_bytes,
-    })?;
-    // Internal queues are estimated at queue entries.
-    let routing = Queue::<local::Event>::worst_case(limits.queue)?
-        .checked_add(Queue::<local::Request>::worst_case(limits.queue)?.checked_mul(2)?)?
-        .checked_add(Queue::<host::Input>::worst_case(limits.queue)?)?
-        .checked_add(Queue::<host::process::Request>::worst_case(limits.queue)?)?
-        .checked_add(Queue::<protocol::TerminalEvent>::worst_case(limits.queue)?)?
-        .checked_add(u64::from(limits.queue).checked_mul(u64::try_from(size_of::<local::Event>()).ok()?)?)?
-        .checked_add(Queue::<Box<[u8]>>::worst_case(limits.queue)?)?
-        .checked_add(Map::<u32, smith_protocol_channel::GrantValue>::worst_case(limits.local.smith.accounts)?)?
-        .checked_add(u64::from(limits.local.smith.accounts).checked_mul(limits.envelope_bytes)?)?
-        .checked_add(
-            u64::from(limits.local.smith.run.directories).checked_mul(u64::try_from(size_of::<kernel::Fd>()).ok()?)?,
-        )?
-        .checked_add(Queue::<kernel::Complete>::worst_case(limits.queue)?)?
-        .checked_add(Queue::<kernel::Submit>::worst_case(limits.queue)?)?
-        .checked_add(List::<u32>::worst_case(64)?)?
-        .checked_add(agent::max_turn_bytes(&limits.local.smith)?)?
-        .checked_add(crate::live::Timing::worst_case(&limits.local.agent)?)?
-        .checked_add(u64::try_from(size_of::<Service>()).ok()?)?
-        .checked_add(*process.get(2)?)?;
-    Some([
-        ("local_domain", local::worst_case(&limits.local)?),
-        ("effects_and_io", effects),
-        ("store", *process.first()?),
-        ("terminal", terminal),
-        ("delivery", *process.get(1)?),
-        ("local_routing", routing),
-    ])
+    local::valid(&limits.local)
+        && protocol::terminal_valid(&protocol::TerminalLimits {
+            line_bytes: limits.local.line_bytes,
+            show_bytes: limits.local.show_bytes,
+        })
+        && crate::process::valid(&limits.process, framed)
+        && agent::max_turn_bytes(&limits.local.smith).is_some()
 }
 
 #[derive(Debug)]
@@ -255,7 +186,9 @@ pub struct StartValues {
 impl Service {
     /// Construct the child kind selected by the local limits, without performing IO.
     pub fn new(mut config: Config, seed: u64) -> Result<Self, Error> {
-        worst_case(&config.limits).ok_or(Error::Memory)?;
+        if !valid(&config.limits) {
+            return Err(Error::Memory);
+        }
         let native = match config.agent {
             AgentConfig::Inline { configuration, roots } => {
                 match config.limits.local.agent {
@@ -1257,10 +1190,10 @@ fn inline_effects(
             return Err(Error::Process);
         }
     }
-    let actual = InlineLimits::new(&configuration).ok_or(Error::Memory)?;
-    let advertised = limits.inline.as_ref().ok_or(Error::Memory)?;
-    if actual.memory > advertised.memory {
-        return Err(Error::Memory);
+    if !agent_service::effects_valid(&configuration.limits, &configuration.llm_endpoints)
+        || !agent_service::io_valid(&configuration.limits)
+    {
+        return Err(Error::Process);
     }
     let Ok(mut effects) = agent_service::Effects::new(configuration, seed) else { return Err(Error::Process) };
     let charter = local::charter(local);

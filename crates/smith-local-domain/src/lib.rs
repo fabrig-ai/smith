@@ -65,7 +65,7 @@ pub use config::{Config, Contract, Invalid, Mode, PushTarget, charter};
 pub use domain::{Domain, fire, max_out, resume, step};
 pub use end::EndCause;
 pub use facts::Fact;
-pub use limits::{AgentLimits, Limits, max_line_bytes, worst_case};
+pub use limits::{AgentLimits, Limits, max_line_bytes, valid};
 
 // The credential event exposes these forms to its callers.
 pub use smith_host_domain::{Form, Scheme, SourceName};

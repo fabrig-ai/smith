@@ -136,7 +136,7 @@ pub(crate) fn config() -> Config {
             workspace: None,
             push: None,
         },
-        limits: Limits { local: local_limits, inline: None, envelope_bytes, process, queue, watermark: queue },
+        limits: Limits { local: local_limits, envelope_bytes, process, queue, watermark: queue },
         endpoints: smith_protocol_channel::Endpoints::new(List::with_capacity(0)),
         paths: Box::new([]),
         launch: Launch {
@@ -307,13 +307,12 @@ fn a_local_service_refuses_lower_configuration_for_the_other_agent_kind() {
 }
 
 #[test]
-fn an_inline_service_refuses_an_unpriced_part_of_its_lower_inventory() {
+fn an_inline_service_starts_without_an_envelope() {
     let mut config = colocated_config();
-    let priced = config.limits.inline.as_mut().expect("inline ownership priced");
-    priced.memory = priced.memory.checked_sub(1).expect("nonzero lower ownership");
-    let Err(crate::Error::Memory) = Service::new(config, 96) else {
-        panic!("the actual inventory exceeds its advertised ownership")
-    };
+    let crate::AgentConfig::Inline { configuration, .. } = &mut config.agent else { panic!("inline fixture") };
+    configuration.limits.memory = 0;
+    let service = Service::new(config, 96).expect("inline service needs no memory advertisement");
+    assert!(service.inline());
 }
 
 #[test]
@@ -578,11 +577,6 @@ mod plain {
 
         fn is_empty(&self) -> bool {
             self.process.closed()
-        }
-
-        fn worst_case(&self) -> u64 {
-            // This unchecked real world does not meter heap; retain the service's bound.
-            crate::worst_case(&config().limits).unwrap()
         }
 
         fn operations(&self) -> u32 {
@@ -968,7 +962,6 @@ pub(crate) fn recording_colocated_config() -> (Config, smith_agent_service::Even
     )
     .expect("bounded event stream");
     lower.limits.events = Some(events);
-    config.limits.inline = Some(crate::InlineLimits::new(lower).expect("priced event stream"));
     (config, events)
 }
 
@@ -1090,7 +1083,6 @@ fn colocated_config() -> Config {
         Duration::from_secs(5),
     )
     .expect("bounded inline child");
-    config.limits.inline = Some(crate::InlineLimits::new(&lower).expect("bounded lower configuration"));
     config.limits.queue = config.limits.queue.max(local::max_out(&config.limits.local));
     config.limits.watermark = config.limits.queue;
     config.agent = crate::AgentConfig::Inline { configuration: lower, roots: Box::new([]) };

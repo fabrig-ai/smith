@@ -4,18 +4,12 @@
 use super::{Accounts, Origin, oauth};
 use alloc::boxed::Box;
 use skein_io::file;
-use skein_lib::{List, Time, Token, Wall};
+use skein_lib::{Time, Token, Wall};
 
 pub(super) struct Read {
     root: Token,
     owner: Token,
     subject: Option<Box<[u8]>>,
-}
-
-pub(super) fn worst_case(limits: &oauth::Limits) -> Option<u64> {
-    List::<Read>::worst_case(limits.accounts)?
-        .checked_add(u64::from(limits.accounts).checked_mul(u64::from(limits.client.document.subject_bytes))?)?
-        .checked_add(skein_oauth::worst_case(&limits.client.document)?)
 }
 
 impl Accounts {

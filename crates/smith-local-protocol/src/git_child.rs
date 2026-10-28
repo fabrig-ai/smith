@@ -14,7 +14,6 @@
 //! | Closed | next git action | spawn next command or emit terminal |
 
 use alloc::boxed::Box;
-use core::mem::size_of;
 use skein_io::{self as io, kernel};
 use skein_lib::{List, Queue, Time, Token, stream};
 use smith_local_domain as local;
@@ -50,19 +49,6 @@ pub struct GitChild {
     life: Life,
     timed_out: bool,
     failed: bool,
-}
-
-/// Checked retained bound including the typed git sequence and both pipe captures.
-#[must_use]
-pub fn git_child_worst_case(limits: &GitLimits) -> Option<u64> {
-    crate::git_worst_case(limits)?
-        .checked_add(8192)?
-        // lib.md, section 7: one maximum delivery for each output stream.
-        .checked_add(u64::from(GIT_READ).checked_mul(2)?)?
-        .checked_add(List::<Box<[u8]>>::worst_case(64)?)?
-        .checked_add(List::<u8>::worst_case(limits.output_bytes.checked_add(1)?)?)?
-        .checked_add(List::<u8>::worst_case(limits.detail_bytes)?.checked_mul(2)?)?
-        .checked_add(u64::try_from(size_of::<GitChild>()).ok()?)
 }
 
 impl GitChild {

@@ -12,7 +12,6 @@
 //! | Reading | last clean file | no marker terminal |
 
 use alloc::boxed::Box;
-use core::mem::size_of;
 use skein_io::{file, kernel};
 use skein_lib::{Time, Token};
 use smith_domain::run;
@@ -38,17 +37,6 @@ pub struct Markers {
     next: u32,
     deadline: Time,
     limits: GitLimits,
-}
-
-/// Checked bound for original paths and one whole-file delivery.
-#[must_use]
-pub fn markers_worst_case(limits: &GitLimits) -> Option<u64> {
-    u64::try_from(size_of::<Markers>())
-        .ok()?
-        .checked_add(u64::from(limits.conflicts).checked_mul(u64::try_from(size_of::<Box<[u8]>>()).ok()?)?)?
-        .checked_add(u64::from(limits.conflicts).checked_mul(u64::from(limits.path_bytes))?)?
-        .checked_add(u64::from(limits.path_bytes))?
-        .checked_add(u64::from(limits.output_bytes))
 }
 
 impl Markers {
