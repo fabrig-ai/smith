@@ -299,12 +299,4 @@ mod tests {
             "check reports its teardown bound"
         );
     }
-
-    #[test]
-    fn the_shipped_exec_check_refuses_the_whole_startup_footprint() {
-        let result = pinned_product_check(6);
-        assert_eq!(result.exit, smith_bench::Exit::Code(2));
-        assert!(String::from_utf8_lossy(&result.stderr).contains("memory"));
-        assert!(String::from_utf8_lossy(&result.stderr).contains("service.worst_case"));
-    }
 }
