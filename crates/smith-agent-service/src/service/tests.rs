@@ -400,12 +400,20 @@ fn an_answer_requests_its_close_at_once() {
     }
     teardown::answered(&mut service);
     teardown::advance(&mut service);
-    assert!(matches!(service.teardown, Teardown::Closing { step: Step::Components, .. }));
+    assert_eq!(
+        service.teardown,
+        Teardown::Closing { at: Time::ZERO, answer: Answer::Sent, close: Close::Graceful, step: Step::Components }
+    );
     assert!(service.llm.closed());
     for _ in 0..service.limits.queue {
-        assert!(matches!(service.io_requests.pop(), Some(io::Request::Usage { .. })));
+        let Some(io::Request::Usage { .. }) = service.io_requests.pop() else {
+            panic!("the existing IO requests keep their order")
+        };
     }
-    assert!(matches!(service.io_requests.pop(), Some(io::Request::Close { entity }) if entity == Token::new(11)));
+    let Some(io::Request::Close { entity }) = service.io_requests.pop() else {
+        panic!("the input close is requested immediately")
+    };
+    assert_eq!(entity, Token::new(11));
     assert_eq!(done(&service), None);
 }
 
@@ -556,7 +564,7 @@ fn a_message_waits_at_the_watermark_and_is_taken_once_the_backlog_falls() {
     assert_eq!(service.channel_events.len(), 2, "neither message entered the domain");
     assert!(service.domain_events.is_empty());
     assert_eq!(backlog(&service), u64::from(service.limits.queue));
-    for _ in 0..2 {
+    for _ in 0_u32..2 {
         service.submissions.pop().expect("shell takes two submissions");
     }
     // Inspect this iteration's domain-facing boundary before domain_up consumes it.
@@ -586,12 +594,19 @@ fn an_answer_is_taken_past_the_watermark() {
     assert!(service.channel_events.is_empty());
     assert!(service.llm_events.is_empty());
     assert!(backlog(&service) > u64::from(service.limits.queue));
-    assert!(
-        matches!(service.domain_events.pop(), Some(domain::Event::HostReturned { relay: observed, .. }) if observed == relay)
-    );
-    assert!(matches!(service.domain_events.pop(), Some(domain::Event::Acknowledge { turn: 1, .. })));
-    assert!(matches!(service.domain_events.pop(), Some(domain::Event::Cancel { .. })));
-    assert!(matches!(service.domain_events.pop(), Some(domain::Event::Cancelled { owner }) if owner == Token::new(73)));
+    let Some(domain::Event::HostReturned { relay: observed, .. }) = service.domain_events.pop() else {
+        panic!("host answer advances")
+    };
+    assert_eq!(observed, relay);
+    let Some(domain::Event::Acknowledge { turn, .. }) = service.domain_events.pop() else {
+        panic!("acknowledgement advances")
+    };
+    assert_eq!(turn, 1);
+    let Some(domain::Event::Cancel { .. }) = service.domain_events.pop() else { panic!("cancellation advances") };
+    let Some(domain::Event::Cancelled { owner }) = service.domain_events.pop() else {
+        panic!("provider terminal advances")
+    };
+    assert_eq!(owner, Token::new(73));
 }
 
 #[test]
@@ -609,7 +624,10 @@ fn pending_messages_wait_at_the_watermark() {
     service.submissions.pop().expect("shell takes one submission");
     domain_down(&mut service);
     assert!(service.pending_messages.is_empty());
-    assert!(matches!(service.domain_events.pop(), Some(domain::Event::Message { name, .. }) if name == Token::new(31)));
+    let Some(domain::Event::Message { name, .. }) = service.domain_events.pop() else {
+        panic!("retained message reaches the domain")
+    };
+    assert_eq!(name, Token::new(31));
 }
 
 #[test]
@@ -630,12 +648,13 @@ fn startup_accepts_a_queue_below_its_childrens_max_out() {
     });
     effects.iterate(Time::ZERO, Wall::EPOCH);
     effects.iterate(Time::ZERO, Wall::EPOCH);
-    assert!(
-        matches!(effects.event(), Some(domain::Event::Probed { owner, executable: false }) if owner == Token::new(17))
-    );
+    let Some(domain::Event::Probed { owner, executable: false }) = effects.event() else {
+        panic!("one-entry effects reaches its typed terminal")
+    };
+    assert_eq!(owner, Token::new(17));
     assert!(effects.event().is_none());
     effects.close();
-    for _ in 0..3 {
+    for _ in 0_u32..3 {
         effects.iterate(Time::ZERO, Wall::EPOCH);
     }
     assert!(effects.closed());
