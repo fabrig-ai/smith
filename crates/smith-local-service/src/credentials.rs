@@ -107,7 +107,7 @@ pub fn accounts_valid(limits: &oauth::Limits) -> bool {
     let Some(file_requests) = limits.accounts.checked_mul(2) else { return false };
     limits.accounts.checked_mul(4).is_some()
         && file_requests.checked_add(1).is_some()
-        && crate::process::io_valid(&limits.io)
+        && crate::native_io_valid(&limits.io)
         // Skein's client owns the document/record codec and parser checks.
         && skein_oauth::Client::new(limits.client).is_ok()
         && limits.http.head >= 2

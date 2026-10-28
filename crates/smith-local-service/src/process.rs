@@ -140,7 +140,7 @@ pub(crate) struct ProcessAdapter {
 
 /// IO table capacities and the selected process channel's framing edges.
 pub(crate) fn valid(limits: &ProcessLimits, framed: bool) -> bool {
-    if !io_valid(&limits.io) || !local_protocol::Store::valid(&store_limits()) {
+    if !native_io_valid(&limits.io) || !local_protocol::Store::valid(&store_limits()) {
         return false;
     }
     if framed {
@@ -153,7 +153,9 @@ pub(crate) fn valid(limits: &ProcessLimits, framed: bool) -> bool {
     true
 }
 
-pub(crate) fn io_valid(limits: &io::Limits) -> bool {
+/// Whether native IO is usable and its flight and timer capacities fit (protocol/limits.md, section 3).
+#[must_use]
+pub fn native_io_valid(limits: &io::Limits) -> bool {
     let Some(operations) = io::operations(limits) else { return false };
     limits.is_usable() && operations.checked_mul(2).is_some() && limits.sockets.checked_mul(2).is_some()
 }
@@ -1409,6 +1411,31 @@ fn store_limits() -> local_protocol::StoreLimits {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn invalid_limits_are_refused() {
+        let base = crate::tests::config().limits.process.io;
+        assert!(native_io_valid(&base));
+        let changes: &[fn(&mut io::Limits)] = &[
+            |limits| limits.refusals = 0,
+            |limits| limits.intake = 0,
+            |limits| limits.receive = 0,
+            |limits| limits.output = 0,
+            |limits| limits.sends = 0,
+            |limits| limits.accepts = 0,
+            |limits| limits.retry = skein_lib::Duration::ZERO,
+            |limits| limits.sockets = u32::MAX,
+            |limits| limits.sockets = u32::MAX / 8 + 1,
+        ];
+        for change in changes {
+            let mut invalid = base;
+            change(&mut invalid);
+            assert!(!native_io_valid(&invalid), "invalid native IO: {invalid:?}");
+        }
+        for sockets in [0, u32::MAX / 8] {
+            assert!(native_io_valid(&io::Limits { sockets, ..base }));
+        }
+    }
 
     #[test]
     #[expect(

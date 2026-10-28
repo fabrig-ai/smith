@@ -25,7 +25,7 @@ pub(crate) fn read_prompt(
     limits: io::Limits,
     maximum: u32,
 ) -> Result<Box<[u8]>, Usage> {
-    if io::worst_case(&limits).is_none() {
+    if !smith_local_service::native_io_valid(&limits) {
         return Err(Usage("the prompt phase's IO limits are unusable".into()));
     }
     let mut io = io::Io::new(&limits);
