@@ -65,8 +65,8 @@ impl Referee<Process> for Judge {
                 assert_eq!(exit, Exit::Code(0), "live Smith must exit successfully; diagnostic bytes are withheld");
                 assert!(
                     std::str::from_utf8(binary.stderr()).is_ok_and(|text| text.lines().all(|line| line
-                        .starts_with("smith: local host started; worst case ")
-                        || line.starts_with("smith: agent started; worst case ")
+                        == "smith: local host started"
+                        || line == "smith: agent started"
                         || line == "smith: commands run in process groups and are not contained"
                         || line == "smith: chat chat"
                         || trust_notice(line)

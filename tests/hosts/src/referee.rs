@@ -113,9 +113,7 @@ pub fn review_agent_errors(errors: &[u8], tail: &[u8], answered: bool) {
     assert_eq!(tail, errors, "Gone retains exactly the agent's written diagnostic bytes");
     let text = core::str::from_utf8(errors).expect("agent diagnostic UTF-8");
     assert!(
-        text.starts_with(
-            "smith: commands run in process groups and are not contained\nsmith: agent started; worst case "
-        ),
+        text.starts_with("smith: commands run in process groups and are not contained\nsmith: agent started\n"),
         "the shipped adapter supplied startup"
     );
     if answered {
@@ -123,7 +121,7 @@ pub fn review_agent_errors(errors: &[u8], tail: &[u8], answered: bool) {
     }
     assert!(
         text.lines().all(|line| line == "smith: commands run in process groups and are not contained"
-            || line.starts_with("smith: agent started; worst case ")
+            || line == "smith: agent started"
             || line.starts_with("smith: the run could not answer: ")
             || line.starts_with("smith: run failed: ")
             || line.ends_with(" observations were dropped")),

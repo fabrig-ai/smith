@@ -58,7 +58,6 @@ pub struct Agent {
     submissions: Queue<Submit>,
     closing: u32,
     result: Option<Result<(), String>>,
-    memory: u64,
     started: bool,
     reported: bool,
     worst: u64,
@@ -91,7 +90,6 @@ impl Agent {
         resources: Resources,
         mut errors: Box<dyn Write>,
     ) -> Result<Self, String> {
-        let memory = configuration.memory;
         let prepared = match prepare(configuration, &resources) {
             Ok(prepared) => prepared,
             Err(why) => {
@@ -110,7 +108,6 @@ impl Agent {
             submissions: Queue::with_capacity(prepared.queue),
             closing: 0,
             result: None,
-            memory,
             started: false,
             reported: false,
             worst: prepared.worst,
@@ -377,10 +374,7 @@ impl Host for Agent {
         if !self.started {
             self.started = true;
             diagnostic(self.errors.as_mut(), "commands run in process groups and are not contained");
-            diagnostic(
-                self.errors.as_mut(),
-                &format!("agent started; worst case {} of {} configured bytes", self.worst, self.memory),
-            );
+            diagnostic(self.errors.as_mut(), "agent started");
         }
         if self.result.is_some() && !self.reported {
             self.reported = true;

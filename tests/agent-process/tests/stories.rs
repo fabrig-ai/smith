@@ -100,11 +100,7 @@ fn an_agent_whose_host_hangs_up_before_its_answer_says_so_and_exits_1() {
     assert!(world.answer().is_none());
     assert!(!world.signalled());
     let errors = String::from_utf8(world.errors()).expect("diagnostic UTF-8");
-    assert!(
-        errors.starts_with(
-            "smith: commands run in process groups and are not contained\nsmith: agent started; worst case "
-        )
-    );
+    assert!(errors.starts_with("smith: commands run in process groups and are not contained\nsmith: agent started\n"));
     assert_eq!(errors.lines().last(), Some("smith: the run could not answer: the channel ended before the answer"));
     assert_eq!(errors.lines().count(), 3, "containment, startup and failure each appear once");
     world.assert_agent_clean();
