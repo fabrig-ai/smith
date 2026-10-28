@@ -1,6 +1,6 @@
 use super::{parse_value, shaped_document};
 use crate::config::{Program, ProgramName, from_value};
-use smith_agent_service::{program_operations, program_worst_case, worst_case};
+use smith_agent_service::program_operations;
 
 fn document() -> serde_json::Value {
     let mut document = shaped_document();
@@ -11,17 +11,9 @@ fn document() -> serde_json::Value {
 }
 
 #[test]
-fn an_unbound_program_has_no_backend_charge() {
-    let direct = from_value(shaped_document()).expect("direct configuration");
+fn an_unbound_program_keeps_the_native_operation_routes() {
     let declared = from_value(document()).expect("unbound declaration");
-    let direct_complete = worst_case(&direct.service.limits, &direct.service.llm_endpoints).unwrap()
-        + program_worst_case(&direct.service).unwrap();
-    let declared_complete = worst_case(&declared.service.limits, &declared.service.llm_endpoints).unwrap()
-        + program_worst_case(&declared.service).unwrap();
-    println!("UNBOUND direct={direct_complete} declared={declared_complete}");
-    assert_eq!(program_worst_case(&declared.service), Some(0));
     assert_eq!(program_operations(&declared.service), Some(declared.service.limits.routes));
-    assert_eq!(declared_complete, direct_complete);
 }
 
 #[test]

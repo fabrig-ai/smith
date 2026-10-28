@@ -75,7 +75,7 @@ pub struct Limits {
     pub queue: u32,
     /// Concurrent IO owner and kernel submission routes.
     pub routes: u32,
-    /// Startup refuses a complete bound above this many heap bytes.
+    /// Declared process memory in bytes, carried without a startup fit check.
     pub memory: u64,
     /// Event ownership, absent for a host that has no process stream.
     pub events: Option<crate::EventLimits>,

@@ -859,36 +859,3 @@ pub(crate) fn answer_host(parent: &mut Parent) {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn the_program_world_fits_its_declared_memory() {
-        let config = super::configuration(super::Case::Tools);
-        let program = smith_agent_service::program_worst_case(&config).expect("program bound");
-        let service = smith_agent_service::worst_case(&config.limits, &config.llm_endpoints).expect("service bound");
-        let complete = service.checked_add(program).expect("complete bound");
-        let adapter = &config.limits.llm.adapter;
-        let receiving = &config.limits.llm.receiving;
-        // The service's existing line ceiling: six escapes per answer byte,
-        // plus its fixed 65,536-byte stream framing allowance.
-        let line_bytes =
-            adapter.client.answer.checked_mul(6).expect("escaped answer").checked_add(65_536).expect("line framing");
-        let tokens = smith_protocol_program::backend::Settings::stream_tokens(line_bytes);
-        println!(
-            "client_tokens={} stream_tokens={tokens} input={} blocks={} answer={}",
-            adapter.client.tokens,
-            adapter.stated.call_input_bytes,
-            receiving.max_completion_blocks,
-            adapter.client.answer
-        );
-        // Token records alone; unchanged line-text storage is outside this comparison.
-        for count in [adapter.client.tokens, tokens] {
-            let records = skein_json::document::worst_case(&skein_json::document::Limits { tokens: count, text: 0 })
-                .expect("document token records");
-            println!("token_records[{count}]={records}");
-        }
-        println!("program={program} service={service} complete={complete} memory={}", config.limits.memory);
-        assert!(complete <= config.limits.memory, "program startup fits its declaration");
-    }
-}

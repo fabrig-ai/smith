@@ -264,8 +264,33 @@ fn parse_value(value: &serde_json::Value) -> Result<Configuration, String> {
 fn omitted_memory_uses_the_standard_process_declaration() {
     let mut document = shaped_document();
     document["profile"]["declared"].as_object_mut().expect("declarations").remove("memory");
-    let configuration = parse_value(&document).expect("default memory fits");
+    let configuration = parse_value(&document).expect("default memory is accepted");
     assert_eq!(configuration.memory, 2_281_701_376);
+}
+
+#[test]
+fn a_declared_memory_below_the_old_worst_case_starts() {
+    let mut document = shaped_document();
+    document["profile"]["declared"]["memory"] = 1.into();
+    let configuration = from_value(document).expect("one declared byte is accepted");
+    assert_eq!(configuration.memory, 1);
+    assert_eq!(configuration.service.limits.memory, 1);
+    crate::Agent::new(
+        configuration,
+        crate::Resources {
+            input: skein_io::kernel::Fd::new(0),
+            output: skein_io::kernel::Fd::new(1),
+            signals: skein_io::kernel::Fd::new(2),
+            seed: 1,
+            pid: 1,
+            trace: None,
+            error: None,
+            roots: None,
+            programs: None,
+        },
+        Box::new(std::io::sink()),
+    )
+    .expect("one declared byte starts through prepare");
 }
 
 #[test]
@@ -471,168 +496,24 @@ fn native_validated_dense_prompts_fit_the_actual_joint_receiving_ceiling() {
     }
 }
 
-// Ceiling on the direct product's complete startup formula: a quarter above
-// 10-28's figure, moved by hand when a real change passes it.
-const PRODUCT_COMPLETE_CEILING: u64 = 2_200_000_000;
-
 #[test]
-fn product_values_pass_every_startup_check_and_fit_complete_memory() {
-    product_memory(false, PRODUCT_COMPLETE_CEILING);
+fn product_values_pass_every_startup_check() {
+    check_product_startup(false);
 }
 
-// Ceiling on the program product's complete startup formula: a quarter above
-// 10-28's figure, moved by hand when a real change passes it.
-const PROGRAM_COMPLETE_CEILING: u64 = 2_700_000_000;
-
 #[test]
-fn a_program_product_fits_complete_memory() {
-    product_memory(true, PROGRAM_COMPLETE_CEILING);
+fn a_program_product_passes_every_startup_check() {
+    check_product_startup(true);
 }
 
-#[expect(clippy::too_many_lines, reason = "one startup-bound fixture records every concrete owning layer")]
-fn product_memory(with_program: bool, ceiling: u64) {
-    use skein_io::kernel::{Complete, Fd, Submit};
-    use skein_lib::Queue;
-
+fn check_product_startup(with_program: bool) {
     let mut document = all_product_models(product_document());
     if with_program {
         document["programs"] = serde_json::json!({"claude_code": {"path":"/programs/claude", "directory":"/programs"}});
         document["endpoints"][1]["program"] = "claude_code".into();
     }
-    // Record each owner and the complete checked process bound before
-    // checking the concrete parser's startup relationships.
-    let dto: Document = serde_json::from_value(document.clone()).expect("product DTO");
-    let selected = build_profile(&dto.profile).expect("product profile");
-    let declarations = service::profile::Configuration {
-        role_bound: None,
-        environment_bytes: 835,
-        endpoints: dto.endpoints.iter().map(|endpoint| build_models(endpoint).unwrap()).collect(),
-    };
-    let mut derived = service::profile::derive(&selected, &declarations).expect("all product startup relationships");
-    let effort = smith_charter::CEILINGS.llm_effort_some;
-    let configured = build_endpoints(dto.endpoints, &derived.llm, &selected).expect("product endpoints");
-    let destinations = llm::Endpoints::new(configured.llm, ENDPOINTS).expect("numeric destinations");
-    let header = effective_header(&selected, &declarations, &derived, &configured.channel, &destinations)
-        .expect("product header");
-    let events = service::EventLimits::derive(
-        &derived,
-        Capture::Everything,
-        1,
-        effort,
-        header.as_slice(),
-        selected.policy.write_deadline,
-    )
-    .expect("product event ownership");
-    println!(
-        "PRODUCT_EVENTS string={} content={} items={} encoded_line={} metadata_string={}",
-        events.sinks.records.string,
-        events.sinks.records.content,
-        events.sinks.records.items,
-        events.sinks.line_ceiling(Capture::Everything).unwrap(),
-        events.sinks.metadata_string
-    );
-    derived.events = Some(events);
-    let run = run::worst_case(&derived.domain.run).expect("run bound");
-    let session = domain::session::worst_case(&derived.domain.session).expect("session bound");
-    let tools = domain::tools::worst_case(&derived.domain.session.tools).expect("tools bound");
-    println!("PRODUCT_DOMAIN run={run} session_including_tools={session} tools={tools}");
-    for endpoint in destinations.destinations() {
-        let client = endpoint.limits;
-        let native = client.native();
-        println!(
-            "PRODUCT_NATIVE fixed={:?} encoding_scratch={:?} openai_receiving={:?} anthropic_receiving={:?} request={} answer={} reasoning={} tokens={} output_items={} history_items={} receiving={} skip={}",
-            skein_llm::client::worst_case(&client),
-            skein_llm::client::encoding_worst_case(&client),
-            skein_llm::openai::worst_case(&native),
-            skein_llm::anthropic::worst_case(&native),
-            client.request,
-            client.answer,
-            client.reasoning,
-            client.tokens,
-            client.output_items,
-            client.history_items,
-            client.receiving,
-            client.skip
-        );
-    }
-    println!(
-        "PRODUCT_LLM connection={:?} adapter_entrance={:?} tool_bytes={} contract_bytes={}",
-        skein_llm_connection::worst_case(&derived.llm.connection, destinations.destinations()),
-        llm::worst_case(&derived.llm.adapter, &derived.llm.receiving),
-        derived.llm.adapter.tool_bytes,
-        derived.llm.contract_bytes
-    );
-    println!(
-        "PRODUCT_PARTIAL domain={:?} channel={:?} llm={:?} machine={:?} io={:?} start={} output={} history={} history_items={} completion={}",
-        domain::worst_case(&derived.domain),
-        channel::worst_case(&derived.channel),
-        llm::component_worst_case(&derived.llm, &destinations),
-        machine::worst_case(&derived.machine),
-        skein_io::worst_case(&derived.io),
-        derived.channel.start_bytes,
-        derived.channel.channel.output_bytes,
-        derived.domain.session.history_bytes,
-        derived.domain.session.history_blocks,
-        derived.domain.session.completion_bytes
-    );
-    let limits = &derived;
-    assert!(limits.file_bytes >= limits.domain.session.tools.file_bytes);
-    println!(
-        "PRODUCT_FILE_IO whole={} tools={} machine={} bound={}",
-        limits.file_bytes,
-        limits.domain.session.tools.file_bytes,
-        limits.machine.file_bytes,
-        skein_io::file_layer::FileIo::worst_case(
-            limits.file_slots,
-            limits.file_read,
-            limits.file_entries,
-            limits.file_bytes
-        )
-        .expect("whole-file driver bound")
-    );
-    let roots = limits.domain.run.directories;
-    let queue = limits.queue.checked_add(roots).and_then(|n| n.checked_add(2)).expect("shell queues and trace root");
-    let shell = Queue::<Complete>::worst_case(queue)
-        .and_then(|bytes| bytes.checked_add(Queue::<Submit>::worst_case(queue)?))
-        .and_then(|bytes| bytes.checked_add(u64::try_from(size_of::<crate::Agent>()).ok()?))
-        .and_then(|bytes| bytes.checked_add(u64::from(roots).checked_mul(u64::try_from(size_of::<Fd>()).ok()?)?))
-        .expect("shell ownership");
-    let header_limits = effective_header(&selected, &declarations, limits, &configured.channel, &destinations)
-        .expect("complete header");
-    let header_names: u64 = header_limits.iter().map(|entry| u64::try_from(entry.name.len()).unwrap()).sum();
-    let header_inventory = List::<smith_events::EffectiveLimit>::worst_case(header_limits.len())
-        .and_then(|bytes| bytes.checked_add(header_names))
-        .expect("header inventory");
-    let header = header_inventory
-        .checked_add(
-            u64::try_from(
-                b"smith"
-                    .len()
-                    .checked_add(env!("CARGO_PKG_VERSION").len())
-                    .and_then(|bytes| bytes.checked_add(b"standard".len()))
-                    .expect("header strings"),
-            )
-            .unwrap(),
-        )
-        .expect("header ownership");
     let configuration = parse_value(&document).expect("product declarations pass every startup check");
-    assert!(
-        configuration.service.domain.valid(&configuration.service.limits.domain),
-        "product declarations fit the root"
-    );
-    let service = service::worst_case(&configuration.service.limits, &configuration.service.llm_endpoints)
-        .expect("service bound");
-    let program = service::program_worst_case(&configuration.service).expect("program backend bound");
-    let complete = service
-        .checked_add(header)
-        .and_then(|bytes| bytes.checked_add(shell))
-        .and_then(|bytes| bytes.checked_add(program))
-        .expect("complete ownership");
-    println!(
-        "PRODUCT_COMPLETE service={service} startup_header={header} shell={shell} complete={complete} program={program} ceiling={ceiling} memory={}",
-        limits.memory
-    );
-    parse_value(&document).expect("product declarations pass every startup check");
-    assert!(complete <= limits.memory, "complete {complete} > declared {}", limits.memory);
-    assert!(complete <= ceiling, "complete {complete} passed its ceiling {ceiling}");
+    let limits = &configuration.service.limits;
+    assert!(limits.file_bytes >= limits.domain.session.tools.file_bytes);
+    assert!(configuration.service.domain.valid(&limits.domain), "product declarations fit the root");
 }

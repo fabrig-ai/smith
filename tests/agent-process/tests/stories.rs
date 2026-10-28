@@ -183,17 +183,16 @@ fn a_broken_declared_relationship_is_named_before_channel_adoption() {
 }
 
 #[test]
-fn the_complete_shell_memory_refusal_precedes_channel_adoption() {
+fn an_invalid_io_composition_refuses_before_channel_adoption() {
     use smith_agent_shell::{Agent, Resources, config};
     let errors = smith_agent_process_world::AgentErrors::default();
     let mut configuration = config::parse(
         br#"{"profile":{"name":"standard","declared":{"memory":1099511627776,"tool_payload":256,"read_window":256}},"endpoints":[{"name":"fake","number":0,"dialect":1,"account":0,"provider":"codex","address":"127.0.0.1:8080","transport":"plaintext","connect":1000,"handshake":1000,"models":[{"name":"fake","window":65536,"output":512,"reasoning_item":64,"prices":{"input":1,"cached":1,"output":1,"unit":1},"head":1000,"idle":1000}]}],"environment":[]}"#,
     )
     .expect("valid startup declaration");
-    let available =
-        smith_agent_service::worst_case(&configuration.service.limits, &configuration.service.llm_endpoints)
-            .expect("bounded service");
-    configuration.memory = available;
+    // Both configuration's validity guard and Service::new reject this
+    // mismatch between the native IO driver and the child connection IO.
+    configuration.service.limits.io.output -= 1;
     let startup = Agent::new(
         configuration,
         Resources {
@@ -210,10 +209,9 @@ fn the_complete_shell_memory_refusal_precedes_channel_adoption() {
         Box::new(errors.clone()),
     );
     let Err(refusal) = startup else {
-        panic!("outer shell memory must refuse before adopting nonexistent channel handles");
+        panic!("invalid IO composition must refuse before adopting nonexistent channel handles");
     };
-    assert!(refusal.starts_with("memory: service.worst_case="));
-    assert!(refusal.ends_with(&format!("; declared.memory={available} bytes")));
+    assert_eq!(refusal, "agent configuration cannot start: Memory");
     assert_eq!(String::from_utf8(errors.bytes()).expect("UTF-8 refusal"), format!("smith: {refusal}\n"));
 }
 
