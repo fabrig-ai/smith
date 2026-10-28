@@ -1,6 +1,5 @@
 use super::{parse_value, shaped_document};
-use crate::config::{ConfigurationRefusal, Program, ProgramName, from_value};
-use smith_agent_service::profile::{Check, Refusal};
+use crate::config::{Program, ProgramName, from_value};
 use smith_agent_service::{program_operations, program_worst_case, worst_case};
 
 fn document() -> serde_json::Value {
@@ -58,44 +57,6 @@ fn an_unbound_program_root_is_closed_by_the_shell() {
     agent.completions().push(Complete { op: close.op, kind: close.kind, result: Ok(Done::Nothing) });
     agent.iterate(Time::ZERO, Wall::EPOCH);
     assert!(!agent.submissions().iter().any(|submit| matches!(submit.kind, Op::Close { fd } if fd == Fd::new(3))));
-}
-
-fn million_token_document() -> serde_json::Value {
-    let mut document = document();
-    document["profile"]["declared"].as_object_mut().unwrap().remove("memory");
-    document["endpoints"][0]["models"][0]["window"] = 1_000_000.into();
-    document["endpoints"][0]["models"][0]["output"] = 16_384.into();
-    document
-}
-
-#[test]
-fn an_unbound_million_token_model_fits_default_memory() {
-    let configuration = from_value(million_token_document()).expect("unbound million-token model fits standard memory");
-    let service = worst_case(&configuration.service.limits, &configuration.service.llm_endpoints).unwrap();
-    let program = program_worst_case(&configuration.service).unwrap();
-    println!("MILLION service={service} program={program} complete={}", service + program);
-    assert_eq!(configuration.memory, 2_281_701_376);
-    super::super::check_memory(&configuration.service, configuration.memory).expect("complete admission");
-}
-
-#[test]
-fn a_bound_million_token_model_fits_default_memory() {
-    let mut document = million_token_document();
-    document["endpoints"][0]["program"] = "claude_code".into();
-    let configuration = from_value(document).expect("bound million-token backend fits standard memory");
-    let service = worst_case(&configuration.service.limits, &configuration.service.llm_endpoints).unwrap();
-    let program = program_worst_case(&configuration.service).unwrap();
-    println!("MILLION_BOUND service={service} program={program} complete={}", service + program);
-    assert_eq!(configuration.memory, 2_281_701_376);
-    super::super::check_memory(&configuration.service, configuration.memory).expect("complete admission");
-    assert!(program > 0, "a bound program is charged");
-    let refusal = super::super::check_memory(&configuration.service, service + program - 1)
-        .expect_err("the program's charge enters admission");
-    let ConfigurationRefusal::Profile(Refusal::Broken { check: Check::Memory, left, right }) = refusal else {
-        panic!("expected worst-case memory refusal, got {refusal:?}");
-    };
-    assert_eq!(left.name.field, "worst_case");
-    assert_eq!(right.name.field, "memory");
 }
 
 #[test]

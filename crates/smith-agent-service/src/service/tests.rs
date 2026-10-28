@@ -169,32 +169,6 @@ fn a_colocated_host_gets_typed_machine_terminals_without_an_agent_channel() {
 }
 
 #[test]
-fn startup_counts_file_driver_and_rejects_missing_route_room() {
-    let mut limits = limits();
-    let llm_endpoints = llm::Endpoints::new(Box::new([]), 1).expect("empty endpoint table");
-    assert!(
-        worst_case(&limits, &llm_endpoints).expect("checked memory")
-            > file_layer::FileIo::worst_case(4, 64, 2, 512).expect("file bound")
-    );
-    limits.memory = worst_case(&limits, &llm_endpoints).expect("bound") - 1;
-    let channel_endpoints = channel::Endpoints::new(List::with_capacity(1));
-    let result = Service::new(
-        Config {
-            program: None,
-            limits,
-            domain: domain::Config { programs: Box::new([]), endpoints: Box::new([]), models: Box::new([]) },
-            channel_endpoints,
-            llm_endpoints,
-            environment: machine::Environment::encode(&[], &limits.machine).expect("empty environment fits"),
-            stream_mode: StreamMode::Two,
-        },
-        1,
-    );
-    let error = result.expect_err("startup refusal");
-    assert_eq!(core::mem::discriminant(&error), core::mem::discriminant(&ConfigError::MemoryCeiling));
-}
-
-#[test]
 fn each_grant_value_installs_its_scheme() {
     use channel::GrantValue;
     use skein_llm::Scheme;

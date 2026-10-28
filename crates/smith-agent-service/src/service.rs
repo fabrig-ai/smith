@@ -101,10 +101,8 @@ pub enum ConfigError {
     Io,
     /// A stage cannot reserve its maximum output.
     Queue,
-    /// One checked retained-memory calculation overflowed or is unusable.
+    /// A part cannot be built under the requested limits.
     Memory,
-    /// The complete bound exceeds the configured memory ceiling.
-    MemoryCeiling,
     /// The host channel cannot open under these limits or endpoints.
     Channel(channel::Error),
     /// The LLM pool cannot retain these endpoints or limits.
@@ -272,12 +270,10 @@ impl Service {
         if limits.routes < lower_routes {
             return Err(ConfigError::Queue);
         }
-        let memory = worst_case(&limits, &config.llm_endpoints)
-            .ok_or(ConfigError::Memory)?
-            .checked_add(program_worst_case(&config).ok_or(ConfigError::Memory)?)
-            .ok_or(ConfigError::Memory)?;
-        if memory > limits.memory {
-            return Err(ConfigError::MemoryCeiling);
+        // The parts refuse limits they cannot be built under; each part's
+        // `valid` replaces these sums (dynamic memory 7.6).
+        if worst_case(&limits, &config.llm_endpoints).is_none() || program_worst_case(&config).is_none() {
+            return Err(ConfigError::Memory);
         }
         Self::parts(config, Some(seed))
     }

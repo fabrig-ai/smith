@@ -31,9 +31,10 @@ impl Effects {
         if !config.limits.io.is_usable() || config.limits.file_slots < config.limits.machine.roots {
             return Err(ConfigError::Queue);
         }
-        if effects_worst_case(&config.limits, &config.llm_endpoints).ok_or(ConfigError::Memory)? > config.limits.memory
-        {
-            return Err(ConfigError::MemoryCeiling);
+        // The parts refuse limits they cannot be built under; each part's
+        // `valid` replaces this sum (dynamic memory 7.6).
+        if effects_worst_case(&config.limits, &config.llm_endpoints).is_none() {
+            return Err(ConfigError::Memory);
         }
         let service = Service::parts(config, None)?;
         Ok(Self { service, installed: Map::with_capacity(accounts) })
