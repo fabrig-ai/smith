@@ -254,8 +254,8 @@ fn remap_io_owner(event: io::Event, owner: Token) -> io::Event {
 
 pub(super) fn io_down(service: &mut Service) {
     if let Some(io) = &mut service.io {
-        for _ in 0..service.io_requests.capacity() {
-            if !io.takes() || service.io_submissions.room() < io::MAX_OUT_DOWN.submissions {
+        for _ in 0..service.limits.queue {
+            if !io.takes() {
                 break;
             }
             let request = match service.io_requests.pop() {
@@ -265,8 +265,8 @@ pub(super) fn io_down(service: &mut Service) {
             io::down(io, &service.io_env, request, &mut service.io_submissions);
         }
     }
-    for _ in 0..service.io_submissions.capacity() {
-        if service.submissions.room() == 0 || service.operations.len() >= service.operations.capacity() {
+    for _ in 0..service.limits.queue {
+        if service.operations.len() >= service.operations.capacity() {
             break;
         }
         let submit = match service.io_submissions.pop() {
@@ -275,8 +275,8 @@ pub(super) fn io_down(service: &mut Service) {
         };
         route_submission(service, submit, false);
     }
-    for _ in 0..service.file_submissions.capacity() {
-        if service.submissions.room() == 0 || service.operations.len() >= service.operations.capacity() {
+    for _ in 0..service.limits.queue {
+        if service.operations.len() >= service.operations.capacity() {
             break;
         }
         let submit = match service.file_submissions.pop() {

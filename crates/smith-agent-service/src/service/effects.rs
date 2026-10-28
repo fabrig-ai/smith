@@ -14,8 +14,6 @@ use skein_io::{self as io, kernel};
 use skein_lib::{Id, Map, Queue, Time, Token, Wall};
 use smith_domain::{self as domain, run};
 use smith_protocol_channel as channel;
-use smith_protocol_llm as llm;
-use smith_protocol_machine as machine;
 
 /// Agent LLM and machine effects owned by a host that keeps the domain itself.
 /// Typed requests have typed terminals, with no channel, frames or agent process
@@ -30,13 +28,7 @@ impl Effects {
     /// Build the shared lower stages, retaining neither a root domain nor a channel.
     pub fn new(config: Config, _seed: u64) -> Result<Self, ConfigError> {
         let accounts = config.limits.llm.accounts;
-        if !config.limits.io.is_usable()
-            || config.limits.file_slots < config.limits.machine.roots
-            || config.limits.queue
-                < domain::max_out(&config.limits.domain)
-                    .max(llm::MAX_OUT.above)
-                    .max(machine::max_out(&config.limits.machine).below)
-        {
+        if !config.limits.io.is_usable() || config.limits.file_slots < config.limits.machine.roots {
             return Err(ConfigError::Queue);
         }
         if effects_worst_case(&config.limits, &config.llm_endpoints).ok_or(ConfigError::Memory)? > config.limits.memory
@@ -94,7 +86,7 @@ impl Effects {
         }
     }
 
-    /// Remaining cells for typed IO requests; the owner reserves them before draining.
+    /// Room in the uncapped typed-request queue for the owning host.
     #[must_use]
     pub fn request_room(&self) -> u32 {
         self.service.domain_requests.room()

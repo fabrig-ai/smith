@@ -14,7 +14,6 @@ use smith_protocol_program::{Programs, backend};
 const FIRST: Token = Token::new(u64::MAX - 1024);
 const IO_SLOTS: u32 = 11;
 const FILE_SLOTS: u32 = 3;
-const ROOM: u32 = 32;
 
 /// One configured program selected by the main account's source grant (section 3).
 #[derive(Debug)]
@@ -214,7 +213,7 @@ fn new(
     Ok(Box::new(Program {
         backend: backend::Backend::new(FIRST, settings, &config.entropy),
         endpoints: config.endpoints,
-        below: Queue::with_capacity(ROOM),
+        below: Queue::uncapped(),
         pipes: Map::with_capacity(5),
     }))
 }
@@ -379,17 +378,14 @@ pub(super) fn pop_measure(service: &mut Service) -> Option<llm::Measure> {
     }
 }
 
-pub(super) fn room(service: &Service) -> bool {
+pub(super) fn backlog(service: &Service) -> u32 {
     match &service.program {
-        Some(program) => program.below.room() >= ROOM && service.llm_events.room() > 0,
-        None => true,
+        Some(program) => program.below.len(),
+        None => 0,
     }
 }
 
 pub(super) fn fire(service: &mut Service) {
-    if !room(service) {
-        return;
-    }
     if let Some(program) = &mut service.program {
         match service.teardown {
             super::Teardown::Live => {}
@@ -539,14 +535,9 @@ pub(super) fn down(service: &mut Service) {
         Some(program) => program,
         None => return,
     };
-    for _ in 0..ROOM {
-        if service.io_requests.room() == 0 {
-            break;
-        }
+    for _ in 0..service.limits.queue {
         let waits_for_file = match program.below.iter().next() {
-            Some(backend::Below::File { .. }) => {
-                !service.files.takes() || service.file_submissions.room() < 2 || service.file_events.room() == 0
-            }
+            Some(backend::Below::File { .. }) => !service.files.takes(),
             Some(backend::Below::Io(_)) | None => false,
         };
         if waits_for_file {
@@ -682,7 +673,7 @@ mod tests {
     }
 
     #[test]
-    fn program_io_drains_past_full_file_terminal_storage() {
+    fn program_close_reaches_io_with_pending_file_terminals() {
         let mut configuration = super::super::tests::configuration();
         configuration.program = Some(ProgramBackend {
             program: Programs { claude: b"/claude".as_slice().into(), directory: b"/programs".as_slice().into() },
@@ -699,9 +690,8 @@ mod tests {
             .expect("configured program")
             .below
             .push(backend::Below::Io(io::Request::Close { entity }));
-        for _ in 0..service.file_events.capacity() {
-            service.file_events.push(file::Event::Closed { owner: Token::new(92) });
-        }
+        service.file_events.push(file::Event::Closed { owner: Token::new(92) });
+        assert_eq!(super::super::backlog(&service), 2, "program lower work counts toward admission");
         down(&mut service);
         let io::Request::Close { entity: received } = service.io_requests.pop().expect("program close progresses")
         else {
@@ -709,6 +699,6 @@ mod tests {
         };
         assert_eq!(received, entity);
         assert!(service.program.as_ref().expect("configured program").below.is_empty());
-        assert_eq!(service.file_events.room(), 0, "file terminals still await their consumer");
+        assert_eq!(service.file_events.len(), 1, "file terminals still await their consumer");
     }
 }

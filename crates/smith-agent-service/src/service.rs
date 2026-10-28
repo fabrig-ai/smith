@@ -71,7 +71,7 @@ pub struct Limits {
     pub file_timeout: Duration,
     /// Longest hold before projecting live bytes (protocol/limits.md 2.3).
     pub live_interval: Duration,
-    /// Cells in each queue between layers.
+    /// Backlog watermark and maximum entries drained per iteration at each stage.
     pub queue: u32,
     /// Concurrent IO owner and kernel submission routes.
     pub routes: u32,
@@ -265,18 +265,11 @@ impl Service {
         if !limits.io.is_usable() || limits.io.sockets < 3 || limits.file_slots < limits.machine.roots {
             return Err(ConfigError::Io);
         }
-        let room = domain::max_out(&limits.domain)
-            .max(channel::max_out(&limits.channel).below)
-            .max(machine::max_out(&limits.machine).below)
-            .max(llm::MAX_OUT.above)
-            .max(llm::MAX_OUT.below)
-            .max(io::MAX_OUT_UP.events)
-            .max(io::MAX_OUT_UP.submissions);
         let lower_routes = match io::operations(&limits.io) {
             Some(operations) => operations.checked_add(2).ok_or(ConfigError::Queue)?,
             None => return Err(ConfigError::Queue),
         };
-        if limits.queue < room || limits.routes < lower_routes {
+        if limits.routes < lower_routes {
             return Err(ConfigError::Queue);
         }
         let memory = worst_case(&limits, &config.llm_endpoints)
@@ -331,19 +324,19 @@ impl Service {
             channel_events: Queue::with_capacity(frames),
             pending_messages: Queue::with_capacity(frames),
             channel_below: Queue::with_capacity(frames),
-            llm_events: Queue::with_capacity(limits.queue),
-            llm_below: Queue::with_capacity(limits.queue),
-            machine_events: Queue::with_capacity(limits.queue),
-            machine_below: Queue::with_capacity(limits.queue),
-            domain_events: Queue::with_capacity(limits.queue),
-            domain_requests: Queue::with_capacity(limits.queue),
-            io_events: Queue::with_capacity(limits.queue),
-            io_requests: Queue::with_capacity(limits.queue),
-            file_events: Queue::with_capacity(limits.queue),
-            io_submissions: Queue::with_capacity(limits.queue),
-            file_submissions: Queue::with_capacity(limits.queue),
-            submissions: Queue::with_capacity(limits.queue),
-            completions: Queue::with_capacity(limits.queue),
+            llm_events: Queue::uncapped(),
+            llm_below: Queue::uncapped(),
+            machine_events: Queue::uncapped(),
+            machine_below: Queue::uncapped(),
+            domain_events: Queue::uncapped(),
+            domain_requests: Queue::uncapped(),
+            io_events: Queue::uncapped(),
+            io_requests: Queue::uncapped(),
+            file_events: Queue::uncapped(),
+            io_submissions: Queue::uncapped(),
+            file_submissions: Queue::uncapped(),
+            submissions: Queue::uncapped(),
+            completions: Queue::uncapped(),
             owners: Slab::with_capacity(limits.routes),
             operations: Map::with_capacity(limits.routes),
             next_operation: 1,
@@ -706,10 +699,36 @@ pub fn next_policy_deadline(service: &Service) -> Option<Time> {
     earliest
 }
 
+// Count internal handoffs, including the optional program's lower queue.
+fn backlog(service: &Service) -> u64 {
+    let mut total = u64::from(program::backlog(service));
+    for entries in [
+        service.llm_events.len(),
+        service.llm_below.len(),
+        service.machine_events.len(),
+        service.machine_below.len(),
+        service.domain_events.len(),
+        service.domain_requests.len(),
+        service.io_events.len(),
+        service.io_requests.len(),
+        service.file_events.len(),
+        service.io_submissions.len(),
+        service.file_submissions.len(),
+        service.submissions.len(),
+        service.completions.len(),
+    ] {
+        total = total.checked_add(u64::from(entries)).expect("bounded queue counts fit u64");
+    }
+    total
+}
+
+fn admits(service: &Service) -> bool {
+    backlog(service) < u64::from(service.limits.queue)
+}
+
 /// Whether another iteration can progress without waiting on the kernel.
 #[must_use]
 pub fn work_pending(service: &Service, now: Time) -> bool {
-    let domain_room = service.domain_requests.room() >= domain::max_out(&service.limits.domain);
     let takes = match &service.events {
         Some(events) => events.sinks.takes(),
         None => true,
@@ -729,7 +748,7 @@ pub fn work_pending(service: &Service, now: Time) -> bool {
             None => false,
         }
         || match &service.domain {
-            Some(domain) => takes && (domain.has_facts() || (domain_room && domain.is_ready())),
+            Some(domain) => takes && (domain.has_facts() || domain.is_ready()),
             None => false,
         }
         || !service.completions.is_empty()
@@ -739,7 +758,7 @@ pub fn work_pending(service: &Service, now: Time) -> bool {
         || (!service.pending_messages.is_empty() && service.admitted.is_some())
         || (takes && !service.llm_events.is_empty())
         || !service.machine_events.is_empty()
-        || (takes && domain_room && !service.domain_events.is_empty())
+        || (takes && !service.domain_events.is_empty())
         || (takes && !service.domain_requests.is_empty() && channel_takes(service) && program::requests_ready(service))
         || !service.channel_below.is_empty()
         || program::pending(service)

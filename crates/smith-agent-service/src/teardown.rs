@@ -5,18 +5,16 @@
 
 use skein_lib::{Time, Token};
 use smith_domain as domain;
-use smith_protocol_llm as llm;
 
 use super::{Failure, Operation, Service, USAGE_OWNER};
 use skein_io::{self as io, file, file_layer};
-use smith_protocol_machine as machine;
 
 /// Where the service is in its end, advanced after each routing pass.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Teardown {
     /// The run still owes its answer.
     Live,
-    /// The answer has ended the run; its owned closes wait for output room.
+    /// The run has answered; its closes follow any retained LLM measures.
     Answered { at: Time, answer: Answer, close: Close },
     /// Every owned close has been requested; its reports arrive in order.
     Closing { at: Time, answer: Answer, close: Close, step: Step },
@@ -91,10 +89,7 @@ pub(super) fn failed(service: &mut Service, failure: Failure) {
 }
 
 fn close_room(service: &Service) -> bool {
-    service.io_requests.room() >= 3
-        && service.llm.measures_drained()
-        && service.llm_events.room() >= llm::MAX_OUT.above
-        && service.llm_below.room() >= llm::MAX_OUT.below
+    service.llm.measures_drained()
 }
 
 pub(super) fn components_closed(service: &Service) -> bool {
@@ -121,17 +116,6 @@ fn stream_closed(service: &Service) -> bool {
                 Some(io) => io.is_empty(),
                 None => true,
             })
-}
-
-pub(super) fn shutdown_room(service: &Service) -> bool {
-    let streams = match service.teardown {
-        Teardown::Closing { step: Step::Stream, .. } => match &service.events {
-            Some(events) => events.sinks.open_streams(),
-            None => 0,
-        },
-        Teardown::Live | Teardown::Answered { .. } | Teardown::Closing { .. } | Teardown::Closed { .. } => 0,
-    };
-    service.io_requests.room() >= streams.max(2)
 }
 
 pub(super) fn shutdown(service: &mut Service) {
@@ -197,16 +181,14 @@ pub(super) fn work_pending(service: &Service) -> bool {
         Teardown::Live | Teardown::Closed { .. } | Teardown::Closing { step: Step::Usage, .. } => false,
         Teardown::Answered { .. } => close_room(service),
         Teardown::Closing { step: Step::Components, .. } => {
-            (components_closed(service) && owner_ended(service) && service.io_requests.room() > 0)
+            (components_closed(service) && owner_ended(service))
                 || (!service.roots.is_empty()
                     && service.owners.is_empty()
                     && service.pipe_routes.is_empty()
                     && service.files.takes()
-                    && !service.root_close_pending
-                    && service.file_events.room() > 0
-                    && service.file_submissions.room() >= 2)
+                    && !service.root_close_pending)
         }
-        Teardown::Closing { step: Step::Stream, .. } => stream_closed(service) && service.io_requests.room() > 0,
+        Teardown::Closing { step: Step::Stream, .. } => stream_closed(service),
         Teardown::Closing { step: Step::Signals, .. } => service.signals.is_none() && stream_closed(service),
     }
 }
@@ -250,7 +232,7 @@ pub(super) fn advance(service: &mut Service) {
         }
         Teardown::Closing { at, answer, close, step: Step::Components } => {
             close_roots(service);
-            if components_closed(service) && owner_ended(service) && service.io_requests.room() > 0 {
+            if components_closed(service) && owner_ended(service) {
                 let step = match &service.events {
                     Some(_) => {
                         service.io_requests.push(io::Request::Usage { owner: USAGE_OWNER });
@@ -262,7 +244,7 @@ pub(super) fn advance(service: &mut Service) {
             }
         }
         Teardown::Closing { at, answer, close, step: Step::Stream } => {
-            if stream_closed(service) && service.io_requests.room() > 0 {
+            if stream_closed(service) {
                 match service.signals {
                     Some(entity) => {
                         service.io_requests.push(io::Request::Close { entity });
@@ -281,17 +263,12 @@ pub(super) fn advance(service: &mut Service) {
 }
 
 fn close_roots(service: &mut Service) {
-    if service.machine_below.room() < machine::max_out(&service.limits.machine).below {
-        return;
-    }
     service.machine.close(&mut service.machine_below);
     if service.machine.closed()
         && service.owners.is_empty()
         && service.pipe_routes.is_empty()
         && service.files.takes()
         && !service.root_close_pending
-        && service.file_events.room() > 0
-        && service.file_submissions.room() >= 2
     {
         if service.root_close_next > 0 {
             service.root_close_next = service.root_close_next.checked_sub(1).expect("positive root count");

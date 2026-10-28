@@ -727,13 +727,10 @@ impl Sinks {
         }
     }
 
-    /// Bounded demands, owning sends and closes, within the caller's output room.
+    /// Per-destination demands, owning sends and closes for the caller's IO queue.
     /// Each send is stamped with the owner's clock, from which IO's write deadline runs.
     pub fn down(&mut self, now: Time, out: &mut Queue<io::Request>) {
         for index in 0..self.writers.len() {
-            if out.room() == 0 {
-                return;
-            }
             let writer = self.writers.get_mut(index).expect("bounded destinations");
             match writer.stream {
                 Stream::Waiting => {

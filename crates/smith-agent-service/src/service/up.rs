@@ -16,16 +16,13 @@ use smith_protocol_machine as machine;
 pub(super) fn io_up(service: &mut Service) {
     if let Some(io) = &mut service.io {
         for _ in 0..service.limits.io.sockets {
-            if !io.is_ready()
-                || service.io_events.room() < io::MAX_OUT_RESUME.events
-                || service.io_submissions.room() < io::MAX_OUT_RESUME.submissions
-            {
+            if !io.is_ready() {
                 break;
             }
             io::resume(io, &service.io_env, &mut service.io_events, &mut service.io_submissions);
         }
     }
-    for _ in 0..service.completions.capacity() {
+    for _ in 0..service.limits.queue {
         let complete = match service.completions.pop() {
             Some(complete) => complete,
             None => break,
@@ -50,31 +47,22 @@ pub(super) fn io_up(service: &mut Service) {
     }
     if let Some(io) = &mut service.io {
         for _ in 0..service.limits.io.sockets {
-            if !io.is_due(service.io_env.now)
-                || service.io_events.room() < io::MAX_OUT_FIRE.events
-                || service.io_submissions.room() < io::MAX_OUT_FIRE.submissions
-            {
+            if !io.is_due(service.io_env.now) {
                 break;
             }
             io::fire(io, &service.io_env, &mut service.io_events, &mut service.io_submissions);
         }
     }
-    if service.files.is_due(service.io_env.now) && service.file_submissions.room() >= 2 {
+    if service.files.is_due(service.io_env.now) {
         file_layer::expire(&mut service.files, service.io_env.now, &mut service.file_submissions);
     }
 }
 
 pub(super) fn lower_events(service: &mut Service) {
-    for _ in 0..service.io_events.capacity() {
-        if service.domain_events.room() == 0
-            || (service.channel.is_some()
-                && (service.channel_events.room() < channel::max_out(&service.limits.channel).to_domain
-                    || service.channel_below.room() < channel::max_out(&service.limits.channel).below))
-            || !program::room(service)
-            || service.llm_events.room() < llm::MAX_OUT.above
-            || service.llm_below.room() < llm::MAX_OUT.below
-            || service.machine_events.room() < machine::max_out(&service.limits.machine).to_domain
-            || service.machine_below.room() < machine::max_out(&service.limits.machine).below
+    for _ in 0..service.limits.queue {
+        if service.channel.is_some()
+            && (service.channel_events.room() < channel::max_out(&service.limits.channel).to_domain
+                || service.channel_below.room() < channel::max_out(&service.limits.channel).below)
         {
             break;
         }
@@ -83,7 +71,7 @@ pub(super) fn lower_events(service: &mut Service) {
             None => break,
         };
         let signal_ready = match &event {
-            io::Event::Shutdown { .. } => service.llm.measures_drained() && teardown::shutdown_room(service),
+            io::Event::Shutdown { .. } => service.llm.measures_drained(),
             io::Event::Listening { .. }
             | io::Event::Accepted { .. }
             | io::Event::Connecting { .. }
@@ -108,13 +96,7 @@ pub(super) fn lower_events(service: &mut Service) {
         }
         route_io_event(service, event);
     }
-    for _ in 0..service.file_events.capacity() {
-        if !program::room(service)
-            || service.machine_events.room() < machine::max_out(&service.limits.machine).to_domain
-            || service.machine_below.room() < machine::max_out(&service.limits.machine).below
-        {
-            break;
-        }
+    for _ in 0..service.limits.queue {
         let event = match service.file_events.pop() {
             Some(event) => event,
             None => break,
@@ -137,10 +119,7 @@ pub(super) fn lower_events(service: &mut Service) {
 }
 
 fn machine_up(service: &mut Service) {
-    for _ in 0..service.machine_events.capacity() {
-        if service.domain_events.room() == 0 {
-            break;
-        }
+    for _ in 0..service.limits.queue {
         let event = match service.machine_events.pop() {
             Some(event) => event,
             None => break,
@@ -271,27 +250,34 @@ pub(super) fn component_up(service: &mut Service) {
         Some(at) => at <= service.llm_env.now,
         None => false,
     };
-    if (service.llm.has_work() || llm_due)
-        && service.llm.measures_drained()
-        && service.llm_events.room() >= llm::MAX_OUT.above
-        && service.llm_below.room() >= llm::MAX_OUT.below
-    {
+    if (service.llm.has_work() || llm_due) && service.llm.measures_drained() {
         service.llm.fire(&service.llm_env, &mut service.llm_events, &mut service.llm_below);
     }
     llm_measures(service);
-    let machine_max = machine::max_out(&service.limits.machine);
     let machine_due = match service.machine.next_deadline() {
         Some(at) => at <= service.machine_env.now,
         None => false,
     };
-    if machine_due
-        && service.machine_events.room() >= machine_max.to_domain
-        && service.machine_below.room() >= machine_max.below
-    {
+    if machine_due {
         service.machine.fire(&service.machine_env, &mut service.machine_events, &mut service.machine_below);
     }
     for _ in 0..service.channel_events.capacity() {
-        if service.domain_events.room() == 0 || (service.admitted.is_none() && service.pending_messages.room() == 0) {
+        let waits = match service.channel_events.iter().next() {
+            Some(channel::OpenEvent::Start { .. } | channel::OpenEvent::Message { .. }) => !super::admits(service),
+            Some(
+                channel::OpenEvent::Opened { .. }
+                | channel::OpenEvent::HostReturned { .. }
+                | channel::OpenEvent::Delivered { .. }
+                | channel::OpenEvent::DeliveryUnsent { .. }
+                | channel::OpenEvent::Acknowledged { .. }
+                | channel::OpenEvent::Grant { .. }
+                | channel::OpenEvent::Cancel
+                | channel::OpenEvent::WriteFailed
+                | channel::OpenEvent::Ended { .. },
+            )
+            | None => false,
+        };
+        if waits || (service.admitted.is_none() && service.pending_messages.room() == 0) {
             break;
         }
         let event = match service.channel_events.pop() {
@@ -306,13 +292,12 @@ pub(super) fn component_up(service: &mut Service) {
 
 #[expect(clippy::single_match, reason = "bounded production entries keep explicit Option matches")]
 fn llm_events_up(service: &mut Service) {
-    for _ in 0..service.llm_events.capacity() {
+    for _ in 0..service.limits.queue {
         match &service.events {
             Some(events) if !events.sinks.takes() => break,
             Some(_) | None => {}
         }
         if !service.llm.measures_drained()
-            || service.domain_events.room() == 0
             || (service.channel.is_some()
                 && (service.channel_events.room() < channel::max_out(&service.limits.channel).to_domain
                     || service.channel_below.room() < channel::max_out(&service.limits.channel).below))
@@ -474,12 +459,10 @@ pub(super) fn channel_event(service: &mut Service, event: channel::OpenEvent) {
 
 pub(super) fn domain_up(service: &mut Service) {
     drain_facts(service);
-    let maximum = domain::max_out(&service.limits.domain);
     let facts = domain::max_facts(&service.limits.domain);
     for _ in 0..service.limits.domain.run.conversations {
         if !service.domain.as_ref().expect("framed agent owns its domain").is_ready()
             || service.domain.as_ref().expect("framed agent owns its domain").has_facts()
-            || service.domain_requests.room() < maximum
             || service.domain.as_ref().expect("framed agent owns its domain").facts_room() < facts
         {
             break;
@@ -492,9 +475,8 @@ pub(super) fn domain_up(service: &mut Service) {
         drain_legacy_content(service);
         drain_facts(service);
     }
-    for _ in 0..service.domain_events.capacity() {
-        if service.domain_requests.room() < maximum
-            || service.domain.as_ref().expect("framed agent owns its domain").has_facts()
+    for _ in 0..service.limits.queue {
+        if service.domain.as_ref().expect("framed agent owns its domain").has_facts()
             || service.domain.as_ref().expect("framed agent owns its domain").facts_room() < facts
         {
             break;
@@ -515,7 +497,6 @@ pub(super) fn domain_up(service: &mut Service) {
     }
     if service.domain.as_ref().expect("framed agent owns its domain").is_due(service.domain_env.now)
         && !service.domain.as_ref().expect("framed agent owns its domain").has_facts()
-        && service.domain_requests.room() >= maximum
         && service.domain.as_ref().expect("framed agent owns its domain").facts_room() >= facts
     {
         domain::fire(

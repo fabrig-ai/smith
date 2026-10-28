@@ -1,6 +1,7 @@
 //! The effects' parts and routing capacity (protocol/limits.md, section 5).
 //! These formulas price the containers the selected constructor builds;
 //! root domains, native IO and channels are admitted by their owners.
+//! Internal queues are estimated at limits.queue entries each, their backlog watermark.
 use super::{Effects, Limits, Operation, Owner, PendingMessage};
 use alloc::boxed::Box;
 use skein_channel::Lower as ChannelLower;

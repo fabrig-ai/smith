@@ -392,15 +392,20 @@ fn a_sent_answer_keeps_its_channel_output_right_until_finish() {
 }
 
 #[test]
-fn an_answer_waits_for_room_before_requesting_any_close() {
+fn an_answer_requests_its_close_at_once() {
     let mut service = service();
-    for _ in 0..service.io_requests.capacity() {
+    service.input = Some(Token::new(11));
+    for _ in 0..service.limits.queue {
         service.io_requests.push(io::Request::Usage { owner: Token::new(1) });
     }
     teardown::answered(&mut service);
     teardown::advance(&mut service);
-    assert_eq!(service.teardown, Teardown::Answered { at: Time::ZERO, answer: Answer::Sent, close: Close::Graceful });
-    assert!(!service.llm.closed());
+    assert!(matches!(service.teardown, Teardown::Closing { step: Step::Components, .. }));
+    assert!(service.llm.closed());
+    for _ in 0..service.limits.queue {
+        assert!(matches!(service.io_requests.pop(), Some(io::Request::Usage { .. })));
+    }
+    assert!(matches!(service.io_requests.pop(), Some(io::Request::Close { entity }) if entity == Token::new(11)));
     assert_eq!(done(&service), None);
 }
 
@@ -514,4 +519,167 @@ fn usage_writes_the_session_end_before_the_stream_closes() {
     assert_eq!(done(&service), None);
     teardown::advance(&mut service);
     assert_eq!(done(&service), Some(true));
+}
+
+// Submissions wait at the shell boundary until the test takes them, so the
+// backlog stays at the watermark across a complete service iteration.
+fn at_watermark() -> Service {
+    let mut config = configuration();
+    config.limits.queue = 8;
+    let mut service = Service::new(config, 1).expect("small watermark service");
+    service.admitted = Some(Token::new(9));
+    for number in 0..service.limits.queue {
+        service.submissions.push(kernel::Submit {
+            op: Token::new(u64::from(number)),
+            kind: kernel::Op::Close { fd: kernel::Fd::new(90) },
+        });
+    }
+    assert_eq!(backlog(&service), u64::from(service.limits.queue));
+    service
+}
+
+fn host_message(name: u64) -> channel::OpenEvent {
+    channel::OpenEvent::Message {
+        finish_requested: false,
+        name: Token::new(name),
+        label: Box::from(b"host".as_slice()),
+        text: Box::from(b"hello".as_slice()),
+    }
+}
+
+#[test]
+fn a_message_waits_at_the_watermark_and_is_taken_once_the_backlog_falls() {
+    let mut service = at_watermark();
+    service.channel_events.push(host_message(31));
+    service.channel_events.push(host_message(32));
+    iterate(&mut service, Time::ZERO, Wall::EPOCH);
+    assert_eq!(service.channel_events.len(), 2, "neither message entered the domain");
+    assert!(service.domain_events.is_empty());
+    assert_eq!(backlog(&service), u64::from(service.limits.queue));
+    for _ in 0..2 {
+        service.submissions.pop().expect("shell takes two submissions");
+    }
+    // Inspect this iteration's domain-facing boundary before domain_up consumes it.
+    component_up(&mut service);
+    assert!(service.channel_events.is_empty());
+    for expected in [31, 32] {
+        let Some(domain::Event::Message { run, name, .. }) = service.domain_events.pop() else {
+            panic!("message reaches the domain in host order")
+        };
+        assert_eq!(run, Token::new(9));
+        assert_eq!(name, Token::new(expected));
+    }
+}
+
+#[test]
+fn an_answer_is_taken_past_the_watermark() {
+    let mut service = at_watermark();
+    // These advance previously admitted work and can increase the backlog.
+    let relay = run::RelayName { owner: Token::new(5), attempt: 1 };
+    service
+        .channel_events
+        .push(channel::OpenEvent::HostReturned { relay, reply: run::HostReply::Unanswered(run::Unanswered::Lost) });
+    service.channel_events.push(channel::OpenEvent::Acknowledged { turn: 1 });
+    service.channel_events.push(channel::OpenEvent::Cancel);
+    service.llm_events.push(llm::ToDomain::Cancelled { owner: Token::new(73) });
+    component_up(&mut service);
+    assert!(service.channel_events.is_empty());
+    assert!(service.llm_events.is_empty());
+    assert!(backlog(&service) > u64::from(service.limits.queue));
+    assert!(
+        matches!(service.domain_events.pop(), Some(domain::Event::HostReturned { relay: observed, .. }) if observed == relay)
+    );
+    assert!(matches!(service.domain_events.pop(), Some(domain::Event::Acknowledge { turn: 1, .. })));
+    assert!(matches!(service.domain_events.pop(), Some(domain::Event::Cancel { .. })));
+    assert!(matches!(service.domain_events.pop(), Some(domain::Event::Cancelled { owner }) if owner == Token::new(73)));
+}
+
+#[test]
+fn pending_messages_wait_at_the_watermark() {
+    let mut service = at_watermark();
+    service.pending_messages.push(PendingMessage {
+        finish_requested: false,
+        name: Token::new(31),
+        label: Box::from(b"host".as_slice()),
+        text: Box::from(b"hello".as_slice()),
+    });
+    domain_down(&mut service);
+    assert_eq!(service.pending_messages.len(), 1);
+    assert!(service.domain_events.is_empty());
+    service.submissions.pop().expect("shell takes one submission");
+    domain_down(&mut service);
+    assert!(service.pending_messages.is_empty());
+    assert!(matches!(service.domain_events.pop(), Some(domain::Event::Message { name, .. }) if name == Token::new(31)));
+}
+
+#[test]
+fn startup_accepts_a_queue_below_its_childrens_max_out() {
+    let mut config = configuration();
+    config.limits.queue = 1;
+    let service = Service::new(config, 1).expect("one-entry watermark builds");
+    assert_eq!(service.channel_below.capacity(), 1, "host edge stays capped");
+    // Effects exercises the same constructors and stages without the channel's
+    // retained six-cell edge reservation, which a one-cell frame queue cannot meet.
+    let mut config = configuration();
+    config.limits.queue = 1;
+    let mut effects = Effects::new(config, 1).expect("one-entry effects builds");
+    effects.request(domain::Request::Probe {
+        owner: Token::new(17),
+        at: run::Place { root: Token::new(19), path: Box::from(b"checks".as_slice()) },
+        deadline: Time::from_nanos(50),
+    });
+    effects.iterate(Time::ZERO, Wall::EPOCH);
+    effects.iterate(Time::ZERO, Wall::EPOCH);
+    assert!(
+        matches!(effects.event(), Some(domain::Event::Probed { owner, executable: false }) if owner == Token::new(17))
+    );
+    assert!(effects.event().is_none());
+    effects.close();
+    for _ in 0..3 {
+        effects.iterate(Time::ZERO, Wall::EPOCH);
+    }
+    assert!(effects.closed());
+}
+
+#[test]
+fn a_start_waits_at_the_watermark_before_attaching_its_roots() {
+    let mut service = at_watermark();
+    service.admitted = None;
+    service.channel_events.push(channel::OpenEvent::Start {
+        start: Box::new(channel::DecodedStart {
+            live: None,
+            identity: None,
+            messages: Box::default(),
+            activation: 1,
+            charter: smith_agent_world::scripted_charter(&smith_agent_world::Settings::calm(1)),
+            mounts: Some(Box::new([channel::Mount {
+                name: Box::from(b"work".as_slice()),
+                path: Box::from(b"/work".as_slice()),
+                writable: false,
+                git: false,
+                conflicts: Box::default(),
+            }])),
+            transcript: None,
+            answered: Box::default(),
+            grants: Box::default(),
+            window: domain::Window { turns: 8, bytes: 4096 },
+        }),
+    });
+    iterate(&mut service, Time::ZERO, Wall::EPOCH);
+    assert_eq!(service.channel_events.len(), 1);
+    assert!(service.root_to_open().is_none());
+    service.submissions.pop().expect("shell takes one submission");
+    iterate(&mut service, Time::ZERO, Wall::EPOCH);
+    assert!(service.channel_events.is_empty());
+    assert_eq!(service.root_to_open(), Some(b"/work".as_slice()));
+}
+
+#[test]
+fn an_uncapped_drain_stops_at_the_iterations_work_bound() {
+    let mut service = at_watermark();
+    for _ in 0..=service.limits.queue {
+        service.io_events.push(io::Event::Resized);
+    }
+    lower_events(&mut service);
+    assert_eq!(service.io_events.len(), 1, "one iteration drains only queue entries");
 }

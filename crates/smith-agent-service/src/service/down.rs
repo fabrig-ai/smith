@@ -10,7 +10,6 @@ use skein_io::{self as io, file, file_layer, kernel};
 use skein_lib::stream;
 use smith_domain as domain;
 use smith_protocol_channel as channel;
-use smith_protocol_llm as llm;
 use smith_protocol_machine as machine;
 
 pub(super) fn domain_down(service: &mut Service) {
@@ -20,10 +19,9 @@ pub(super) fn domain_down(service: &mut Service) {
         Some(_) | None => {}
     }
     let channel_max = channel::max_out(&service.limits.channel);
-    let machine_max = machine::max_out(&service.limits.machine);
     if let Some(run) = service.admitted {
         for _ in 0..service.pending_messages.capacity() {
-            if service.domain_events.room() == 0 {
+            if !super::admits(service) {
                 break;
             }
             let PendingMessage { finish_requested, name, label, text } = match service.pending_messages.pop() {
@@ -33,7 +31,7 @@ pub(super) fn domain_down(service: &mut Service) {
             service.domain_events.push(domain::Event::Message { finish_requested, run, name, label, text });
         }
     }
-    for _ in 0..service.domain_requests.capacity() {
+    for _ in 0..service.limits.queue {
         match &service.events {
             Some(events) if !events.sinks.takes() => break,
             Some(_) | None => {}
@@ -43,11 +41,6 @@ pub(super) fn domain_down(service: &mut Service) {
             || (service.channel.is_some()
                 && (service.channel_events.room() < channel_max.to_domain
                     || service.channel_below.room() < channel_max.below))
-            || !program::room(service)
-            || service.llm_events.room() < llm::MAX_OUT.above
-            || service.llm_below.room() < llm::MAX_OUT.below
-            || service.machine_events.room() < machine_max.to_domain
-            || service.machine_below.room() < machine_max.below
         {
             break;
         }
@@ -61,7 +54,7 @@ pub(super) fn domain_down(service: &mut Service) {
         domain_request(service, request);
     }
     match service.admitted {
-        Some(run) if service.cancel_pending && service.domain_events.room() > 0 => {
+        Some(run) if service.cancel_pending => {
             service.domain_events.push(domain::Event::Cancel { run });
             service.cancel_pending = false;
         }
@@ -121,9 +114,6 @@ pub(super) fn drain_facts(service: &mut Service) {
 #[expect(clippy::too_many_lines, reason = "bounded lower routing stays in one down-pass stage")]
 pub(super) fn component_down(service: &mut Service) {
     for _ in 0..service.channel_below.capacity() {
-        if service.io_requests.room() == 0 {
-            break;
-        }
         let request = match service.channel_below.pop() {
             Some(request) => request,
             None => break,
@@ -147,10 +137,7 @@ pub(super) fn component_down(service: &mut Service) {
         }
     }
     program::down(service);
-    for _ in 0..service.llm_below.capacity() {
-        if service.io_requests.room() == 0 {
-            break;
-        }
+    for _ in 0..service.limits.queue {
         let request = match service.llm_below.pop() {
             Some(request) => request,
             None => break,
@@ -173,10 +160,7 @@ pub(super) fn component_down(service: &mut Service) {
             | io::Request::Abort { .. }) => service.io_requests.push(other),
         }
     }
-    for _ in 0..service.machine_below.capacity() {
-        if service.io_requests.room() == 0 || service.file_submissions.room() < 2 || service.file_events.room() == 0 {
-            break;
-        }
+    for _ in 0..service.limits.queue {
         let waits_for_file = match service.machine_below.iter().next() {
             Some(
                 machine::Below::File { .. } | machine::Below::OpenRead { .. } | machine::Below::OpenDirectory { .. },
