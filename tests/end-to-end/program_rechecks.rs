@@ -12,8 +12,8 @@ fn setup(status: &Value) -> Scratch {
         scratch.path().join("state/smith/programs/work/fake-claude.story"),
         serde_json::to_vec(&json!({
             "summary":"earlier answer", "status":status, "login":{"Immediate":"claude.ai"}, "logout":"Succeeds",
-            "turns":[{"steps":[{"Call":{
-                "tool":"finish", "input":{"form":"report","text":ANSWER,"fields":{}}
+            "turns":[{"steps":[{"Outcome":{
+                "input":{"outcome":{"form":"report","text":ANSWER,"fields":{}}}
             }}]}]
         }))
         .expect("program story"),

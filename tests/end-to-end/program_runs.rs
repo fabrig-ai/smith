@@ -32,7 +32,7 @@ fn signed_in(story: &Value) -> Scratch {
 }
 
 fn answer() -> Value {
-    json!({"steps":[{"Text":TOLD_TEXT}, {"Call":{"tool":"finish","input":{"form":"report","text":ANSWER,"fields":{}}}}]})
+    json!({"steps":[{"Text":TOLD_TEXT}, {"Outcome":{"input":{"outcome":{"form":"report","text":ANSWER,"fields":{}}}}}]})
 }
 
 fn invocations(scratch: &Scratch) -> Vec<Value> {
@@ -66,11 +66,11 @@ fn a_program_run_never_sees_the_person_s_credential_variables() {
         super::program_commands::credential_free(&call);
     }
     assert!(
-        bytes.split(|byte| *byte == b'\n').filter(|line| !line.is_empty()).any(|line| {
+        !bytes.split(|byte| *byte == b'\n').filter(|line| !line.is_empty()).any(|line| {
             let record: Value = serde_json::from_slice(line).expect("observation record");
             record["seen"]["Called"]["tool"] == "finish"
         }),
-        "finish is settled; the stop can interrupt before its MCP verdict is read"
+        "a contract outcome never calls finish over MCP"
     );
 }
 
@@ -213,7 +213,7 @@ fn a_program_chat_completes_its_live_view() {
     let text = "Live settled text";
     let scratch = signed_in(&json!({"steps":[{"Text":text},
         {"Builtin":{"tool":"Read","input":{"file_path":"README.md"},"result":"file bytes"}},
-        {"Call":{"tool":"finish","input":{"form":"report","text":ANSWER,"fields":{}}}}
+        {"Outcome":{"input":{"outcome":{"form":"report","text":ANSWER,"fields":{}}}}}
     ]}));
     let ran = support::program_chat(
         &scratch,

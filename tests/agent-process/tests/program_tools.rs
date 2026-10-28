@@ -333,10 +333,9 @@ fn a_finite_thinking_turn_calls_then_replies_once() {
     let run = run(&thinking_story());
     accepted(&run);
     thinking_reply(&run, FINITE_THINKING_MESSAGES, FINITE_THINKING_SPEND);
-    let result =
-        told_result(&run, b"StructuredOutput", &json!({"outcome":{"form":"report","text":"done","fields":{}}}));
+    let result = told_result(&run, b"finish", &json!({"form":"report","text":"done","fields":{}}));
     let smith_transcript::Returned::Said(said) = result.returned() else { panic!("program result") };
-    assert_eq!(said.text(), b"Structured output accepted");
+    assert_eq!(said.text(), b"accepted");
     assert!(!said.error());
 }
 

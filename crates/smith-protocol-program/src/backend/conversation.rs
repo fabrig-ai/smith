@@ -329,25 +329,8 @@ impl Backend {
                     match call {
                         llm::Decoded::Builtin { .. } => {}
                         llm::Decoded::Owned { .. } | llm::Decoded::Served { .. } | llm::Decoded::Invalid { .. } => {
-                            let unwrapped;
-                            let decoded_input =
-                                if name.as_ref() == b"finish" && id.as_ref() != b"smith-structured-finish" {
-                                    unwrapped = match stream::collect(
-                                        input,
-                                        self.settings.adapter.client.depth,
-                                        self.settings.adapter.stated.call_input_bytes,
-                                    ) {
-                                        Some(document) => {
-                                            json::outcome_input(&document, 0, self.settings.adapter.client.answer)
-                                        }
-                                        None => None,
-                                    };
-                                    unwrapped.as_deref().unwrap_or(b"null")
-                                } else {
-                                    input.as_ref()
-                                };
                             *call =
-                                decode(name, decoded_input, prompt, outcome, deliver.as_ref(), &self.settings.adapter);
+                                decode_call(id, name, input, prompt, outcome, deliver.as_ref(), &self.settings.adapter);
                         }
                     }
                     decoded = match call.owned_bytes() {
@@ -487,7 +470,7 @@ impl Backend {
 fn register_blocks(ledger: &mut List<calls::Call>, blocks: &[llm::Said], message: u64) -> Option<()> {
     for block in blocks {
         match block {
-            llm::Said::ToolCall { id, name, input, call, .. } if id.as_ref() != b"smith-structured-finish" => {
+            llm::Said::ToolCall { id, name, input, call, .. } if id.as_ref() != turns::STRUCTURED_FINISH => {
                 let mut known = false;
                 for call in ledger.iter() {
                     if call.id == *id {
@@ -524,6 +507,28 @@ fn register_blocks(ledger: &mut List<calls::Call>, blocks: &[llm::Said], message
         }
     }
     Some(())
+}
+
+fn decode_call(
+    id: &[u8],
+    name: &[u8],
+    input: &[u8],
+    prompt: &llm::Prompt,
+    outcome: &run::outcome::OutcomeSpec,
+    deliver: Option<&run::outcome::ChangeSpec>,
+    limits: &protocol::Limits,
+) -> llm::Decoded {
+    let unwrapped;
+    let decoded_input = if name == b"finish" && id != turns::STRUCTURED_FINISH {
+        unwrapped = match stream::collect(input, limits.client.depth, limits.stated.call_input_bytes) {
+            Some(document) => json::outcome_input(&document, 0, limits.client.answer),
+            None => None,
+        };
+        unwrapped.as_deref().unwrap_or(b"null")
+    } else {
+        input
+    };
+    decode(name, decoded_input, prompt, outcome, deliver, limits)
 }
 
 fn decode(

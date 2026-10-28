@@ -1,6 +1,7 @@
 #![expect(
     clippy::disallowed_methods,
     clippy::disallowed_macros,
+    clippy::disallowed_types,
     reason = "ordinary backend harness, programming-model.md 10.2"
 )]
 use super::lifecycle_tests::{backend, env, request};
@@ -164,31 +165,33 @@ fn a_contract_init_refuses_duplicate_structured_output() {
     failed(up.pop(), b"smith: the program offers a built-in tool the run did not grant: StructuredOutput");
 }
 
-#[test]
-fn structured_output_uses_the_programs_result_before_finish() {
-    use smith_domain::run::outcome::{Declared, Report};
+const STRUCTURED_CALL: &[u8] = br#"{"type":"assistant","message":{"id":"structured","content":[{"type":"tool_use","id":"s","name":"StructuredOutput","input":{"outcome":{"form":"report","text":"draft","fields":{}}}}],"usage":{"input_tokens":13,"output_tokens":7}}}"#;
 
+fn held_structured_output() -> (Backend, Queue<ToDomain>, Queue<Below>) {
     let mut backend = active();
     backend.request = Some(report_request(&backend));
     let mut up = Queue::with_capacity(32);
     let mut below = Queue::with_capacity(64);
-    backend.line(&env(0), br#"{"type":"assistant","message":{"id":"structured","content":[{"type":"tool_use","id":"s","name":"StructuredOutput","input":{"outcome":{"form":"report","text":"done","fields":{}}}}]}}"#, &mut up, &mut below);
+    backend.line(&env(0), STRUCTURED_CALL, &mut up, &mut below);
+    (backend, up, below)
+}
+
+#[test]
+fn structured_output_is_the_finish_from_its_result() {
+    use smith_domain::run::outcome::{Declared, Report};
+
+    let (mut backend, mut up, mut below) = held_structured_output();
     assert!(up.is_empty(), "the outcome waits for its turn result");
     backend.line(&env(0), br#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"s","content":"accepted","is_error":false}]}}"#, &mut up, &mut below);
-    assert!(up.is_empty(), "the program-owned result waits for its completion owner");
+    assert!(up.is_empty(), "the program-owned result creates no domain event");
     backend.line(&env(0), br#"{"type":"result","subtype":"success","is_error":false,"structured_output":{"outcome":{"form":"report","text":"done","fields":{}}}}"#, &mut up, &mut below);
     let Some(ToDomain::Completed { owner, completion }) = up.pop() else { panic!("structured finish") };
     assert_eq!(owner, Token::new(80));
-    let [llm::Said::ToolCall { name: builtin_name, input, call: builtin, .. }, llm::Said::ToolCall { name, call, .. }] =
-        completion.content.as_ref()
-    else {
-        panic!("builtin and finish")
-    };
-    assert_eq!(builtin_name.as_ref(), b"StructuredOutput");
-    assert_eq!(input.as_ref(), br#"{"outcome":{"form":"report","text":"done","fields":{}}}"#);
-    assert_eq!(*builtin, llm::Decoded::Builtin { effect: Effect::Write });
-    assert!(!backend.awaits_answer(b"s"), "the domain has no call to answer");
+    let [llm::Said::ToolCall { name, input, call, .. }] = completion.content.as_ref() else { panic!("finish alone") };
     assert_eq!(name.as_ref(), b"finish");
+    assert_eq!(input.as_ref(), br#"{"form":"report","text":"done","fields":{}}"#);
+    assert_eq!(completion.usage.input_tokens, Some(13));
+    assert_eq!(completion.usage.output_tokens, Some(7));
     assert_eq!(
         *call,
         llm::Decoded::Served {
@@ -197,14 +200,27 @@ fn structured_output_uses_the_programs_result_before_finish() {
             }
         }
     );
-    let Some(ToDomain::BuiltinResult { id, text, error, owner }) = up.pop() else { panic!("program result") };
-    assert_eq!(owner, Token::new(80));
-    assert_eq!(id.as_ref(), b"s");
-    assert_eq!(text.as_ref(), b"accepted");
-    assert!(!error);
-    assert!(up.is_empty());
+    assert!(backend.ledger.is_empty(), "no workspace call or result is owed");
+    assert!(up.is_empty(), "no BuiltinResult or second completion");
     assert!(below.is_empty(), "neither a permission prompt nor an MCP answer");
     assert_eq!(backend.phase, Phase::Running);
+}
+
+#[test]
+fn a_structured_call_without_its_wrapped_outcome_fails() {
+    for result in [
+        serde_json::json!({"type":"result","is_error":false}),
+        serde_json::json!({"type":"result","is_error":false,"structured_output":null}),
+        serde_json::json!({"type":"result","is_error":false,"structured_output":{}}),
+        serde_json::json!({"type":"result","is_error":false,"structured_output":{"outcome":{},"extra":true}}),
+    ] {
+        let (mut backend, mut up, mut below) = held_structured_output();
+        let line = serde_json::to_vec(&result).expect("result JSON");
+        backend.line(&env(0), &line, &mut up, &mut below);
+        let Some(ToDomain::Failed { .. }) = up.pop() else { panic!("missing outcome fails") };
+        assert_eq!(backend.phase, Phase::Ending);
+        assert!(up.is_empty(), "the held call was never delivered as a built-in");
+    }
 }
 
 fn report_request(backend: &Backend) -> FromDomain {
