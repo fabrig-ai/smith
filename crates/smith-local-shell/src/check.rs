@@ -352,7 +352,7 @@ fn derive_invocation(
     .map_err(|why| String::from_utf8_lossy(&smith_agent_service::profile::words(&why)).into_owned())?;
     let mut limits = crate::compose::service_limits(resolved.limits.clone(), host, &resolved.agent.service)?;
     if interactive {
-        interactive_header(resolved, &mut limits, result_file)?
+        interactive_header(resolved, &mut limits, result_file)?;
     } else {
         crate::compose::prepare_stream(
             &mut resolved.agent,
