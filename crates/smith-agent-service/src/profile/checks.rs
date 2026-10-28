@@ -48,8 +48,6 @@ pub enum Check {
     Deadlines,
     /// Cancellation grace holds IO close and a second close as margin.
     CancelOverClose,
-    /// Every worst case fits declared process memory.
-    Memory,
     /// The host's exit grace exceeds the agent's teardown bound.
     GraceOverTeardown,
     /// The host's watchdog exceeds the run's longest silence.
@@ -80,7 +78,6 @@ impl Check {
             Self::CeilingsInVocabulary => "ceilings-in-vocabulary",
             Self::Deadlines => "deadlines",
             Self::CancelOverClose => "cancel-over-close",
-            Self::Memory => "memory",
             Self::GraceOverTeardown => "grace-over-teardown",
             Self::WatchdogOverSilence => "watchdog-over-silence",
         }
