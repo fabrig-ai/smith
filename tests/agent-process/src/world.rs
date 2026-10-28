@@ -390,9 +390,6 @@ impl Host for Parent {
             && self.submissions.is_empty()
             && self.completions.is_empty()
     }
-    fn worst_case(&self) -> u64 {
-        134_217_728
-    }
     fn operations(&self) -> u32 {
         16
     }
@@ -469,13 +466,6 @@ impl Host for Proc {
     }
     fn exit(&self) -> Option<kernel::Exit> {
         self.host().exit()
-    }
-    fn worst_case(&self) -> u64 {
-        self.host()
-            .worst_case()
-            .checked_add(size_of::<Self>() as u64)
-            .and_then(|bound| bound.checked_add(4096))
-            .expect("wrapper bound")
     }
     fn operations(&self) -> u32 {
         self.host().operations()

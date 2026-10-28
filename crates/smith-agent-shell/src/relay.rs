@@ -264,16 +264,6 @@ impl Host for Process {
     fn exit(&self) -> Option<Exit> {
         if self.is_empty() { self.code.map(Exit::Code) } else { None }
     }
-    fn worst_case(&self) -> u64 {
-        io::worst_case(&limits())
-            .expect("relay I/O memory")
-            .checked_add(Queue::<Complete>::worst_case(QUEUE).expect("completion queue"))
-            .and_then(|size| size.checked_add(Queue::<Submit>::worst_case(QUEUE)?))
-            .and_then(|size| size.checked_add(Queue::<Event>::worst_case(QUEUE)?))
-            .and_then(|size| size.checked_add(Queue::<Request>::worst_case(QUEUE)?))
-            .and_then(|size| size.checked_add(65_536))
-            .expect("relay memory bound")
-    }
     fn operations(&self) -> u32 {
         operations()
     }

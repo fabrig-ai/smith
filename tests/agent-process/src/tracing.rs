@@ -16,7 +16,6 @@ pub(super) struct Tracing {
     submissions: Queue<Submit>,
     closing: u32,
     result: Option<bool>,
-    memory: u64,
     opening: Option<Fd>,
     next: u64,
     started: bool,
@@ -50,15 +49,6 @@ impl Tracing {
         let header =
             effective_header(&configuration.limits, &configuration.channel_endpoints, &configuration.llm_endpoints);
         let queue = configuration.limits.queue;
-        let memory = agent::worst_case(&configuration.limits, &configuration.llm_endpoints)
-            .expect("bounded actual service")
-            .checked_add(u64::try_from(size_of::<Self>()).expect("observer cells"))
-            .and_then(|bound| bound.checked_add(Queue::<Complete>::worst_case(queue)?))
-            .and_then(|bound| bound.checked_add(Queue::<Submit>::worst_case(queue)?))
-            .and_then(|bound| bound.checked_add(List::<smith_events::EffectiveLimit>::worst_case(header.len())?))
-            .and_then(|bound| bound.checked_add(header.iter().map(|entry| entry.name.len() as u64).sum::<u64>()))
-            .and_then(|bound| bound.checked_add(64))
-            .expect("observer ownership");
         let mut service = Service::new(configuration, 7).expect("bounded observed service");
         let pipe = |child| inherited.pipes.iter().find(|(number, _)| *number == child).expect("inherited pipe").1;
         service.adopt_streams(pipe(0), pipe(1), inherited.signal).expect("service streams");
@@ -86,7 +76,6 @@ impl Tracing {
             submissions,
             closing: 0,
             result: None,
-            memory,
             opening: Some(root),
             next: u64::MAX - 1,
             started: false,
@@ -205,10 +194,6 @@ impl Host for Tracing {
 
     fn exit(&self) -> Option<kernel::Exit> {
         if self.is_empty() { self.result.map(|answered| kernel::Exit::Code(u8::from(!answered))) } else { None }
-    }
-
-    fn worst_case(&self) -> u64 {
-        self.memory
     }
 
     fn operations(&self) -> u32 {

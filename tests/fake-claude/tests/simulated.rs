@@ -383,9 +383,6 @@ mod no_stdin {
         fn is_empty(&self) -> bool {
             self.root_closed && self.io.is_empty() && self.completions.is_empty() && self.submissions.is_empty()
         }
-        fn worst_case(&self) -> u64 {
-            1_048_576
-        }
         fn operations(&self) -> u32 {
             io::operations(&self.env.limits).expect("parent operations") + 1
         }
@@ -435,9 +432,6 @@ mod no_stdin {
         }
         fn exit(&self) -> Option<kernel::Exit> {
             self.host().exit()
-        }
-        fn worst_case(&self) -> u64 {
-            self.host().worst_case() + 4096
         }
         fn operations(&self) -> u32 {
             self.host().operations()

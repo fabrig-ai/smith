@@ -388,9 +388,6 @@ impl Host for Parent {
     fn is_empty(&self) -> bool {
         matches!(self.phase, Phase::Done) && self.completions.is_empty() && self.submissions.is_empty()
     }
-    fn worst_case(&self) -> u64 {
-        1_048_576
-    }
     fn operations(&self) -> u32 {
         8
     }
@@ -436,9 +433,6 @@ impl Host for Process {
     }
     fn exit(&self) -> Option<Exit> {
         delegate!(self, host, host.exit())
-    }
-    fn worst_case(&self) -> u64 {
-        delegate!(self, host, host.worst_case())
     }
     fn operations(&self) -> u32 {
         delegate!(self, host, host.operations())

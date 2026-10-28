@@ -71,7 +71,6 @@ pub struct Fake {
     file_events: Queue<file::Event>,
     file_submissions: Queue<Submit>,
     file_request: Option<file::Request>,
-    memory: u64,
     environment: Vec<Box<[u8]>>,
     mcp: crate::mcp::Mcp,
     now: Time,
@@ -157,22 +156,6 @@ impl Fake {
                 })
                 .collect(),
         };
-        // File content is bounded by FILE_BYTES. This envelope includes its
-        // JSON expansion, command/output copies, queues and both I/O drivers.
-        // Invocation text is supplied by the caller and counted separately.
-        let invocation = observed
-            .arguments
-            .iter()
-            .chain(&observed.environment)
-            .map(String::len)
-            .chain(environment.iter().map(|entry| entry.len()))
-            .try_fold(0_u64, |size, length| {
-                size.checked_add(u64::try_from(length).expect("text length fits"))?.checked_add(32)
-            })
-            .expect("invocation length fits");
-        let memory = 4_194_304_u64
-            .checked_add(invocation.checked_mul(16).expect("invocation copies fit"))
-            .expect("fake memory fits");
         let configured = crate::faces::config_path(environment).is_some();
         if configured && config.root.is_some() {
             assert!(observation.token().is_some(), "a configuration root has an observations append descriptor");
@@ -223,7 +206,6 @@ impl Fake {
             file_events: Queue::with_capacity(QUEUE),
             file_submissions: Queue::with_capacity(QUEUE),
             file_request,
-            memory,
             environment: environment.to_vec(),
             mcp: crate::mcp::Mcp::new(),
             now: Time::ZERO,
@@ -571,10 +553,6 @@ impl Host for Fake {
 
     fn exit(&self) -> Option<kernel::Exit> {
         if self.is_empty() { self.code.map(kernel::Exit::Code) } else { None }
-    }
-
-    fn worst_case(&self) -> u64 {
-        self.memory
     }
 
     fn operations(&self) -> u32 {

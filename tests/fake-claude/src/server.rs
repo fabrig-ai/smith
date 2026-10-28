@@ -303,9 +303,6 @@ impl Host for Server {
     fn exit(&self) -> Option<kernel::Exit> {
         self.is_empty().then_some(kernel::Exit::Code(0))
     }
-    fn worst_case(&self) -> u64 {
-        4_194_304
-    }
     fn operations(&self) -> u32 {
         crate::fake::operations()
     }

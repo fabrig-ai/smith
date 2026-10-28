@@ -60,7 +60,6 @@ pub struct Agent {
     result: Option<Result<(), String>>,
     started: bool,
     reported: bool,
-    worst: u64,
     operations: u32,
 }
 
@@ -69,7 +68,6 @@ struct Prepared {
     header: Option<smith_events::SessionStarted>,
     trace_root: Option<Fd>,
     unused_program_root: Option<Fd>,
-    worst: u64,
     operations: u32,
     queue: u32,
 }
@@ -110,7 +108,6 @@ impl Agent {
             result: None,
             started: false,
             reported: false,
-            worst: prepared.worst,
             operations: prepared.operations,
         };
         if let Some(root) = prepared.unused_program_root {
@@ -290,33 +287,6 @@ fn prepare(mut configuration: config::Configuration, resources: &Resources) -> R
         .checked_add(extra_operations)
         .ok_or_else(|| derivation_refusal("routes"))?;
     let header_limits = effective_header(&configuration)?;
-    let mut header_bytes = List::<smith_events::EffectiveLimit>::worst_case(header_limits.len())
-        .ok_or_else(|| derivation_refusal("startup_header"))?;
-    for entry in &header_limits {
-        header_bytes = header_bytes
-            .checked_add(u64::try_from(entry.name.len()).map_err(|_| derivation_refusal("startup_header"))?)
-            .ok_or_else(|| derivation_refusal("startup_header"))?;
-    }
-    let worst = service::worst_case(&configuration.service.limits, &configuration.service.llm_endpoints)
-        .and_then(|bytes| bytes.checked_add(service::program_worst_case(&configuration.service)?))
-        .and_then(|bytes| {
-            bytes.checked_add(if configuration.trace.is_some() {
-                // The retained startup header's three strings; its structure is in Agent.
-                u64::try_from(
-                    b"smith".len().checked_add(env!("CARGO_PKG_VERSION").len())?.checked_add(b"standard".len())?,
-                )
-                .ok()?
-                .checked_add(header_bytes)?
-            } else {
-                0
-            })
-        })
-        .and_then(|bytes| bytes.checked_add(Queue::<Complete>::worst_case(queue)?))
-        .and_then(|bytes| bytes.checked_add(Queue::<Submit>::worst_case(queue)?))
-        .and_then(|bytes| bytes.checked_add(u64::try_from(size_of::<Agent>()).ok()?))
-        .and_then(|bytes| bytes.checked_add(u64::try_from(root_count.checked_mul(size_of::<Fd>())?).ok()?))
-        .ok_or_else(|| derivation_refusal("worst_case"))?;
-    service::profile::validate::memory(worst, configuration.memory).map_err(config::profile_refusal)?;
     let profile = match configuration.profile.name {
         service::profile::Name::Standard => b"standard".as_slice(),
     };
@@ -366,7 +336,7 @@ fn prepare(mut configuration: config::Configuration, resources: &Resources) -> R
     } else if resources.trace.is_some() {
         return Err("an inherited trace requires a configured destination".into());
     }
-    Ok(Prepared { service, header, trace_root, unused_program_root, worst, operations, queue })
+    Ok(Prepared { service, header, trace_root, unused_program_root, operations, queue })
 }
 
 impl Host for Agent {
@@ -490,10 +460,6 @@ impl Host for Agent {
 
     fn exit(&self) -> Option<Exit> {
         self.result().map(|result| Exit::Code(u8::from(result.is_err())))
-    }
-
-    fn worst_case(&self) -> u64 {
-        self.worst
     }
 
     fn operations(&self) -> u32 {

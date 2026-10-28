@@ -310,9 +310,6 @@ impl Host for Agent {
     fn exit(&self) -> Option<Exit> {
         self.is_empty().then_some(Exit::Code(0))
     }
-    fn worst_case(&self) -> u64 {
-        8_388_608
-    }
     fn operations(&self) -> u32 {
         io::operations(&limits()).expect("stand-in operations").checked_add(1).expect("root close")
     }
@@ -379,13 +376,6 @@ impl Host for Process {
             Self::Agent(p) => p.exit(),
             Self::Fake(p) => p.exit(),
             Self::Relay(p) => p.exit(),
-        }
-    }
-    fn worst_case(&self) -> u64 {
-        match self {
-            Self::Agent(p) => p.worst_case(),
-            Self::Fake(p) => p.worst_case(),
-            Self::Relay(p) => p.worst_case(),
         }
     }
     fn operations(&self) -> u32 {
