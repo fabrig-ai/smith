@@ -266,7 +266,7 @@ pub(super) fn io_down(service: &mut Service) {
         }
     }
     for _ in 0..service.limits.queue {
-        if service.operations.len() >= service.operations.capacity() {
+        if service.submissions.room() == 0 || service.operations.len() >= service.operations.capacity() {
             break;
         }
         let submit = match service.io_submissions.pop() {
@@ -276,7 +276,7 @@ pub(super) fn io_down(service: &mut Service) {
         route_submission(service, submit, false);
     }
     for _ in 0..service.limits.queue {
-        if service.operations.len() >= service.operations.capacity() {
+        if service.submissions.room() == 0 || service.operations.len() >= service.operations.capacity() {
             break;
         }
         let submit = match service.file_submissions.pop() {

@@ -335,8 +335,8 @@ impl Service {
             file_events: Queue::uncapped(),
             io_submissions: Queue::uncapped(),
             file_submissions: Queue::uncapped(),
-            submissions: Queue::uncapped(),
-            completions: Queue::uncapped(),
+            submissions: Queue::with_capacity(limits.queue),
+            completions: Queue::with_capacity(limits.queue),
             owners: Slab::with_capacity(limits.routes),
             operations: Map::with_capacity(limits.routes),
             next_operation: 1,
@@ -714,8 +714,6 @@ fn backlog(service: &Service) -> u64 {
         service.file_events.len(),
         service.io_submissions.len(),
         service.file_submissions.len(),
-        service.submissions.len(),
-        service.completions.len(),
     ] {
         total = total.checked_add(u64::from(entries)).expect("bounded queue counts fit u64");
     }

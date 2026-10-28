@@ -529,8 +529,8 @@ fn usage_writes_the_session_end_before_the_stream_closes() {
     assert_eq!(done(&service), Some(true));
 }
 
-// Submissions wait at the shell boundary until the test takes them, so the
-// backlog stays at the watermark across a complete service iteration.
+// A full kernel edge holds internal IO submissions at the watermark across
+// an iteration. Only the pending internal submissions contribute to backlog.
 fn at_watermark() -> Service {
     let mut config = configuration();
     config.limits.queue = 8;
@@ -540,6 +540,15 @@ fn at_watermark() -> Service {
         service.submissions.push(kernel::Submit {
             op: Token::new(u64::from(number)),
             kind: kernel::Op::Close { fd: kernel::Fd::new(90) },
+        });
+    }
+    assert_eq!(backlog(&service), 0, "kernel-edge submissions are outside admission");
+    assert_eq!(service.submissions.capacity(), service.limits.queue);
+    assert_eq!(service.completions.capacity(), service.limits.queue);
+    for number in 0..service.limits.queue {
+        service.io_submissions.push(kernel::Submit {
+            op: Token::new(u64::from(number)),
+            kind: kernel::Op::Close { fd: kernel::Fd::new(91) },
         });
     }
     assert_eq!(backlog(&service), u64::from(service.limits.queue));
@@ -567,6 +576,8 @@ fn a_message_waits_at_the_watermark_and_is_taken_once_the_backlog_falls() {
     for _ in 0_u32..2 {
         service.submissions.pop().expect("shell takes two submissions");
     }
+    io_down(&mut service);
+    assert_eq!(service.io_submissions.len(), service.limits.queue - 2);
     // Inspect this iteration's domain-facing boundary before domain_up consumes it.
     component_up(&mut service);
     assert!(service.channel_events.is_empty());
@@ -622,6 +633,7 @@ fn pending_messages_wait_at_the_watermark() {
     assert_eq!(service.pending_messages.len(), 1);
     assert!(service.domain_events.is_empty());
     service.submissions.pop().expect("shell takes one submission");
+    io_down(&mut service);
     domain_down(&mut service);
     assert!(service.pending_messages.is_empty());
     let Some(domain::Event::Message { name, .. }) = service.domain_events.pop() else {
@@ -688,6 +700,7 @@ fn a_start_waits_at_the_watermark_before_attaching_its_roots() {
     assert_eq!(service.channel_events.len(), 1);
     assert!(service.root_to_open().is_none());
     service.submissions.pop().expect("shell takes one submission");
+    io_down(&mut service);
     iterate(&mut service, Time::ZERO, Wall::EPOCH);
     assert!(service.channel_events.is_empty());
     assert_eq!(service.root_to_open(), Some(b"/work".as_slice()));
@@ -701,4 +714,32 @@ fn an_uncapped_drain_stops_at_the_iterations_work_bound() {
     }
     lower_events(&mut service);
     assert_eq!(service.io_events.len(), 1, "one iteration drains only queue entries");
+}
+
+#[test]
+fn kernel_submission_credit_holds_both_lower_routes() {
+    let mut config = configuration();
+    config.limits.queue = 1;
+    let mut service = Service::new(config, 1).expect("one kernel-edge cell");
+    service.submissions.push(kernel::Submit { op: Token::new(1), kind: kernel::Op::Close { fd: kernel::Fd::new(90) } });
+    service
+        .io_submissions
+        .push(kernel::Submit { op: Token::new(2), kind: kernel::Op::Close { fd: kernel::Fd::new(91) } });
+    service
+        .file_submissions
+        .push(kernel::Submit { op: Token::new(3), kind: kernel::Op::Close { fd: kernel::Fd::new(92) } });
+    io_down(&mut service);
+    assert_eq!(service.io_submissions.len(), 1);
+    assert_eq!(service.file_submissions.len(), 1);
+    assert!(service.operations.is_empty(), "neither internal route crossed the full edge");
+    service.submissions.pop().expect("shell takes its first submission");
+    io_down(&mut service);
+    assert!(service.io_submissions.is_empty(), "IO keeps priority at the edge");
+    assert_eq!(service.file_submissions.len(), 1);
+    service.submissions.pop().expect("shell takes the IO submission");
+    io_down(&mut service);
+    assert!(service.file_submissions.is_empty());
+    let submit = service.submissions.pop().expect("file submission now crosses the edge");
+    assert_eq!(submit.kind, kernel::Op::Close { fd: kernel::Fd::new(92) });
+    assert_eq!(backlog(&service), 0);
 }

@@ -22,7 +22,7 @@ pub(super) fn io_up(service: &mut Service) {
             io::resume(io, &service.io_env, &mut service.io_events, &mut service.io_submissions);
         }
     }
-    for _ in 0..service.limits.queue {
+    for _ in 0..service.completions.capacity() {
         let complete = match service.completions.pop() {
             Some(complete) => complete,
             None => break,
