@@ -60,6 +60,10 @@ fn a_program_run_s_events_name_its_backend() {
             Event::RunStarted(start) => Some(&start.main),
             Event::ConversationOpened(opening) => Some(&opening.model),
             Event::ResponseStarted(start) => Some(&start.model),
+            Event::ToolStarted(call) => {
+                assert_eq!(call.tool.as_ref(), b"finish", "the outcome is never a workspace StructuredOutput call");
+                None
+            }
             _ => None,
         };
         if let Some(model) = model {

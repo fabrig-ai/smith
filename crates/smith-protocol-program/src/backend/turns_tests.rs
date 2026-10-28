@@ -205,16 +205,63 @@ fn a_new_id_after_thinking_opens_a_new_completion() {
     assert!(turns.ready.is_empty());
 }
 
+fn structured_call() -> Value {
+    json!({"type":"tool_use","id":"s","name":"StructuredOutput","input":{"outcome":{"form":"report","text":"draft","fields":{}}}})
+}
+
+const FINISH_INPUT: &[u8] = br#"{"form":"report","text":"done","fields":{}}"#;
+
 #[test]
 fn structured_output_and_its_outcome_are_one_model_completion() {
     let mut turns = turns();
-    feed(&mut turns, assistant(json!([{"type":"tool_use","id":"s","name":"StructuredOutput","input":{"outcome":{"form":"report","text":"done","fields":{}}}}]))).expect("structured message");
+    // The sole model block uses all available block credit; translation adds none.
+    turns.blocks = 1;
+    feed(&mut turns, assistant(json!([structured_call()]))).expect("structured message");
     assert!(turns.ready.is_empty());
-    turns
-        .structured(br#"{"form":"report","text":"done","fields":{}}"#.as_slice().into())
-        .expect("finish in the same message");
+    turns.structured(FINISH_INPUT.into()).expect("finish in the same message");
     let completion = turns.ready.pop().expect("model completion");
-    assert_eq!(completion.content.len(), 2);
+    let [smith_domain::llm::Said::ToolCall { name, input, .. }] = completion.content.as_ref() else {
+        panic!("one finish")
+    };
+    assert_eq!(name.as_ref(), b"finish");
+    assert_eq!(input.as_ref(), FINISH_INPUT);
     assert_eq!(completion.usage.input_tokens, Some(13));
+    assert_eq!(completion.usage.output_tokens, Some(7));
     assert!(turns.ready.is_empty());
+}
+
+#[test]
+fn finish_keeps_the_structured_calls_position_among_blocks() {
+    let mut turns = turns();
+    feed(
+        &mut turns,
+        assistant(json!([{"type":"text","text":"before"}, structured_call(), {"type":"text","text":"after"}])),
+    )
+    .expect("structured message");
+    turns.structured(FINISH_INPUT.into()).expect("finish in position");
+    let completion = turns.ready.pop().expect("model completion");
+    let [
+        smith_domain::llm::Said::Text { text: before, .. },
+        smith_domain::llm::Said::ToolCall { name, input, .. },
+        smith_domain::llm::Said::Text { text: after, .. },
+    ] = completion.content.as_ref()
+    else {
+        panic!("original block order")
+    };
+    assert_eq!(before.as_ref(), b"before");
+    assert_eq!(name.as_ref(), b"finish");
+    assert_eq!(input.as_ref(), FINISH_INPUT);
+    assert_eq!(after.as_ref(), b"after");
+    assert!(turns.ready.is_empty());
+}
+
+#[test]
+fn an_mcp_name_does_not_become_structured_output() {
+    let mut turns = turns();
+    let block = json!({"type":"tool_use","id":"host","name":"mcp__smith__StructuredOutput","input":{}});
+    feed(&mut turns, assistant(json!([block]))).expect("MCP message");
+    let completion = turns.ready.pop().expect("MCP calls are delivered immediately");
+    let [smith_domain::llm::Said::ToolCall { id, name, .. }] = completion.content.as_ref() else { panic!("MCP call") };
+    assert_eq!(id.as_ref(), b"host");
+    assert_eq!(name.as_ref(), b"StructuredOutput");
 }

@@ -1,11 +1,16 @@
 //! API message assembly (protocol/programs.md, section 5.5). Keeps one
 //! message and four waiting completions; never derives usage from a result.
+//! `StructuredOutput` waits for its outcome and becomes finish in the same slot;
+//! it is never a workspace built-in (protocol/programs.md, section 5.5).
 
 use crate::mcp::json;
 use alloc::boxed::Box;
 use skein_json::{Document, Kind};
 use skein_lib::{List, Queue};
 use smith_domain::llm;
+
+// Marks adapter-owned finish feedback, which is never an MCP reply.
+pub(super) const STRUCTURED_FINISH: &[u8] = b"smith-structured-finish";
 
 pub(super) struct Message {
     id: Box<[u8]>,
@@ -161,11 +166,16 @@ impl Turns {
                     if !builtin && name == b"finish" {
                         self.finish = true;
                     }
+                    let provider_id = json::text_in(document, json::field(document, index, b"id"))?;
                     llm::Said::ToolCall {
-                        id: json::text_in(document, json::field(document, index, b"id"))?.into(),
+                        id: if builtin && name == b"StructuredOutput" {
+                            STRUCTURED_FINISH.into()
+                        } else {
+                            provider_id.into()
+                        },
                         name: name.into(),
                         input,
-                        call: if builtin {
+                        call: if builtin && name != b"StructuredOutput" {
                             llm::Decoded::Builtin {
                                 effect: match super::policy::Builtin::named(name) {
                                     Some(tool) => tool.effect(),
@@ -223,16 +233,19 @@ impl Turns {
         let mut structured = false;
         for block in &message.blocks {
             match block {
-                llm::Said::ToolCall { name, .. } => {
+                llm::Said::ToolCall { id, name, .. } => {
                     calls = true;
-                    structured |= name.as_ref() == b"StructuredOutput";
+                    structured |= id.as_ref() == STRUCTURED_FINISH && name.as_ref() == b"StructuredOutput";
                 }
                 llm::Said::Text { .. } | llm::Said::Refusal { .. } | llm::Said::Opaque { .. } => {}
             }
         }
         // StructuredOutput's result supplies the finish input for this same
         // model completion (programs.md 5.5), never an extra budgeted turn.
-        if (!calls || structured) && !boundary {
+        if structured {
+            return if boundary { None } else { Some(()) };
+        }
+        if !calls && !boundary {
             return Some(());
         }
         if self.ready.room() == 0 {
@@ -306,14 +319,34 @@ impl Turns {
             return self.close(true);
         }
         let block = llm::Said::ToolCall {
-            id: b"smith-structured-finish".as_slice().into(),
+            id: STRUCTURED_FINISH.into(),
             name: b"finish".as_slice().into(),
             input,
             call: llm::Decoded::Invalid { problem: llm::Problem::UnknownTool },
             replay: None,
         };
         if let Some(message) = &mut self.message {
-            message.blocks.push(block).ok()?;
+            let mut position = None;
+            for (index, held) in message.blocks.iter().enumerate() {
+                match held {
+                    llm::Said::ToolCall { id, name, .. }
+                        if id.as_ref() == STRUCTURED_FINISH && name.as_ref() == b"StructuredOutput" =>
+                    {
+                        if position.is_some() {
+                            return None;
+                        }
+                        position = Some(u32::try_from(index).ok()?);
+                    }
+                    llm::Said::ToolCall { .. }
+                    | llm::Said::Text { .. }
+                    | llm::Said::Refusal { .. }
+                    | llm::Said::Opaque { .. } => {}
+                }
+            }
+            match position {
+                Some(position) => *message.blocks.get_mut(position)? = block,
+                None => message.blocks.push(block).ok()?,
+            }
             self.close(true)?;
         } else {
             if self.ready.room() == 0 {

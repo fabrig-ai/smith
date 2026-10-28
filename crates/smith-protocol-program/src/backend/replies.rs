@@ -92,7 +92,7 @@ pub(super) fn resume(
         for block in message.content {
             match block {
                 llm::Block::ToolResult { id, result } => {
-                    if id.as_ref() != b"smith-structured-finish" && !backend.awaits_answer(&id) {
+                    if id.as_ref() != super::turns::STRUCTURED_FINISH && !backend.awaits_answer(&id) {
                         continue;
                     }
                     let mut answer = Some(calls::render(result, prompt, &backend.settings.adapter)?);
@@ -104,7 +104,7 @@ pub(super) fn resume(
                             break;
                         }
                     }
-                    if id.as_ref() == b"smith-structured-finish" {
+                    if id.as_ref() == super::turns::STRUCTURED_FINISH {
                         synthetic = match answer {
                             Some(mcp::Answer::Text(text) | mcp::Answer::Error(text)) => Some(text),
                             None => synthetic,
