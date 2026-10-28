@@ -211,7 +211,7 @@ fn an_invalid_io_composition_refuses_before_channel_adoption() {
     let Err(refusal) = startup else {
         panic!("invalid IO composition must refuse before adopting nonexistent channel handles");
     };
-    assert_eq!(refusal, "agent configuration cannot start: Memory");
+    assert_eq!(refusal, "agent configuration cannot start: Limits");
     assert_eq!(String::from_utf8(errors.bytes()).expect("UTF-8 refusal"), format!("smith: {refusal}\n"));
 }
 
