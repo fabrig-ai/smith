@@ -10,7 +10,6 @@ use alloc::boxed::Box;
 
 mod down;
 mod effects;
-mod memory;
 mod request;
 mod routing;
 mod up;
@@ -29,12 +28,9 @@ use up::{component_up, domain_up, io_up, lower_events};
 mod program;
 
 pub(crate) use program::bound;
-pub use program::{AdoptError, ProgramBackend, program_operations, program_valid, program_worst_case};
+pub use program::{AdoptError, ProgramBackend, program_operations, program_valid};
 #[path = "teardown.rs"]
 pub mod teardown;
-
-pub use memory::effects_parts;
-use memory::parts_worst_case;
 
 use teardown::Teardown;
 
@@ -202,35 +198,6 @@ pub struct Service {
 
 const USAGE_OWNER: Token = Token::new(u64::MAX - 1);
 
-/// Construction peak and retained bound for the host-owned effects adapter
-/// with its configured endpoint request heads.
-#[must_use]
-pub fn effects_worst_case(limits: &Limits, endpoints: &llm::Endpoints) -> Option<u64> {
-    if !effects_valid(limits, endpoints) {
-        return None;
-    }
-    let mut total = 0_u64;
-    for (_, part) in effects_parts(limits, endpoints)? {
-        total = total.checked_add(part)?;
-    }
-    Some(total)
-}
-
-/// Checked maximum of every owned layer and inter-layer queue. The file
-/// driver's transient buffers are counted by its own bound; configured
-/// endpoints supply the request-head and credential bounds.
-#[must_use]
-pub fn worst_case(limits: &Limits, endpoints: &llm::Endpoints) -> Option<u64> {
-    if !valid(limits, endpoints) {
-        return None;
-    }
-    parts_worst_case(limits, endpoints, true)?
-        .checked_add(domain::worst_case_drained_content(&limits.domain, limits.llm.receiving.max_completion_bytes)?)?
-        .checked_add(channel::worst_case(&limits.channel)?)?
-        .checked_add(crate::live::worst_case()?)?
-        .checked_add(io_worst_case(limits)?)
-}
-
 /// Whether the owned lower parts can be built (programming-model.md, 6.3).
 #[must_use]
 pub fn effects_valid(limits: &Limits, endpoints: &llm::Endpoints) -> bool {
@@ -285,31 +252,6 @@ pub fn io_valid(limits: &Limits) -> bool {
         && child.receive == limits.io.receive
         && child.output == limits.io.output
         && child.sends == limits.io.sends
-}
-
-// One physical LLM socket is already included by its connection owner. The
-// service owns IO's tables once. Its other producers are read-only process
-// pipes/input/signals and the single host-channel writer; only that writer
-// can retain output payload outside the LLM sockets (limits.md, section 3).
-/// The single native IO ownership, excluding the connection owners' socket buffers.
-#[must_use]
-pub fn io_worst_case(limits: &Limits) -> Option<u64> {
-    if !io_valid(limits) {
-        return None;
-    }
-    let physical = limits.llm.connection.connections;
-    let other = limits.io.sockets.checked_sub(physical)?;
-    let writers = match limits.events {
-        Some(events) => events.sinks.destinations.checked_add(1)?,
-        None => 1,
-    };
-    let socket = skein_lib::Intake::worst_case(limits.io.intake)?
-        .checked_add(u64::from(limits.io.receive))?
-        .checked_add(u64::from(limits.io.output))?
-        .checked_add(Queue::<Box<[u8]>>::worst_case(limits.io.sends)?)?;
-    io::worst_case(&limits.io)?
-        .checked_sub(u64::from(physical).checked_mul(socket)?)?
-        .checked_sub(u64::from(other.checked_sub(writers)?).checked_mul(u64::from(limits.io.output))?)
 }
 
 impl Service {

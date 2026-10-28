@@ -5,7 +5,7 @@
 #![expect(clippy::manual_map, reason = "bounded production entries use explicit matches without closures")]
 
 use alloc::boxed::Box;
-use skein_lib::{Duration, List, Map, Time, Token};
+use skein_lib::{Duration, List, Time, Token};
 use smith_domain::{self as domain, run};
 use smith_events::{Event, Record};
 use smith_protocol_channel as channel;
@@ -613,41 +613,6 @@ fn message_refusal(reason: run::MessageRefusal) -> smith_events::MessageRefusal 
     }
 }
 
-#[must_use]
-pub fn worst_case(limits: &crate::Limits) -> Option<u64> {
-    if !valid(limits) {
-        return None;
-    }
-    let events = limits.events?;
-    // The component moves each observed completion into the response join.
-    // It stays there until the corresponding accounting/terminal fact, and
-    // moves into the terminal record without a second payload copy.
-    let observed = if events.front { Capture::Everything } else { events.capture };
-    let completions = match observed {
-        Capture::None | Capture::Calls => 0,
-        Capture::Everything => u64::from(events.sinks.conversations).checked_mul(
-            List::<smith_events::Block>::worst_case(limits.llm.adapter.client.output_items)?
-                .checked_add(u64::from(limits.llm.adapter.client.answer))?,
-        )?,
-    };
-    crate::sinks::sinks_worst_case(&events.sinks, events.capture)?
-        .checked_add(if events.front { front_worst_case(limits)? } else { 0 })?
-        .checked_add(completions)?
-        .checked_add(crate::messages::worst_case(limits, events.capture)?)?
-        .checked_add(crate::calls::worst_case(&limits.domain.session, events.sinks.records.string)?)?
-        .checked_add(crate::inputs::worst_case(&limits.domain.session, events.capture)?)?
-        .checked_add(channel::Endpoints::worst_case(limits.channel.endpoints, limits.channel.charter.llm_endpoint)?)?
-        .checked_add(Map::<u32, Box<[u8]>>::worst_case(limits.channel.endpoints)?)?
-        .checked_add(u64::from(limits.channel.endpoints).checked_mul(u64::from(events.sinks.metadata_string))?)?
-        .checked_add(List::<smith_events::Family>::worst_case(4)?)?
-        .checked_add(List::<Box<[u8]>>::worst_case(limits.domain.run.host_tools)?)?
-        .checked_add(List::<smith_events::Form>::worst_case(4)?)?
-        .checked_add(
-            u64::from(limits.domain.run.host_tools.checked_add(1)?)
-                .checked_mul(u64::from(events.sinks.metadata_string))?,
-        )
-}
-
 /// Whether configured event sinks and joins fit (programming-model.md, 6.3).
 #[must_use]
 pub fn valid(limits: &crate::Limits) -> bool {
@@ -659,15 +624,6 @@ pub fn valid(limits: &crate::Limits) -> bool {
         }
         None => true,
     }
-}
-
-/// The live queue owns exactly its slots times one projection's bound.
-#[must_use]
-pub fn front_worst_case(limits: &crate::Limits) -> Option<u64> {
-    limits.events?;
-    let client = limits.llm.adapter.client;
-    crate::sinks::View::worst_case(client.answer.max(client.strings))?
-        .checked_mul(u64::from(crate::sinks::FRONT_RECORDS))
 }
 
 #[cfg(test)]

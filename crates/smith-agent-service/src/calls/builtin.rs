@@ -27,13 +27,6 @@ impl Book {
         }
     }
 
-    pub(super) fn worst_case(limits: &session::Limits) -> Option<u64> {
-        if !valid(limits) {
-            return None;
-        }
-        Map::<Token, Time>::worst_case(limits.sessions.checked_mul(limits.completion_blocks)?)
-    }
-
     pub(super) fn fact(
         &mut self,
         origin: Time,

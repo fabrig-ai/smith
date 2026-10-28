@@ -91,12 +91,6 @@ pub(crate) struct Live {
     input_next: u64,
 }
 
-pub(crate) fn worst_case() -> Option<u64> {
-    Queue::<HeldByte>::worst_case(HELD)?
-        .checked_add(Map::<u32, Call>::worst_case(IDENTITIES)?)?
-        .checked_add(u64::from(IDENTITIES).checked_mul(320)?)
-}
-
 pub(crate) fn wanted(ask: Option<&smith_channel::LiveAsk>, prompt: &llm::Prompt) -> bool {
     let selected = match ask {
         Some(ask) => ask.text() || ask.input(),

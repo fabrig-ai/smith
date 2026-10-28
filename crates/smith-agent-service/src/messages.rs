@@ -68,25 +68,6 @@ fn slots(limits: &crate::Limits) -> Option<u32> {
     limits.channel.bodies.start_messages.checked_add(1)
 }
 
-pub(crate) fn worst_case(limits: &crate::Limits, capture: Capture) -> Option<u64> {
-    if !valid(limits, capture) {
-        return None;
-    }
-    match capture {
-        Capture::None | Capture::Calls => Queue::<Message>::worst_case(0),
-        Capture::Everything => {
-            // One root entrance's facts drain before the next entrance. Start
-            // copies only its messages, never the charter or restore history.
-            let message = u64::from(limits.channel.bodies.message_label)
-                .checked_add(u64::from(limits.channel.bodies.message_text))?;
-            let initial = message
-                .checked_mul(u64::from(limits.channel.bodies.start_messages))?
-                .min(u64::from(limits.channel.start_bytes));
-            Queue::<Message>::worst_case(slots(limits)?)?.checked_add(initial.max(message))
-        }
-    }
-}
-
 /// Whether captured message slots fit (programming-model.md, 6.3).
 #[must_use]
 pub(crate) fn valid(limits: &crate::Limits, capture: Capture) -> bool {

@@ -42,7 +42,6 @@ pub use sinks::{Destination, GivenUp, Why};
 pub use answers::{AnswerMeta, Answered, Last, accepted, answer_record, last};
 
 pub use service::{
-    AdoptError, Config, ConfigError, Effects, Failure, Limits, ProgramBackend, Service, done, effects_parts,
-    effects_valid, effects_worst_case, failure, io_valid, io_worst_case, iterate, next_deadline, next_policy_deadline,
-    program_operations, program_valid, program_worst_case, valid, work_pending, worst_case,
+    AdoptError, Config, ConfigError, Effects, Failure, Limits, ProgramBackend, Service, done, effects_valid, failure,
+    io_valid, iterate, next_deadline, next_policy_deadline, program_operations, program_valid, valid, work_pending,
 };

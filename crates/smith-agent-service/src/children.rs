@@ -213,7 +213,3 @@ impl Book {
         None
     }
 }
-
-pub(crate) fn worst_case(calls: u32) -> Option<u64> {
-    Map::<Token, Child>::worst_case(calls)
-}

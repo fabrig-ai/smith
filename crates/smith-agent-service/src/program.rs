@@ -133,39 +133,6 @@ pub(crate) fn bound(config: Option<&ProgramBackend>) -> Option<&ProgramBackend> 
     }
 }
 
-/// Additional complete ownership charged only for a program an endpoint names.
-/// Includes the protocol, queues, routes, file slots and native I/O growth (5.1).
-#[must_use]
-pub fn program_worst_case(config: &Config) -> Option<u64> {
-    if !program_valid(config) {
-        return None;
-    }
-    let program = match bound(config.program.as_ref()) {
-        Some(program) => program,
-        None => return Some(0),
-    };
-    let settings = settings(program, &config.limits, &config.environment)?;
-    let reserved = reserved(&config.limits, &settings)?;
-    let io_growth = super::worst_case(&reserved, &config.llm_endpoints)?
-        .checked_sub(super::worst_case(&config.limits, &config.llm_endpoints)?)?;
-    backend::backend_worst_case(&settings)?
-        // Start directories are copied once; the policy borrows their host names.
-        .checked_add(u64::from(config.limits.machine.roots).checked_mul(
-            u64::try_from(size_of::<backend::Mount>()).ok()?.checked_add(u64::from(settings.path_bytes))?,
-        )?)?
-        .checked_add(io_growth)?
-        // The MCP connection and program input are two additional writers.
-        .checked_add(u64::from(reserved.io.output).checked_mul(2)?)?
-        .checked_add(Map::<Token, Token>::worst_case(5)?)?
-        .checked_add(u64::try_from(size_of::<Program>().checked_sub(size_of::<backend::Backend>())?).ok()?)?
-        .checked_add(
-            u64::try_from(size_of::<u32>())
-                .ok()?
-                .checked_mul(u64::try_from(program.endpoints.len()).ok()?)?
-                .checked_mul(2)?,
-        )
-}
-
 /// Whether a named program's settings and reserved service fit (programming-model.md, 6.3).
 #[must_use]
 pub fn program_valid(config: &Config) -> bool {

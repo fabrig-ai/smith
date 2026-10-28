@@ -1160,33 +1160,6 @@ fn receiving_valid(limits: &SinkLimits, capture: Capture) -> Option<()> {
     Some(())
 }
 
-/// Peak heap of the destination queues and their bounded output, including codec construction.
-#[must_use]
-pub fn sinks_worst_case(limits: &SinkLimits, capture: Capture) -> Option<u64> {
-    if !valid(limits, capture) {
-        return None;
-    }
-    let line = limits.line_ceiling(capture)?;
-    let writer = Queue::<Line>::worst_case(LINE_SLOTS)?.checked_add(u64::from(limits.output))?;
-    // The measured writer can retain its encoded body and final newline-owning line together.
-    List::<Writer>::worst_case(limits.destinations)?
-        .checked_add(u64::from(limits.destinations).checked_mul(writer)?)?
-        .checked_add(u64::from(line).checked_mul(2)?)?
-        .checked_add(List::<smith_events::Count>::worst_case(u32::try_from(TYPES).ok()?)?)?
-        .checked_add(emitted_names_bytes()?)?
-        .checked_add(Map::<Token, Record>::worst_case(limits.conversations)?)?
-        .checked_add(u64::from(limits.conversations).checked_mul(u64::from(limits.metadata_string).checked_mul(3)?)?)?
-        .checked_add(crate::responses::worst_case(limits.conversations, limits.metadata_string, limits.scalar_content)?)
-}
-
-fn emitted_names_bytes() -> Option<u64> {
-    let mut bytes = 0_u64;
-    for index in 0..TYPES {
-        bytes = bytes.checked_add(u64::try_from(names(index).len()).ok()?)?;
-    }
-    Some(bytes)
-}
-
 fn authoritative_credit(limits: &SinkLimits, capture: Capture) -> Option<u32> {
     // The three authoritative records and teardown notice contain no provider call id/name or prompt.
     // The accepted answer is the only captured payload they can retain.

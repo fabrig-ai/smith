@@ -104,16 +104,6 @@ impl Book {
     }
 }
 
-pub(crate) fn worst_case(limits: &session::Limits, capture: Capture) -> Option<u64> {
-    match capture {
-        Capture::None => Some(0),
-        Capture::Calls | Capture::Everything => Map::<Token, List<Input>>::worst_case(limits.sessions)?.checked_add(
-            u64::from(limits.sessions)
-                .checked_mul(List::<Input>::worst_case(limits.completion_blocks)?.checked_add(limits.answer_bytes)?)?,
-        ),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     #![allow(
@@ -173,7 +163,6 @@ mod tests {
                 Capture::None => {
                     assert!(captured.is_none());
                     assert_eq!(book.conversations.capacity(), 0);
-                    assert_eq!(worst_case(&bounds, capture), Some(0));
                 }
                 Capture::Calls | Capture::Everything => assert_eq!(captured.as_deref(), Some(input.as_slice())),
             }

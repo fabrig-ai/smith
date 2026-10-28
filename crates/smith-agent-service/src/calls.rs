@@ -12,7 +12,9 @@ mod builtin;
 mod jobs;
 
 use alloc::boxed::Box;
-use skein_lib::{List, Map, Time, Token};
+#[cfg(test)]
+use skein_lib::List;
+use skein_lib::{Map, Time, Token};
 use smith_domain::{session, tools};
 use smith_events::{Event, Record, ToolCompleted, ToolStarted};
 
@@ -485,19 +487,6 @@ fn verdict_kind(verdict: tools::Verdict) -> smith_events::Verdict {
         tools::Verdict::Busy => smith_events::Verdict::Busy,
         tools::Verdict::NulByte => smith_events::Verdict::NulByte,
     }
-}
-
-pub(crate) fn worst_case(limits: &session::Limits, string: u32) -> Option<u64> {
-    if !valid(limits) {
-        return None;
-    }
-    let bounds = Bounds::derive(limits)?;
-    Map::<Token, Call>::worst_case(bounds.slots)?
-        .checked_add(crate::children::worst_case(bounds.slots)?)?
-        .checked_add(builtin::Book::worst_case(limits)?)?
-        .checked_add(bounds.bytes)?
-        .checked_add(List::<Record>::worst_case(2)?)?
-        .checked_add(u64::from(string).checked_mul(4)?)
 }
 
 /// Whether call joins and their metadata counter fit (programming-model.md, 6.3).

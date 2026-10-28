@@ -1095,16 +1095,6 @@ fn conversation_end(end: session::End) -> (ConversationEnd, Option<&'static [u8]
     }
 }
 
-pub(crate) fn worst_case(conversations: u32, string: u32, detail: u32) -> Option<u64> {
-    List::<Record>::worst_case(2)?
-        .checked_add(Map::<Token, Conversation>::worst_case(conversations)?)?
-        .checked_add(u64::from(conversations).checked_mul(u64::from(string).checked_mul(6)?)?)?
-        .checked_add(
-            u64::from(conversations).checked_mul(u64::from(detail).checked_add(u64::from(string))?.checked_mul(2)?)?,
-        )?
-        .checked_add(u64::from(string).checked_mul(4)?.checked_add(u64::from(detail))?)
-}
-
 fn provider_field(value: &[u8]) -> Option<Box<[u8]>> {
     if value.is_empty() { None } else { Some(value.into()) }
 }
