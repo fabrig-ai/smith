@@ -180,6 +180,8 @@ fn run_with_peer(
     let clock = Clock::new();
     let now = clock.now().now;
     let budget = if peer.is_some() { Duration::from_secs(10) } else { Duration::from_secs(260) };
+    // Snapshot only the prior sessions before the child can append its header.
+    let trace_prefix = std::fs::read(super::trace_path(scratch.path())).unwrap_or_default();
     let mut binary = start(Vec::new(), scratch.path(), Mode::Terminal);
     let streams = binary.take_streams().expect("live controlling terminal");
     let descriptors = streams.descriptors();
@@ -191,7 +193,7 @@ fn run_with_peer(
         checkout: scratch.checkout(),
         expectation,
         directory: scratch.path().into(),
-        trace_prefix: std::fs::read(super::trace_path(scratch.path())).unwrap_or_default(),
+        trace_prefix,
         reviewed: false,
     });
     world.spawn_with_fds(binary.descriptors(), || Process::Binary(Box::new(binary)));
