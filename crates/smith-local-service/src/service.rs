@@ -126,7 +126,7 @@ impl Effects {
 pub enum Error {
     /// Local policy refused the operator's configuration.
     Local(local::Invalid),
-    /// The caller's queues cannot reserve a complete transition.
+    /// Account adoption cannot reserve its shell and terminal output.
     Queue,
     /// The requested retained bound or directory table cannot be represented.
     Memory,
@@ -255,9 +255,6 @@ pub struct StartValues {
 impl Service {
     /// Construct the child kind selected by the local limits, without performing IO.
     pub fn new(mut config: Config, seed: u64) -> Result<Self, Error> {
-        if config.limits.queue < 64 {
-            return Err(Error::Queue);
-        }
         worst_case(&config.limits).ok_or(Error::Memory)?;
         let native = match config.agent {
             AgentConfig::Inline { configuration, roots } => {
@@ -694,9 +691,7 @@ impl Service {
     }
 
     fn local_request_ready(&self) -> bool {
-        self.shell.room() > 0
-            && self.terminal_events.room() >= protocol::terminal_max_out()
-            && self.below.process().output_room()
+        self.shell.room() > 0 && self.terminal_events.room() >= protocol::terminal_max_out()
     }
 
     // Admission and FIFO head readiness are shared by the drain and readiness.
@@ -751,7 +746,7 @@ impl Service {
             || (takes && self.local_head_ready())
             || (takes && !self.local_requests.is_empty() && self.local_request_ready() && self.told.is_none())
             || !self.host_events.is_empty()
-            || (self.terminal_head_ready() && self.output.room() > 0 && self.below.process().output_room())
+            || (self.terminal_head_ready() && self.output.room() > 0)
             || self.below.process().work_pending(now)
             || match &self.stream {
                 Some(stream) => {
@@ -808,9 +803,9 @@ impl Service {
         self.below.process_mut().adopt_writer(fd)
     }
 
-    /// Shell-owned IO requests share the same native owner as the effects.
-    pub fn writer_requests(&mut self) -> &mut Queue<skein_io::Request> {
-        self.below.process_mut().io_requests()
+    /// Queue one request of the shell's adopted writer behind the service's own IO.
+    pub fn writer_request(&mut self, request: skein_io::Request) {
+        self.below.process_mut().io_requests().push(request);
     }
 
     /// Terminals of the shell's adopted output stream.
@@ -1132,7 +1127,7 @@ impl Service {
 
     fn drain_terminal(&mut self) {
         for _ in 0..self.terminal_events.capacity() {
-            if !self.terminal_head_ready() || self.output.room() == 0 || !self.below.process().output_room() {
+            if !self.terminal_head_ready() || self.output.room() == 0 {
                 break;
             }
             let Some(event) = self.terminal_events.pop() else { break };
@@ -1322,9 +1317,6 @@ pub fn iterate(service: &mut Service, now: Time, wall: Wall) {
         Effects::Inline { agent, local } => {
             agent.down();
             for _ in 0..service.limits.queue {
-                if local.io_requests().room() == 0 {
-                    break;
-                }
                 let Some(request) = agent.io_requests().pop() else { break };
                 local.io_requests().push(request);
             }

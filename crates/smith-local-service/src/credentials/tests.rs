@@ -191,3 +191,22 @@ fn zero_file_stall_is_refused_before_a_file_owner_is_constructed() {
 }
 
 mod private;
+
+fn hand_accounts_to_service(queue: u32) -> Result<(), crate::Error> {
+    let mut config = crate::tests::config();
+    config.limits.queue = queue;
+    let mut service = crate::Service::new(config, 7).unwrap();
+    let mut sources = List::with_capacity(1);
+    sources.push(source()).ok().expect("one account source");
+    service.handed_accounts(sources, limits(), [7; 32])
+}
+
+#[test]
+fn account_adoption_keeps_its_shell_output_minimum() {
+    assert_eq!(hand_accounts_to_service(ACCOUNTS_MAX_OUT - 1), Err(crate::Error::Queue));
+}
+
+#[test]
+fn account_adoption_accepts_its_shell_output_minimum() {
+    hand_accounts_to_service(ACCOUNTS_MAX_OUT).unwrap();
+}

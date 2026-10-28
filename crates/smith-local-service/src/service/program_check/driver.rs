@@ -44,7 +44,7 @@ impl Checks {
         if !self.drain_interrupted(events, notify) {
             return;
         }
-        if shell.room() == 0 || below.room() < 4 {
+        if shell.room() == 0 {
             return;
         }
         if let Some(active) = &mut self.active {
@@ -69,7 +69,7 @@ impl Checks {
             }
         }
         for _ in 0..self.waiting.capacity() {
-            if self.active.is_some() || shell.room() == 0 || below.room() == 0 {
+            if self.active.is_some() || shell.room() == 0 {
                 break;
             }
             match self.waiting.pop() {

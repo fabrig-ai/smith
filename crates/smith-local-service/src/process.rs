@@ -184,7 +184,7 @@ impl ProcessAdapter {
             delivery_roots: Box::new([]),
             git_environment: Box::new([]),
             io_events: Queue::uncapped(),
-            io_requests: Queue::with_capacity(limits.queue),
+            io_requests: Queue::uncapped(),
             process_events: Queue::uncapped(),
             submissions: Queue::with_capacity(limits.queue),
             completions: Queue::with_capacity(limits.queue),
@@ -249,6 +249,7 @@ impl ProcessAdapter {
         let mut total = 0_u32;
         for entries in [
             self.io_events.len(),
+            self.io_requests.len(),
             self.io_submissions.len(),
             self.file_requests.len(),
             self.file_events.len(),
@@ -762,10 +763,6 @@ impl ProcessAdapter {
         self.failed
     }
 
-    pub(crate) fn output_room(&self) -> bool {
-        self.io_requests.room() >= 64
-    }
-
     fn reap(&mut self, env: &Env<io::Limits>) {
         for _ in 0..self.completions.capacity() {
             let Some(complete) = self.completions.pop() else { break };
@@ -879,10 +876,7 @@ impl ProcessAdapter {
         let now = env.now;
         self.markers_up(now, local_events);
         for _ in 0..self.limits.queue {
-            if !self.output_room()
-                || terminal_events.room() < local_protocol::terminal_max_out()
-                || self.shell_events.room() == 0
-            {
+            if terminal_events.room() < local_protocol::terminal_max_out() || self.shell_events.room() == 0 {
                 break;
             }
             let Some(event) = self.io_events.pop() else { break };
@@ -956,9 +950,7 @@ impl ProcessAdapter {
                 },
             }
         }
-        if self.output_room()
-            && let Some(git) = &mut self.git
-        {
+        if let Some(git) = &mut self.git {
             git.fire(now, &mut self.io_requests);
         }
         let git_done = match &self.git {
@@ -968,9 +960,7 @@ impl ProcessAdapter {
         if git_done {
             self.git = None;
         }
-        if self.output_room()
-            && let Some(process) = &mut self.process
-        {
+        if let Some(process) = &mut self.process {
             process.fire(now, &mut self.process_events, &mut self.io_requests);
         }
         self.drain_process(host_events);
@@ -1056,7 +1046,7 @@ impl ProcessAdapter {
         trace: &mut Option<crate::stream::Spawned>,
     ) {
         let now = env.now;
-        if self.window_read == WindowRead::Requested && self.io_requests.room() > 0 {
+        if self.window_read == WindowRead::Requested {
             self.window_read = WindowRead::Idle;
             if self.closing.is_none()
                 && let Some(stream) = self.terminal_input
@@ -1073,22 +1063,16 @@ impl ProcessAdapter {
             trace.producer.sinks().down(now, &mut self.io_requests);
         }
         for _ in 0..self.limits.queue {
-            if !self.output_room() {
-                break;
-            }
             let Some(request) = requests.pop() else { break };
             self.request(request, start_values, grant_values, host_events);
         }
         if let Some(process) = &mut self.process {
             for _ in 0..self.limits.queue {
-                if self.io_requests.room() < 64 {
-                    break;
-                }
                 let Some(request) = process.next_channel_down() else { break };
                 process.channel_down(request, &mut self.io_requests);
             }
         }
-        for _ in 0..self.io_requests.capacity() {
+        for _ in 0..self.limits.queue {
             if !self.io.takes() {
                 break;
             }
@@ -1449,10 +1433,10 @@ fn store_limits() -> local_protocol::StoreLimits {
 mod tests {
     use super::*;
 
-    // output_room reserves 64 shell requests; one more ready pipe crosses
-    // the old internal capacity in a single io_up call.
-    const ROUTING_QUEUE: u32 = 64;
-    const BURST: u32 = 65;
+    // One entry is the smallest routing queue: terminals are handed to the
+    // shell one per pass. Two ready pipes exceed that estimate.
+    const ROUTING_QUEUE: u32 = 1;
+    const BURST: u32 = 2;
     const KERNEL_QUEUE: u32 = 1;
 
     fn adapter(queue: u32, sockets: u32) -> ProcessAdapter {
@@ -1512,6 +1496,149 @@ mod tests {
         assert!(adapter.shell_events.is_empty());
     }
 
+    fn requests_down(adapter: &mut ProcessAdapter) {
+        let env = adapter.at(Time::ZERO, Wall::EPOCH);
+        adapter.down(
+            &env,
+            &mut Queue::uncapped(),
+            &mut None,
+            &Map::with_capacity(0),
+            &mut Queue::uncapped(),
+            &mut None,
+        );
+    }
+
+    fn internal_io_burst() -> ProcessAdapter {
+        use skein_lib::Duration;
+        use smith_host_protocol::{ProgramSource, SourceAsk};
+        use smith_protocol_program::Programs;
+
+        // Two routing entries, four occupied pipes, one refusal: the check,
+        // stderr read, window and channel opening exceed the queue together.
+        const QUEUE: u32 = 2;
+        const PIPES: u32 = 4;
+        let mut adapter = adapter(QUEUE, PIPES);
+        let env = adapter.at(Time::ZERO, Wall::EPOCH);
+        let input = adapter.io.adopt_write_pipe(kernel::Fd::new(10), None).unwrap();
+        let output = adapter.io.adopt_read_pipe(kernel::Fd::new(11)).unwrap();
+        let error = adapter.io.adopt_read_pipe(kernel::Fd::new(12)).unwrap();
+        let terminal = adapter.io.adopt_read_pipe(kernel::Fd::new(13)).unwrap();
+        // Adopted read pipes prefetch independently of their producer demands.
+        adapter.io.reclaim();
+        adapter.io_up(&env);
+        while adapter.io_submissions.pop().is_some() {}
+        adapter.terminal_input = Some(terminal);
+        adapter.read_window();
+        // Filling IO's one refusal slot holds its actual credit independently
+        // of the service handoff. No kernel operation is required to release it.
+        io::down(
+            &mut adapter.io,
+            &env,
+            io::Request::Connect {
+                owner: Token::new(90),
+                addr: io::Addr::Ip(core::net::SocketAddr::from(([127, 0, 0, 1], 1_u16))),
+            },
+            &mut adapter.io_submissions,
+        );
+        let _check = ProgramSource::new(
+            Token::new(91),
+            SourceAsk::Check,
+            &Programs { directory: b"/programs".as_slice().into(), claude: b"/claude".as_slice().into() },
+            host::SourceName::new(b"work").unwrap(),
+            &[],
+            kernel::Fd::new(3),
+            b".".as_slice().into(),
+            Time::ZERO.saturating_add(Duration::from_secs(60)),
+            adapter.limits.detail_bytes,
+            &mut adapter.io_requests,
+        )
+        .unwrap();
+        let mut process = protocol::Process::new(
+            Token::new(7),
+            &adapter.limits.channel,
+            adapter.limits.detail_bytes,
+            adapter.endpoints.clone(),
+        )
+        .unwrap();
+        process.spawn(
+            adapter.launch.for_spawn(),
+            Time::ZERO.saturating_add(Duration::from_secs(60)),
+            &mut Queue::uncapped(),
+        );
+        process.from_io(
+            Time::ZERO,
+            io::Event::Spawned {
+                owner: process.io_owner(),
+                child: Token::new(8),
+                pipes: Box::new([input, output, error]),
+            },
+            &mut adapter.process_events,
+            &mut adapter.io_requests,
+        );
+        adapter.process = Some(process);
+        adapter
+    }
+
+    #[test]
+    fn a_burst_of_internal_io_requests_past_the_queue_goes_down_in_order() {
+        // The check spawn, stderr demand, window, and two channel requests.
+        const BURST_REQUESTS: u32 = 5;
+        // Two refusals each emit Failed/Closed; the channel gets one grant.
+        const IO_TERMINALS: u32 = 5;
+        let mut adapter = internal_io_burst();
+        let env = adapter.at(Time::ZERO, Wall::EPOCH);
+        requests_down(&mut adapter);
+        assert!(!adapter.io.takes(), "only IO refusal credit holds the burst");
+        let mut burst = List::with_capacity(BURST_REQUESTS);
+        for request in &adapter.io_requests {
+            burst.push(request).unwrap();
+        }
+        let [
+            io::Request::Spawn { owner, .. },
+            io::Request::Stream { down: stream::Down::Demand { read: stream::Read::Arrived { .. }, room: 0 }, .. },
+            io::Request::Window { .. },
+            io::Request::Stream { down: stream::Down::Demand { read: stream::Read::Fill(1), room: 0 }, .. },
+            io::Request::Output { down: stream::OutputDown::Room { .. }, .. },
+        ] = burst.as_slice()
+        else {
+            panic!("all three producers enqueue in FIFO order: {burst:?}");
+        };
+        assert_eq!(*owner, Token::new(91), "the check starts the burst");
+        assert!(adapter.io_submissions.is_empty(), "no request crosses exhausted IO credit");
+
+        // The full entity table also refuses the check. One pass takes that
+        // spawn, the next stderr and window, and the last both channel requests.
+        for remaining in [4, 2, 0] {
+            adapter.io_up(&env);
+            requests_down(&mut adapter);
+            assert_eq!(adapter.io_requests.len(), remaining, "IO credit and the work bound alone pace FIFO drains");
+        }
+        adapter.io_up(&env);
+        let Some(kernel::Submit { kind: kernel::Op::Window { fd }, .. }) = adapter.submissions.pop() else {
+            panic!("the window request reaches IO after the check refusal");
+        };
+        assert_eq!(fd, kernel::Fd::new(13));
+        assert!(adapter.submissions.is_empty(), "only the window needs a new kernel operation");
+        let mut events = List::with_capacity(IO_TERMINALS);
+        for event in &adapter.io_events {
+            events.push(event).unwrap();
+        }
+        let [
+            io::Event::Failed { owner: blocker, .. },
+            io::Event::Closed { owner: blocker_closed },
+            io::Event::Failed { owner: check, .. },
+            io::Event::Closed { owner: check_closed },
+            io::Event::Output { up: stream::OutputUp::Settled { outcome: stream::OutputOutcome::Granted, .. }, .. },
+        ] = events.as_slice()
+        else {
+            panic!("IO answers both refusals before granting the channel output: {events:?}");
+        };
+        assert_eq!(
+            [*blocker, *blocker_closed, *check, *check_closed],
+            [Token::new(90), Token::new(90), Token::new(91), Token::new(91)]
+        );
+    }
+
     #[test]
     fn the_kernel_edge_stays_capped_at_its_queue() {
         let mut adapter = adapter(KERNEL_QUEUE, KERNEL_QUEUE);
@@ -1561,7 +1688,6 @@ mod tests {
             kind: kernel::Op::Close { fd: kernel::Fd::new(90) },
             result: Ok(kernel::Done::Nothing),
         });
-        adapter.io_requests.push(io::Request::Close { entity: Token::new(1) });
         adapter.shell_events.push(io::Event::Resized);
         adapter.operations.insert(Token::new(1), Operation::Io(Token::new(1))).expect("one edge route");
         assert_eq!(adapter.backlog(), 0, "kernel and shell edges are outside the backlog");
@@ -1573,8 +1699,9 @@ mod tests {
         adapter.store_requests.push(local_protocol::StoreRequest::Load);
         adapter.store_actions.push(local_protocol::Action::Closed);
         adapter.process_events.push(protocol::ProcessEvent::Exited { agent: Token::new(1), exit: None });
-        // The task's eight internal handoffs each hold one entry.
-        assert_eq!(adapter.backlog(), 8);
+        adapter.io_requests.push(io::Request::Close { entity: Token::new(1) });
+        // Each of the nine internal handoffs holds one entry.
+        assert_eq!(adapter.backlog(), 9);
     }
 
     fn prefetched_adapter(owner: Token) -> ProcessAdapter {

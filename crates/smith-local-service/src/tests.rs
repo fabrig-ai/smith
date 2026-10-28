@@ -193,27 +193,6 @@ fn idle_chat_selection_routes_to_the_store_and_back_before_loading() {
     };
 }
 
-// output_room reserves 64 shell IO requests for one channel transition.
-const IO_EDGE_RESERVATION: u32 = 64;
-
-#[test]
-fn the_local_service_keeps_the_shell_io_edge_minimum() {
-    for mut config in [config(), colocated_config()] {
-        config.limits.queue = IO_EDGE_RESERVATION - 1;
-        let Err(crate::Error::Queue) = Service::new(config, 93) else {
-            panic!("one missing shell IO edge cell refuses startup")
-        };
-    }
-}
-
-#[test]
-fn the_local_service_accepts_only_the_shell_io_edge_minimum() {
-    for mut config in [config(), colocated_config()] {
-        config.limits.queue = IO_EDGE_RESERVATION;
-        Service::new(config, 93).unwrap();
-    }
-}
-
 // Two admitted entrances hold admission, then the line leaves Credential and
 // SaveState waiting on the full shell edge. The watermark is their entry count.
 const HELD_BACKLOG: u32 = 2;
@@ -295,7 +274,6 @@ fn the_backlog_counts_internal_queues_and_never_edges() {
     service.output.push(b"edge".as_slice().into());
     service.shell.push(local::Request::Credential { account: 99 });
     service.interrupt();
-    service.writer_requests().push(skein_io::Request::Close { entity: owner });
     service.writer_events().push(skein_io::Event::Closed { owner });
     assert_eq!(service.backlog(), 0, "all service and process edges are excluded");
     service.local_events.push(local::Event::StateSaved);
@@ -308,6 +286,8 @@ fn the_backlog_counts_internal_queues_and_never_edges() {
     assert_eq!(service.backlog(), 4);
     service.below.process_mut().store_request(smith_local_protocol::StoreRequest::Load);
     assert_eq!(service.backlog(), 5, "process internal handoffs contribute too");
+    service.writer_request(skein_io::Request::Close { entity: owner });
+    assert_eq!(service.backlog(), 6, "writer requests join the internal IO handoff");
 }
 
 #[test]

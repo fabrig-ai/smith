@@ -382,7 +382,7 @@ impl Spawned {
     }
 
     pub(crate) fn measure(&mut self, requests: &mut skein_lib::Queue<skein_io::Request>) {
-        if self.exit.is_some() && !self.measuring && requests.room() > 0 {
+        if self.exit.is_some() && !self.measuring {
             requests.push(skein_io::Request::Usage { owner: USAGE });
             self.measuring = true;
         }

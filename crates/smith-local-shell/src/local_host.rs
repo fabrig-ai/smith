@@ -684,9 +684,8 @@ impl Local {
             }
             writer.reclaim();
         } else {
-            while self.service.writer_requests().room() > 0 {
-                let Some(request) = self.requests.pop() else { break };
-                self.service.writer_requests().push(request);
+            while let Some(request) = self.requests.pop() {
+                self.service.writer_request(request);
             }
         }
     }
