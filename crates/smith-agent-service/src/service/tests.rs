@@ -884,6 +884,11 @@ fn work_pending_waits_on_the_kernel_for_a_pending_message_at_the_watermark() {
 }
 
 mod validity {
+    #![expect(
+        clippy::disallowed_macros,
+        reason = "programming-model.md, section 10.2: deterministic refusal cases use ordinary Rust"
+    )]
+
     use super::*;
 
     mod effects {
@@ -927,7 +932,10 @@ mod validity {
             assert!(effects_valid(&limits, &config.llm_endpoints));
             let mut config = configuration();
             config.limits.file_read = 0;
-            assert!(matches!(Effects::new(config, 1), Err(ConfigError::Limits)));
+            match Effects::new(config, 1) {
+                Err(ConfigError::Limits) => {}
+                other => panic!("expected invalid limits, got {other:?}"),
+            }
         }
     }
 
@@ -983,11 +991,17 @@ mod validity {
                 config.limits.io.receive += 1;
             }
             assert!(!valid(&config.limits, &config.llm_endpoints));
-            assert!(matches!(Service::new(config, 1), Err(ConfigError::Limits)));
+            match Service::new(config, 1) {
+                Err(ConfigError::Limits) => {}
+                other => panic!("expected invalid limits, got {other:?}"),
+            }
         }
         let mut config = configuration();
         config.limits.channel.start_bytes = 0;
         assert!(!valid(&config.limits, &config.llm_endpoints));
-        assert!(matches!(Service::new(config, 1), Err(ConfigError::Limits)));
+        match Service::new(config, 1) {
+            Err(ConfigError::Limits) => {}
+            other => panic!("expected invalid limits, got {other:?}"),
+        }
     }
 }

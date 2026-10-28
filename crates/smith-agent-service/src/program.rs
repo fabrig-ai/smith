@@ -749,7 +749,7 @@ mod validity_tests {
     fn invalid_limits_are_refused() {
         assert!(program_valid(&crate::service::tests::configuration()));
         assert!(program_valid(&configuration()));
-        for case in 0..7 {
+        for case in 0_u8..7 {
             let mut config = configuration();
             match case {
                 0 => config.limits.llm.contract_bytes = u64::MAX,

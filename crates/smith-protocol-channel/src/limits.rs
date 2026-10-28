@@ -167,6 +167,7 @@ pub fn worst_case(limits: &Limits) -> Option<u64> {
 
 /// Whether codec edges and responder capacities fit (programming-model.md, 6.3).
 #[must_use]
+#[expect(clippy::manual_let_else, reason = "programming-model.md, section 10: explicit exhaustive matches")]
 pub fn valid(limits: &Limits) -> bool {
     let schema = match schema(limits) {
         Ok(schema) => schema,

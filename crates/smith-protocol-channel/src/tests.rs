@@ -839,6 +839,7 @@ fn grant_forms_keep_their_policy_at_start_and_refresh() {
 }
 
 #[test]
+#[expect(clippy::disallowed_types, reason = "programming-model.md, section 10.2: deterministic test case table")]
 fn invalid_limits_are_refused() {
     let base = limits();
     assert!(crate::valid(&base));
