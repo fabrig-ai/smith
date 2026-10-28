@@ -442,138 +442,30 @@ fn fill_spec(limits: &Limits) -> Spec {
     }
 }
 
-// Peak ceiling for default full sessions, tool route, bare tail (programming-model.md, section 6.3).
-const FULL_SESSIONS_DEFAULT_TOOL_BARE_CEILING: u64 = 86_000;
+// Peak ceiling for default full sessions across all routes and tails (programming-model.md, section 6.3).
+const FULL_SESSIONS_CEILING: u64 = 110_000;
 
-// Peak ceiling for default full sessions, tool route, service tail (programming-model.md, section 6.3).
-const FULL_SESSIONS_DEFAULT_TOOL_SERVICE_CEILING: u64 = 110_000;
+// Peak ceiling for 16 full sessions with large histories across all routes and tails (programming-model.md, section 6.3).
+const LARGE_HISTORY_SESSIONS_CEILING: u64 = 2_900_000;
 
-// Peak ceiling for default full sessions, invalid route, bare tail (programming-model.md, section 6.3).
-const FULL_SESSIONS_DEFAULT_INVALID_BARE_CEILING: u64 = 85_000;
+// Peak ceiling for 64 full sessions with small histories across all routes and tails (programming-model.md, section 6.3).
+const MANY_SESSIONS_CEILING: u64 = 2_000_000;
 
-// Peak ceiling for default full sessions, invalid route, service tail (programming-model.md, section 6.3).
-const FULL_SESSIONS_DEFAULT_INVALID_SERVICE_CEILING: u64 = 110_000;
-
-// Peak ceiling for default full sessions, talk route, bare tail (programming-model.md, section 6.3).
-const FULL_SESSIONS_DEFAULT_TALK_BARE_CEILING: u64 = 84_000;
-
-// Peak ceiling for default full sessions, talk route, service tail (programming-model.md, section 6.3).
-const FULL_SESSIONS_DEFAULT_TALK_SERVICE_CEILING: u64 = 110_000;
-
-// Peak ceiling for 16 full sessions with large histories, tool route, bare tail (programming-model.md, section 6.3).
-const FULL_SESSIONS_LARGE_TOOL_BARE_CEILING: u64 = 1_600_000;
-
-// Peak ceiling for 16 full sessions with large histories, tool route, service tail (programming-model.md, section 6.3).
-const FULL_SESSIONS_LARGE_TOOL_SERVICE_CEILING: u64 = 2_900_000;
-
-// Peak ceiling for 16 full sessions with large histories, invalid route, bare tail (programming-model.md, section 6.3).
-const FULL_SESSIONS_LARGE_INVALID_BARE_CEILING: u64 = 1_500_000;
-
-// Peak ceiling for 16 full sessions with large histories, invalid route, service tail (programming-model.md, section 6.3).
-const FULL_SESSIONS_LARGE_INVALID_SERVICE_CEILING: u64 = 2_900_000;
-
-// Peak ceiling for 16 full sessions with large histories, talk route, bare tail (programming-model.md, section 6.3).
-const FULL_SESSIONS_LARGE_TALK_BARE_CEILING: u64 = 1_500_000;
-
-// Peak ceiling for 16 full sessions with large histories, talk route, service tail (programming-model.md, section 6.3).
-const FULL_SESSIONS_LARGE_TALK_SERVICE_CEILING: u64 = 2_800_000;
-
-// Peak ceiling for 64 full sessions with small histories, tool route, bare tail (programming-model.md, section 6.3).
-const FULL_SESSIONS_MANY_TOOL_BARE_CEILING: u64 = 590_000;
-
-// Peak ceiling for 64 full sessions with small histories, tool route, service tail (programming-model.md, section 6.3).
-const FULL_SESSIONS_MANY_TOOL_SERVICE_CEILING: u64 = 2_000_000;
-
-// Peak ceiling for 64 full sessions with small histories, invalid route, bare tail (programming-model.md, section 6.3).
-const FULL_SESSIONS_MANY_INVALID_BARE_CEILING: u64 = 520_000;
-
-// Peak ceiling for 64 full sessions with small histories, invalid route, service tail (programming-model.md, section 6.3).
-const FULL_SESSIONS_MANY_INVALID_SERVICE_CEILING: u64 = 1_900_000;
-
-// Peak ceiling for 64 full sessions with small histories, talk route, bare tail (programming-model.md, section 6.3).
-const FULL_SESSIONS_MANY_TALK_BARE_CEILING: u64 = 520_000;
-
-// Peak ceiling for 64 full sessions with small histories, talk route, service tail (programming-model.md, section 6.3).
-const FULL_SESSIONS_MANY_TALK_SERVICE_CEILING: u64 = 1_900_000;
-
-// Peak ceiling for 16 full sessions with maximum batch width, tool route, bare tail (programming-model.md, section 6.3).
-const FULL_SESSIONS_WIDE_TOOL_BARE_CEILING: u64 = 290_000;
-
-// Peak ceiling for 16 full sessions with maximum batch width, tool route, service tail (programming-model.md, section 6.3).
-const FULL_SESSIONS_WIDE_TOOL_SERVICE_CEILING: u64 = 3_000_000;
-
-// Peak ceiling for 16 full sessions with maximum batch width, invalid route, bare tail (programming-model.md, section 6.3).
-const FULL_SESSIONS_WIDE_INVALID_BARE_CEILING: u64 = 280_000;
-
-// Peak ceiling for 16 full sessions with maximum batch width, invalid route, service tail (programming-model.md, section 6.3).
-const FULL_SESSIONS_WIDE_INVALID_SERVICE_CEILING: u64 = 3_000_000;
-
-// Peak ceiling for 16 full sessions with maximum batch width, talk route, bare tail (programming-model.md, section 6.3).
-const FULL_SESSIONS_WIDE_TALK_BARE_CEILING: u64 = 270_000;
-
-// Peak ceiling for 16 full sessions with maximum batch width, talk route, service tail (programming-model.md, section 6.3).
-const FULL_SESSIONS_WIDE_TALK_SERVICE_CEILING: u64 = 3_000_000;
+// Peak ceiling for 16 full sessions with maximum batch width across all routes and tails (programming-model.md, section 6.3).
+const WIDE_SESSIONS_CEILING: u64 = 3_000_000;
 
 #[test]
 fn a_domain_with_every_session_full_stays_under_its_scenario_ceilings() {
-    for (limits, ceilings) in [
-        (
-            LIMITS,
-            [
-                FULL_SESSIONS_DEFAULT_TOOL_BARE_CEILING,
-                FULL_SESSIONS_DEFAULT_TOOL_SERVICE_CEILING,
-                FULL_SESSIONS_DEFAULT_INVALID_BARE_CEILING,
-                FULL_SESSIONS_DEFAULT_INVALID_SERVICE_CEILING,
-                FULL_SESSIONS_DEFAULT_TALK_BARE_CEILING,
-                FULL_SESSIONS_DEFAULT_TALK_SERVICE_CEILING,
-            ],
-        ),
-        (
-            Limits { sessions: 16, spend: 1, history_bytes: 65_536, ..LIMITS },
-            [
-                FULL_SESSIONS_LARGE_TOOL_BARE_CEILING,
-                FULL_SESSIONS_LARGE_TOOL_SERVICE_CEILING,
-                FULL_SESSIONS_LARGE_INVALID_BARE_CEILING,
-                FULL_SESSIONS_LARGE_INVALID_SERVICE_CEILING,
-                FULL_SESSIONS_LARGE_TALK_BARE_CEILING,
-                FULL_SESSIONS_LARGE_TALK_SERVICE_CEILING,
-            ],
-        ),
-        (
-            Limits { sessions: 64, spend: 1, history_messages: 8, history_bytes: 600, ..LIMITS },
-            [
-                FULL_SESSIONS_MANY_TOOL_BARE_CEILING,
-                FULL_SESSIONS_MANY_TOOL_SERVICE_CEILING,
-                FULL_SESSIONS_MANY_INVALID_BARE_CEILING,
-                FULL_SESSIONS_MANY_INVALID_SERVICE_CEILING,
-                FULL_SESSIONS_MANY_TALK_BARE_CEILING,
-                FULL_SESSIONS_MANY_TALK_SERVICE_CEILING,
-            ],
-        ),
-        (
-            Limits { sessions: 16, spend: 1, parallel_tools: MAX_PARALLEL, ..LIMITS },
-            [
-                FULL_SESSIONS_WIDE_TOOL_BARE_CEILING,
-                FULL_SESSIONS_WIDE_TOOL_SERVICE_CEILING,
-                FULL_SESSIONS_WIDE_INVALID_BARE_CEILING,
-                FULL_SESSIONS_WIDE_INVALID_SERVICE_CEILING,
-                FULL_SESSIONS_WIDE_TALK_BARE_CEILING,
-                FULL_SESSIONS_WIDE_TALK_SERVICE_CEILING,
-            ],
-        ),
+    for (limits, ceiling) in [
+        (LIMITS, FULL_SESSIONS_CEILING),
+        (Limits { sessions: 16, spend: 1, history_bytes: 65_536, ..LIMITS }, LARGE_HISTORY_SESSIONS_CEILING),
+        (Limits { sessions: 64, spend: 1, history_messages: 8, history_bytes: 600, ..LIMITS }, MANY_SESSIONS_CEILING),
+        (Limits { sessions: 16, spend: 1, parallel_tools: MAX_PARALLEL, ..LIMITS }, WIDE_SESSIONS_CEILING),
     ] {
-        for ((route, full_service), ceiling) in [
-            (Route::Tool, false),
-            (Route::Tool, true),
-            (Route::Invalid, false),
-            (Route::Invalid, true),
-            (Route::Talk, false),
-            (Route::Talk, true),
-        ]
-        .into_iter()
-        .zip(ceilings)
-        {
-            fill(&limits, route, full_service, ceiling);
+        for route in [Route::Tool, Route::Invalid, Route::Talk] {
+            for full_service in [false, true] {
+                fill(&limits, route, full_service, ceiling);
+            }
         }
     }
 }
@@ -1112,11 +1004,8 @@ fn provider_admission_and_owned_result_space_have_exact_and_one_short_controls()
     }
 }
 
-// Peak ceiling for exact provider admission (programming-model.md, section 6.3).
-const EXACT_PROVIDER_ADMISSION_CEILING: u64 = 84_000;
-
-// Peak ceiling for one-short provider admission (programming-model.md, section 6.3).
-const SHORT_PROVIDER_ADMISSION_CEILING: u64 = 83_000;
+// Peak ceiling for exact and one-short provider admission (programming-model.md, section 6.3).
+const PROVIDER_ADMISSION_CEILING: u64 = 84_000;
 
 fn check_provider_admission(base: &Limits, exact: u64) {
     for history_bytes in [exact - 1, exact] {
@@ -1125,8 +1014,7 @@ fn check_provider_admission(base: &Limits, exact: u64) {
         let mut out = Queue::with_capacity(max_out(&limits));
         let meter = Meter::new();
         let mut domain = Domain::new(&limits, 11);
-        let bound =
-            if history_bytes == exact { EXACT_PROVIDER_ADMISSION_CEILING } else { SHORT_PROVIDER_ADMISSION_CEILING };
+        let bound = PROVIDER_ADMISSION_CEILING;
         let seen = measured_step(
             &mut domain,
             &env,
@@ -1371,23 +1259,14 @@ fn missing_completion(field: u64) -> Completion {
     }
 }
 
-// Peak ceiling for compaction at the original four-message cap (programming-model.md, section 6.3).
-const FOUR_MESSAGES_TOOL_CEILING: u64 = 86_000;
-
-// Peak ceiling for four-message compaction with an invalid call (programming-model.md, section 6.3).
-const FOUR_MESSAGES_INVALID_CEILING: u64 = 85_000;
-
-// Peak ceiling for four-message compaction with a talk result (programming-model.md, section 6.3).
-const FOUR_MESSAGES_TALK_CEILING: u64 = 84_000;
+// Peak ceiling for four-message compaction across all routes (programming-model.md, section 6.3).
+const FOUR_MESSAGES_CEILING: u64 = 86_000;
 
 #[test]
 fn the_four_message_cap_asks_for_compaction_before_provider_growth() {
     let original = Limits { history_messages: 4, ..LIMITS };
-    for (route, bound) in [
-        (Route::Tool, FOUR_MESSAGES_TOOL_CEILING),
-        (Route::Invalid, FOUR_MESSAGES_INVALID_CEILING),
-        (Route::Talk, FOUR_MESSAGES_TALK_CEILING),
-    ] {
+    let bound = FOUR_MESSAGES_CEILING;
+    for route in [Route::Tool, Route::Invalid, Route::Talk] {
         let (mut limits, _, output, field) = pressure_limits(&original, route, original.history_messages);
         limits.history_messages = original.history_messages;
         assert_eq!(limits.history_messages - 3, 1, "one cell cannot hold an assistant and its results");
