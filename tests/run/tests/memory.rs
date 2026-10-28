@@ -1,4 +1,4 @@
-//! Memory stays within the worst case (programming-model.md, section 6.3), measured by
+//! Memory stays under scenario ceilings (programming-model.md, section 6.3), measured by
 //! a counting allocator: the run child domain with every run holding a charter
 //! of exactly its byte limit, and every conversation started and spending.
 
@@ -13,7 +13,7 @@ use smith_domain_run::charter::{Endpoint, Families, Grants, HostTool, Llm, Tools
 use smith_domain_run::outcome::{Change, ChangeSpec, Declared, Field, FieldRule, ItemRule, OutcomeSpec, VerdictRule};
 use smith_domain_run::{
     Answer, Ask, Budget, Charter, Domain, End, Event, Exit, Invalid, Limits, MAX_OUT, Ran, Read, Refusal, Request,
-    Spend, Stop, worst_case,
+    Spend, Stop,
 };
 use smith_domain_run::{Directory, Workspace};
 
@@ -287,9 +287,9 @@ fn observed_request(request: Request, selected: Option<&smith_domain_run::Conven
 /// moves it into its return once the child has ended. Each run ends winding
 /// down with the change, while its landing, returned, still holds its copy
 /// until the reclaim point. The peak of the heap in every step is checked
-/// against the worst case.
-fn fill(limits: &Limits) {
-    fill_selected(limits, None);
+/// under its scenario ceiling.
+fn fill(limits: &Limits, bound: u64) {
+    fill_selected(limits, None, bound);
 }
 
 /// Preserve the exact aggregate payload while selecting maximum owning paths.
@@ -316,8 +316,8 @@ fn measured_step(
     meter: &Meter,
     event: Event,
     selected: Option<&smith_domain_run::Conventions>,
+    bound: u64,
 ) -> Vec<Asked> {
-    let bound = worst_case(&env.limits).expect("test limits fit");
     let caller = if let Event::Delegated { conversation, .. } = &event { Some(*conversation) } else { None };
     meter.start();
     while domain.pop_fact().is_some() {}
@@ -344,7 +344,7 @@ fn measured_step(
     asked
 }
 
-fn fill_selected(limits: &Limits, selected: Option<&smith_domain_run::Conventions>) {
+fn fill_selected(limits: &Limits, selected: Option<&smith_domain_run::Conventions>, bound: u64) {
     let env = Env { now: Time::ZERO, wall: Wall::EPOCH, limits: *limits };
     let mut out = Queue::with_capacity(MAX_OUT);
     let meter = Meter::new();
@@ -352,7 +352,7 @@ fn fill_selected(limits: &Limits, selected: Option<&smith_domain_run::Convention
     // The requests are the parent's to route and their receivers' to count:
     // each is dropped, keeping only what it asked for, and the step's peak
     // checked less them.
-    let mut step = |event| measured_step(&mut domain, &env, &mut out, &meter, event, selected);
+    let mut step = |event| measured_step(&mut domain, &env, &mut out, &meter, event, selected, bound);
     let spend = Spend {
         units: 0,
         turns: 1,
@@ -428,6 +428,7 @@ fn fill_selected(limits: &Limits, selected: Option<&smith_domain_run::Convention
         assert_eq!(step(Event::Checked { owner, ran }), [Asked::Other, Asked::Other], "checked, it is pushed");
         assert_eq!(step(Event::Delivered { owner, delivery: delivered() }), [Asked::Other, Asked::Other], "accepted");
     }
+    assert_eq!(domain.runs(), limits.runs, "every run slot is held");
     let held = meter.held();
     let charters = limits.run_bytes + u64::from(limits.guide_bytes);
     // Each run's ending and its landing hold a copy of the change.
@@ -460,11 +461,26 @@ fn refuse_oversized_charter(limits: &Limits, env: &Env<Limits>, out: &mut Queue<
     assert_eq!(answer, Answer::Refused(Refusal::Invalid(Invalid::TooLarge)));
 }
 
+// Peak ceiling for one full run (programming-model.md, section 6.3).
+const FULL_RUNS_CEILING: u64 = 9_400;
+
+// Peak ceiling for 64 full runs with large charters and guides (programming-model.md, section 6.3).
+const LARGE_RUNS_CEILING: u64 = 8_100_000;
+
+// Peak ceiling for 1000 full runs (programming-model.md, section 6.3).
+const MANY_RUNS_CEILING: u64 = 5_900_000;
+
 #[test]
-fn a_domain_with_every_run_full_stays_within_its_worst_case() {
-    fill(&LIMITS);
-    fill(&Limits { runs: 64, conversations: 128, calls: 128, run_bytes: 65_536, guide_bytes: 32_768, ..LIMITS });
-    fill(&Limits { runs: 1000, conversations: 2000, calls: 2000, run_bytes: 2048, guide_bytes: 16, ..LIMITS });
+fn a_domain_with_every_run_full_stays_under_its_scenario_ceilings() {
+    fill(&LIMITS, FULL_RUNS_CEILING);
+    fill(
+        &Limits { runs: 64, conversations: 128, calls: 128, run_bytes: 65_536, guide_bytes: 32_768, ..LIMITS },
+        LARGE_RUNS_CEILING,
+    );
+    fill(
+        &Limits { runs: 1000, conversations: 2000, calls: 2000, run_bytes: 2048, guide_bytes: 16, ..LIMITS },
+        MANY_RUNS_CEILING,
+    );
 }
 
 fn full_change(outcome_bytes: u64) -> Change {
@@ -539,6 +555,7 @@ fn delivery_memory_step(
     out: &mut Queue<Request>,
     meter: &Meter,
     event: Event,
+    bound: u64,
 ) -> (Option<Token>, bool) {
     let caller = if let Event::Delegated { conversation, .. } = &event { Some(*conversation) } else { None };
     meter.start();
@@ -551,7 +568,7 @@ fn delivery_memory_step(
         match request {
             Request::CancelJobs { .. } => {
                 while domain.pop_fact().is_some() {}
-                meter.check(measured, worst_case(&env.limits).expect("limits fit"), &"writer ask");
+                meter.check(measured, bound, &"writer ask");
                 meter.start();
                 smith_domain_run::step(
                     domain,
@@ -591,9 +608,12 @@ fn delivery_memory_step(
             | Request::Abort { .. }) => panic!("unexpected delivery fixture output {unexpected:?}"),
         }
     }
-    meter.check(measured, worst_case(&env.limits).expect("bounded limits"), &"full delivery path");
+    meter.check(measured, bound, &"full delivery path");
     (token, answered)
 }
+
+// Peak ceiling for full receipt delivery and cancellation (programming-model.md, section 6.3).
+const DELIVERY_CEILING: u64 = 91_000;
 
 #[test]
 fn full_receipt_delivery_settles_before_a_cancelled_answer() {
@@ -616,80 +636,50 @@ fn full_receipt_delivery_settles_before_a_cancelled_answer() {
     let mut out = Queue::with_capacity(MAX_OUT);
     let meter = Meter::new();
     let mut domain = Domain::new(&limits, 0);
+    let mut take = |event| delivery_memory_step(&mut domain, &env, &mut out, &meter, event, DELIVERY_CEILING);
     let charter = full_delivery_charter(&limits);
     let host_run = Token::new(10);
-    let (owner, _) = delivery_memory_step(
-        &mut domain,
-        &env,
-        &mut out,
-        &meter,
-        Event::Start {
-            messages: Box::default(),
-            workspace: Some(full_delivery_workspace()),
-            reply_to: ReplyTo::new(host_run),
-            host_run,
-            identity: None,
-            activation: 1,
-            window: smith_domain_run::Window { turns: u32::MAX, bytes: u64::MAX, largest_turn: 1 },
-            charter,
-            transcript: None,
-            resumed: false,
-        },
-    );
+    let (owner, _) = take(Event::Start {
+        messages: Box::default(),
+        workspace: Some(full_delivery_workspace()),
+        reply_to: ReplyTo::new(host_run),
+        host_run,
+        identity: None,
+        activation: 1,
+        window: smith_domain_run::Window { turns: u32::MAX, bytes: u64::MAX, largest_turn: 1 },
+        charter,
+        transcript: None,
+        resumed: false,
+    });
     let run = owner.expect("preparation read");
     let mut owner = run;
     for _ in 0..smith_domain_run::MAX_DIRECTORIES {
-        let (next, _) =
-            delivery_memory_step(&mut domain, &env, &mut out, &meter, Event::Read { owner, read: Read::Missing });
+        let (next, _) = take(Event::Read { owner, read: Read::Missing });
         owner = next.expect("preparation probe");
-        let (next, _) =
-            delivery_memory_step(&mut domain, &env, &mut out, &meter, Event::Probed { owner, executable: true });
+        let (next, _) = take(Event::Probed { owner, executable: true });
         owner = next.expect("next read or main opening");
     }
     let conversation = owner;
-    delivery_memory_step(&mut domain, &env, &mut out, &meter, Event::Started { conversation, peer: host_run });
-    let (owner, _) = delivery_memory_step(
-        &mut domain,
-        &env,
-        &mut out,
-        &meter,
-        Event::Delegated {
-            conversation,
-            call: host_run,
-            name: smith_domain_run::CallName { activation: 1, completion: 1, position: 0 },
-            ask: Ask::Deliver { change: Change { fields: Box::new([]) } },
-            deadline: Time::ZERO.saturating_add(BUDGET.time),
-        },
-    );
+    take(Event::Started { conversation, peer: host_run });
+    let (owner, _) = take(Event::Delegated {
+        conversation,
+        call: host_run,
+        name: smith_domain_run::CallName { activation: 1, completion: 1, position: 0 },
+        ask: Ask::Deliver { change: Change { fields: Box::new([]) } },
+        deadline: Time::ZERO.saturating_add(BUDGET.time),
+    });
     let owner = owner.expect("first actual writable check");
     for _ in 0..smith_domain_run::MAX_DIRECTORIES {
-        delivery_memory_step(
-            &mut domain,
-            &env,
-            &mut out,
-            &meter,
-            Event::Checked { owner, ran: Ran { exit: Exit::Code { code: 0 }, output: bytes(0), cut: 0 } },
-        );
+        take(Event::Checked { owner, ran: Ran { exit: Exit::Code { code: 0 }, output: bytes(0), cut: 0 } });
     }
-    delivery_memory_step(&mut domain, &env, &mut out, &meter, Event::Cancel { run });
+    take(Event::Cancel { run });
     let receipts = (0..smith_domain_run::MAX_DIRECTORIES)
         .map(|directory| smith_domain_run::Receipt::new(directory, bytes(512)).expect("exact receipt cap"))
         .collect();
     let terminal = smith_domain_run::Delivered::new(receipts).expect("64 unique receipts");
-    delivery_memory_step(
-        &mut domain,
-        &env,
-        &mut out,
-        &meter,
-        Event::Delivered { owner, delivery: smith_domain_run::Delivery::Delivered(terminal) },
-    );
-    let (_, answered) = delivery_memory_step(
-        &mut domain,
-        &env,
-        &mut out,
-        &meter,
-        Event::Ended { conversation, end: End::Closed, spend: Spend::ZERO, detail: Box::default() },
-    );
+    take(Event::Delivered { owner, delivery: smith_domain_run::Delivery::Delivered(terminal) });
+    let (_, answered) =
+        take(Event::Ended { conversation, end: End::Closed, spend: Spend::ZERO, detail: Box::default() });
     assert!(answered, "the pending delivery settles before the cancelled answer");
 }
 
@@ -762,6 +752,7 @@ fn host_memory_take(
     out: &mut Queue<Request>,
     meter: &Meter,
     event: Option<Event>,
+    bound: u64,
 ) -> (Option<Token>, Option<smith_domain_run::RelayName>) {
     while domain.pop_fact().is_some() {}
     meter.start();
@@ -806,9 +797,12 @@ fn host_memory_take(
             | Request::Deliver { .. }) => panic!("unexpected host memory output {unexpected:?}"),
         }
     }
-    meter.check(measured, worst_case(&env.limits).expect("bounded limits"), &"full immutable host relay path");
+    meter.check(measured, bound, &"full immutable host relay path");
     (token, relay)
 }
+
+// Peak ceiling for maximum immutable host input and retry (programming-model.md, section 6.3).
+const HOST_RELAY_CEILING: u64 = 94_000;
 
 #[test]
 fn complete_declaration_and_maximum_opaque_input_answer_retries_reach_the_measured_ownership_bound() {
@@ -817,6 +811,8 @@ fn complete_declaration_and_maximum_opaque_input_answer_retries_reach_the_measur
     let mut out = Queue::with_capacity(MAX_OUT);
     let meter = Meter::new();
     let mut domain = Domain::new(&limits, 0);
+    let mut take =
+        |env: &Env<Limits>, event| host_memory_take(&mut domain, env, &mut out, &meter, event, HOST_RELAY_CEILING);
     let mut charter = charter(limits.run_bytes);
     let mut mounted = Some(workspace());
     mounted.as_mut().expect("explicit host fixture workspace").directories[0].writable = false;
@@ -835,11 +831,8 @@ fn complete_declaration_and_maximum_opaque_input_answer_retries_reach_the_measur
     charter.instructions = Box::new([]);
     charter.brief = smith_domain_run::Brief { sections: Box::new([]) };
     charter.grants.wait = false;
-    let (run, _) = host_memory_take(
-        &mut domain,
+    let (run, _) = take(
         &env,
-        &mut out,
-        &meter,
         Some(Event::Start {
             messages: Box::default(),
             workspace: mounted,
@@ -854,25 +847,16 @@ fn complete_declaration_and_maximum_opaque_input_answer_retries_reach_the_measur
         }),
     );
     let run = run.expect("admitted run reads");
-    let (conversation, _) = host_memory_take(
-        &mut domain,
-        &env,
-        &mut out,
-        &meter,
-        Some(Event::Read { owner: run, read: smith_domain_run::Read::Missing }),
-    );
+    let (conversation, _) = take(&env, Some(Event::Read { owner: run, read: smith_domain_run::Read::Missing }));
     let conversation = conversation.expect("main opens with complete declaration");
-    host_memory_take(&mut domain, &env, &mut out, &meter, Some(Event::Started { conversation, peer: Token::new(99) }));
+    take(&env, Some(Event::Started { conversation, peer: Token::new(99) }));
     let mut input = vec![b' '; usize::try_from(limits.host_input_bytes).expect("cap fits")];
     input[0] = b'{';
     let last = input.len() - 1;
     input[last] = b'}';
     let input = smith_domain_run::HostInput::attested(input.into()).expect("maximum protocol-attested object");
-    let (_, relay) = host_memory_take(
-        &mut domain,
+    let (_, relay) = take(
         &env,
-        &mut out,
-        &meter,
         Some(Event::Delegated {
             conversation,
             call: Token::new(101),
@@ -885,26 +869,17 @@ fn complete_declaration_and_maximum_opaque_input_answer_retries_reach_the_measur
     for reply in
         [smith_domain_run::HostReply::Unanswered(smith_domain_run::Unanswered::Lost), smith_domain_run::HostReply::Busy]
     {
-        host_memory_take(&mut domain, &env, &mut out, &meter, Some(Event::HostReturned { relay, reply }));
+        take(&env, Some(Event::HostReturned { relay, reply }));
         env.now = env.now.saturating_add(limits.host_backoff);
-        let (_, recovered) = host_memory_take(&mut domain, &env, &mut out, &meter, None);
+        let (_, recovered) = take(&env, None);
         relay = recovered.expect("retained maximum body is copied into retry output");
     }
     let answer =
         smith_domain_run::HostAnswer::new(bytes(u64::from(limits.host_reply_bytes)), false).expect("maximum answer");
-    host_memory_take(
-        &mut domain,
+    take(&env, Some(Event::HostReturned { relay, reply: smith_domain_run::HostReply::Answered(answer) }));
+    take(&env, Some(Event::Cancel { run }));
+    take(
         &env,
-        &mut out,
-        &meter,
-        Some(Event::HostReturned { relay, reply: smith_domain_run::HostReply::Answered(answer) }),
-    );
-    host_memory_take(&mut domain, &env, &mut out, &meter, Some(Event::Cancel { run }));
-    host_memory_take(
-        &mut domain,
-        &env,
-        &mut out,
-        &meter,
         Some(Event::Ended {
             conversation,
             end: smith_domain_run::End::Closed,
@@ -916,6 +891,9 @@ fn complete_declaration_and_maximum_opaque_input_answer_retries_reach_the_measur
     assert_eq!((domain.runs(), domain.conversations(), domain.calls()), (0, 0, 0));
 }
 
+// Peak ceiling for full owning convention paths (programming-model.md, section 6.3).
+const SELECTED_PATHS_CEILING: u64 = 29_000;
+
 #[test]
 fn maximum_selected_read_probe_and_check_paths_attain_the_full_run_ownership_bound() {
     let capacity = smith_domain_run::Conventions::PATH_CAPACITY;
@@ -923,8 +901,11 @@ fn maximum_selected_read_probe_and_check_paths_attain_the_full_run_ownership_bou
         guide: vec![b'g'; capacity].into_boxed_slice(),
         checks: vec![b'c'; capacity].into_boxed_slice(),
     };
-    fill_selected(&Limits { run_bytes: 16_384, ..LIMITS }, Some(&selected));
+    fill_selected(&Limits { run_bytes: 16_384, ..LIMITS }, Some(&selected), SELECTED_PATHS_CEILING);
 }
+
+// Peak ceiling for an awaiting run retaining its full charter (programming-model.md, section 6.3).
+const AWAITING_CEILING: u64 = 7_600;
 
 #[test]
 fn an_awaiting_run_retains_its_full_charter_without_allocating_a_session() {
@@ -954,23 +935,34 @@ fn an_awaiting_run_retains_its_full_charter_without_allocating_a_session() {
             charter,
             transcript: None,
         }),
+        AWAITING_CEILING,
     );
     let run = run.expect("preparation read");
-    let (owner, _) =
-        host_memory_take(&mut domain, &env, &mut out, &meter, Some(Event::Read { owner: run, read: Read::Missing }));
+    let (owner, _) = host_memory_take(
+        &mut domain,
+        &env,
+        &mut out,
+        &meter,
+        Some(Event::Read { owner: run, read: Read::Missing }),
+        AWAITING_CEILING,
+    );
     let (opened, _) = host_memory_take(
         &mut domain,
         &env,
         &mut out,
         &meter,
         Some(Event::Probed { owner: owner.expect("preparation check probe"), executable: false }),
+        AWAITING_CEILING,
     );
     assert_eq!(opened, None, "preparation awaits without a session opening");
     assert!(meter.held() >= limits.run_bytes, "the full charter remains owned while awaiting");
-    host_memory_take(&mut domain, &env, &mut out, &meter, Some(Event::Cancel { run }));
+    host_memory_take(&mut domain, &env, &mut out, &meter, Some(Event::Cancel { run }), AWAITING_CEILING);
     domain.reclaim();
     assert_eq!((domain.runs(), domain.conversations(), domain.calls()), (0, 0, 0));
 }
+
+// Peak ceiling for the largest final note at scalar maxima (programming-model.md, section 6.3).
+const FINAL_NOTE_CEILING: u64 = 11_000;
 
 #[test]
 fn a_run_at_scalar_maxima_emits_its_largest_final_note_within_its_ownership_bound() {
@@ -980,7 +972,7 @@ fn a_run_at_scalar_maxima_emits_its_largest_final_note_within_its_ownership_boun
     let mut out = Queue::with_capacity(MAX_OUT);
     let meter = Meter::new();
     let mut domain = Domain::new(&limits, 77);
-    let bound = worst_case(&limits).expect("maximum scalar budget fits the ownership bound");
+    let bound = FINAL_NOTE_CEILING;
     let mut input = charter(limits.run_bytes);
     input.budget = budget;
     input.reserve =

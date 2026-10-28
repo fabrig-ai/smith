@@ -166,7 +166,7 @@ pub fn worst_case(limits: &Limits) -> Option<u64> {
     let runs = Slab::<Run>::worst_case(limits.runs)?;
     let ready = crate::wind_down::Ready::worst_case(limits.runs)?;
     let conversations = Slab::<Conversation>::worst_case(limits.conversations)?;
-    // A deadline per run, and two per call.
+    // Two deadlines per run and two per call.
     let alarms = Deadlines::<Alarm>::worst_case(alarms(limits)?)?;
     // Each run holds its charter, including both convention path payloads, up
     // to its byte limit (inline path wrappers are in Slab<Run>), and what it found in

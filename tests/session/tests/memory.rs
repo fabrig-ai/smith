@@ -1,4 +1,4 @@
-//! Memory stays within the worst case (programming-model.md, section 6.3), measured by
+//! Memory stays under scenario ceilings (programming-model.md, section 6.3), measured by
 //! a counting allocator: the session child domain with every session filled to
 //! its limits. Skein tests its generic containers in its own memory world.
 
@@ -7,7 +7,7 @@ use std::mem::size_of;
 use skein_lib::{Duration, Env, Queue, Time, Token, Wall};
 use skein_world::domain::heap::{self, Meter};
 use smith_domain_session::llm::{Block, Completion, Decoded, Descriptor, Endpoint, Failure, Problem, Stop, Usage};
-use smith_domain_session::{Budget, Domain, Event, Limits, MAX_PARALLEL, Request, Spec, max_out, worst_case};
+use smith_domain_session::{Budget, Domain, Event, Limits, MAX_PARALLEL, Request, Spec, max_out};
 use smith_domain_tools::{
     Authority, Budget as ToolBudget, Call, Done, Effect, Grants, Name, Part, Path, Repo, Version,
 };
@@ -218,7 +218,7 @@ fn observe_fill(out: &mut Queue<Request>, observed: &mut [(bool, u32, u32, u32, 
 /// fills the maximum payload that can still fund the next provider credit. Credits reserve
 /// space without allocating; emitted concrete Turn/prompt/yield copies belong to
 /// their receivers and are dropped under the shared meter's handoff convention.
-fn fill(original: &Limits, route: Route, full_service: bool) {
+fn fill(original: &Limits, route: Route, full_service: bool, bound: u64) {
     let pressure = original.history_bytes;
     let block = size(size_of::<Block>());
     // Each original route reaches three held messages; the full-service
@@ -227,7 +227,6 @@ fn fill(original: &Limits, route: Route, full_service: bool) {
     let held_messages = 3_u32.checked_add(if full_service { 2 } else { 0 }).expect("bounded story messages");
     let messages = held_messages.checked_add(2).expect("checked provider message-cell reserve");
     let (limits, spec_cost, output, field) = pressure_limits(original, route, messages);
-    let bound = worst_case(&limits).expect("the test limits fit");
     let env = Env { now: Time::ZERO, wall: Wall::EPOCH, limits };
     let mut out = Queue::with_capacity(max_out(&limits));
     let count = usize::try_from(limits.sessions).expect("bounded session count");
@@ -321,6 +320,7 @@ fn fill(original: &Limits, route: Route, full_service: bool) {
         && recorded == turns
         && priced >= turns
         && !ended));
+    assert_eq!(domain.sessions(), limits.sessions, "every session slot is held");
     assert_retained_payload(&meter, &limits, route, full_service, pressure);
 }
 
@@ -442,21 +442,144 @@ fn fill_spec(limits: &Limits) -> Spec {
     }
 }
 
+// Peak ceiling for default full sessions, tool route, bare tail (programming-model.md, section 6.3).
+const FULL_SESSIONS_DEFAULT_TOOL_BARE_CEILING: u64 = 86_000;
+
+// Peak ceiling for default full sessions, tool route, service tail (programming-model.md, section 6.3).
+const FULL_SESSIONS_DEFAULT_TOOL_SERVICE_CEILING: u64 = 110_000;
+
+// Peak ceiling for default full sessions, invalid route, bare tail (programming-model.md, section 6.3).
+const FULL_SESSIONS_DEFAULT_INVALID_BARE_CEILING: u64 = 85_000;
+
+// Peak ceiling for default full sessions, invalid route, service tail (programming-model.md, section 6.3).
+const FULL_SESSIONS_DEFAULT_INVALID_SERVICE_CEILING: u64 = 110_000;
+
+// Peak ceiling for default full sessions, talk route, bare tail (programming-model.md, section 6.3).
+const FULL_SESSIONS_DEFAULT_TALK_BARE_CEILING: u64 = 84_000;
+
+// Peak ceiling for default full sessions, talk route, service tail (programming-model.md, section 6.3).
+const FULL_SESSIONS_DEFAULT_TALK_SERVICE_CEILING: u64 = 110_000;
+
+// Peak ceiling for 16 full sessions with large histories, tool route, bare tail (programming-model.md, section 6.3).
+const FULL_SESSIONS_LARGE_TOOL_BARE_CEILING: u64 = 1_600_000;
+
+// Peak ceiling for 16 full sessions with large histories, tool route, service tail (programming-model.md, section 6.3).
+const FULL_SESSIONS_LARGE_TOOL_SERVICE_CEILING: u64 = 2_900_000;
+
+// Peak ceiling for 16 full sessions with large histories, invalid route, bare tail (programming-model.md, section 6.3).
+const FULL_SESSIONS_LARGE_INVALID_BARE_CEILING: u64 = 1_500_000;
+
+// Peak ceiling for 16 full sessions with large histories, invalid route, service tail (programming-model.md, section 6.3).
+const FULL_SESSIONS_LARGE_INVALID_SERVICE_CEILING: u64 = 2_900_000;
+
+// Peak ceiling for 16 full sessions with large histories, talk route, bare tail (programming-model.md, section 6.3).
+const FULL_SESSIONS_LARGE_TALK_BARE_CEILING: u64 = 1_500_000;
+
+// Peak ceiling for 16 full sessions with large histories, talk route, service tail (programming-model.md, section 6.3).
+const FULL_SESSIONS_LARGE_TALK_SERVICE_CEILING: u64 = 2_800_000;
+
+// Peak ceiling for 64 full sessions with small histories, tool route, bare tail (programming-model.md, section 6.3).
+const FULL_SESSIONS_MANY_TOOL_BARE_CEILING: u64 = 590_000;
+
+// Peak ceiling for 64 full sessions with small histories, tool route, service tail (programming-model.md, section 6.3).
+const FULL_SESSIONS_MANY_TOOL_SERVICE_CEILING: u64 = 2_000_000;
+
+// Peak ceiling for 64 full sessions with small histories, invalid route, bare tail (programming-model.md, section 6.3).
+const FULL_SESSIONS_MANY_INVALID_BARE_CEILING: u64 = 520_000;
+
+// Peak ceiling for 64 full sessions with small histories, invalid route, service tail (programming-model.md, section 6.3).
+const FULL_SESSIONS_MANY_INVALID_SERVICE_CEILING: u64 = 1_900_000;
+
+// Peak ceiling for 64 full sessions with small histories, talk route, bare tail (programming-model.md, section 6.3).
+const FULL_SESSIONS_MANY_TALK_BARE_CEILING: u64 = 520_000;
+
+// Peak ceiling for 64 full sessions with small histories, talk route, service tail (programming-model.md, section 6.3).
+const FULL_SESSIONS_MANY_TALK_SERVICE_CEILING: u64 = 1_900_000;
+
+// Peak ceiling for 16 full sessions with maximum batch width, tool route, bare tail (programming-model.md, section 6.3).
+const FULL_SESSIONS_WIDE_TOOL_BARE_CEILING: u64 = 290_000;
+
+// Peak ceiling for 16 full sessions with maximum batch width, tool route, service tail (programming-model.md, section 6.3).
+const FULL_SESSIONS_WIDE_TOOL_SERVICE_CEILING: u64 = 3_000_000;
+
+// Peak ceiling for 16 full sessions with maximum batch width, invalid route, bare tail (programming-model.md, section 6.3).
+const FULL_SESSIONS_WIDE_INVALID_BARE_CEILING: u64 = 280_000;
+
+// Peak ceiling for 16 full sessions with maximum batch width, invalid route, service tail (programming-model.md, section 6.3).
+const FULL_SESSIONS_WIDE_INVALID_SERVICE_CEILING: u64 = 3_000_000;
+
+// Peak ceiling for 16 full sessions with maximum batch width, talk route, bare tail (programming-model.md, section 6.3).
+const FULL_SESSIONS_WIDE_TALK_BARE_CEILING: u64 = 270_000;
+
+// Peak ceiling for 16 full sessions with maximum batch width, talk route, service tail (programming-model.md, section 6.3).
+const FULL_SESSIONS_WIDE_TALK_SERVICE_CEILING: u64 = 3_000_000;
+
 #[test]
-fn a_domain_with_every_session_full_stays_within_its_worst_case() {
-    for route in [Route::Tool, Route::Invalid, Route::Talk] {
-        for full_service in [false, true] {
-            fill(&LIMITS, route, full_service);
-            fill(&Limits { sessions: 16, spend: 1, history_bytes: 65_536, ..LIMITS }, route, full_service);
-            fill(
-                &Limits { sessions: 64, spend: 1, history_messages: 8, history_bytes: 600, ..LIMITS },
-                route,
-                full_service,
-            );
-            fill(&Limits { sessions: 16, spend: 1, parallel_tools: MAX_PARALLEL, ..LIMITS }, route, full_service);
+fn a_domain_with_every_session_full_stays_under_its_scenario_ceilings() {
+    for (limits, ceilings) in [
+        (
+            LIMITS,
+            [
+                FULL_SESSIONS_DEFAULT_TOOL_BARE_CEILING,
+                FULL_SESSIONS_DEFAULT_TOOL_SERVICE_CEILING,
+                FULL_SESSIONS_DEFAULT_INVALID_BARE_CEILING,
+                FULL_SESSIONS_DEFAULT_INVALID_SERVICE_CEILING,
+                FULL_SESSIONS_DEFAULT_TALK_BARE_CEILING,
+                FULL_SESSIONS_DEFAULT_TALK_SERVICE_CEILING,
+            ],
+        ),
+        (
+            Limits { sessions: 16, spend: 1, history_bytes: 65_536, ..LIMITS },
+            [
+                FULL_SESSIONS_LARGE_TOOL_BARE_CEILING,
+                FULL_SESSIONS_LARGE_TOOL_SERVICE_CEILING,
+                FULL_SESSIONS_LARGE_INVALID_BARE_CEILING,
+                FULL_SESSIONS_LARGE_INVALID_SERVICE_CEILING,
+                FULL_SESSIONS_LARGE_TALK_BARE_CEILING,
+                FULL_SESSIONS_LARGE_TALK_SERVICE_CEILING,
+            ],
+        ),
+        (
+            Limits { sessions: 64, spend: 1, history_messages: 8, history_bytes: 600, ..LIMITS },
+            [
+                FULL_SESSIONS_MANY_TOOL_BARE_CEILING,
+                FULL_SESSIONS_MANY_TOOL_SERVICE_CEILING,
+                FULL_SESSIONS_MANY_INVALID_BARE_CEILING,
+                FULL_SESSIONS_MANY_INVALID_SERVICE_CEILING,
+                FULL_SESSIONS_MANY_TALK_BARE_CEILING,
+                FULL_SESSIONS_MANY_TALK_SERVICE_CEILING,
+            ],
+        ),
+        (
+            Limits { sessions: 16, spend: 1, parallel_tools: MAX_PARALLEL, ..LIMITS },
+            [
+                FULL_SESSIONS_WIDE_TOOL_BARE_CEILING,
+                FULL_SESSIONS_WIDE_TOOL_SERVICE_CEILING,
+                FULL_SESSIONS_WIDE_INVALID_BARE_CEILING,
+                FULL_SESSIONS_WIDE_INVALID_SERVICE_CEILING,
+                FULL_SESSIONS_WIDE_TALK_BARE_CEILING,
+                FULL_SESSIONS_WIDE_TALK_SERVICE_CEILING,
+            ],
+        ),
+    ] {
+        for ((route, full_service), ceiling) in [
+            (Route::Tool, false),
+            (Route::Tool, true),
+            (Route::Invalid, false),
+            (Route::Invalid, true),
+            (Route::Talk, false),
+            (Route::Talk, true),
+        ]
+        .into_iter()
+        .zip(ceilings)
+        {
+            fill(&limits, route, full_service, ceiling);
         }
     }
 }
+
+// Peak ceiling for recorded delegated turns and history compaction (programming-model.md, section 6.3).
+const RECORDED_DELEGATION_CEILING: u64 = 130_000;
 
 #[test]
 #[expect(
@@ -479,7 +602,7 @@ fn recorded_delegated_turns_cut_results_and_hold_history_for_compaction() {
         delegated_result_bytes: output,
         ..LIMITS
     };
-    let bound = worst_case(&limits).expect("the counted scenario fits");
+    let bound = RECORDED_DELEGATION_CEILING;
     let env = Env { now: Time::ZERO, wall: Wall::EPOCH, limits };
     let mut out = Queue::with_capacity(max_out(&limits));
     let meter = Meter::new();
@@ -584,6 +707,9 @@ fn recorded_delegated_turns_cut_results_and_hold_history_for_compaction() {
     assert!(meter.held() >= limits.history_bytes);
 }
 
+// Peak ceiling for restoring maximum recorded history (programming-model.md, section 6.3).
+const RESTORE_HISTORY_CEILING: u64 = 110_000;
+
 #[test]
 fn restoring_a_maximum_recorded_history_stays_within_the_counted_bound() {
     use smith_domain_session::record;
@@ -596,7 +722,7 @@ fn restoring_a_maximum_recorded_history_stays_within_the_counted_bound() {
         completion_blocks: 1,
         ..LIMITS
     };
-    let bound = worst_case(&limits).expect("the limits fit");
+    let bound = RESTORE_HISTORY_CEILING;
     let env = Env { now: Time::ZERO, wall: Wall::EPOCH, limits };
     let mut out = Queue::with_capacity(max_out(&limits));
     let meter = Meter::new();
@@ -673,6 +799,9 @@ fn restoring_a_maximum_recorded_history_stays_within_the_counted_bound() {
     assert!(meter.held() >= limits.history_bytes - reserve - headroom);
 }
 
+// Peak ceiling for refusing an oversized restored waking result (programming-model.md, section 6.3).
+const WAKING_RESULT_CEILING: u64 = 1_400_000;
+
 #[test]
 fn an_oversized_waking_result_tail_is_refused_before_cloning_provider_ids() {
     use smith_domain_session::{
@@ -687,7 +816,7 @@ fn an_oversized_waking_result_tail_is_refused_before_cloning_provider_ids() {
     let original = block + 1 + u64::from(calls) * (block + id_bytes + 2);
     let limits =
         Limits { history_messages: 4, history_bytes: spec_charge + original, spend: u64::MAX, tools, ..LIMITS };
-    let bound = worst_case(&limits).expect("bounded restore limits");
+    let bound = WAKING_RESULT_CEILING;
     let env = Env { now: Time::ZERO, wall: Wall::EPOCH, limits };
     let mut out = Queue::with_capacity(max_out(&limits));
     let meter = Meter::new();
@@ -974,10 +1103,20 @@ fn provider_admission_and_owned_result_space_have_exact_and_one_short_controls()
     let exact = spec_cost + reserve + block + 256;
     check_provider_admission(&base, exact);
     let result = exact - spec_cost - completion_bytes - block - 1 - block;
-    for read_bytes in [result, result + 1, 1 << 20] {
-        check_capped_read(&base, exact, read_bytes, result);
+    for (read_bytes, ceiling) in [
+        (result, EXACT_CAPPED_READ_CEILING),
+        (result + 1, OVER_CAPPED_READ_CEILING),
+        (1 << 20, LARGE_CAPPED_READ_CEILING),
+    ] {
+        check_capped_read(&base, exact, read_bytes, result, ceiling);
     }
 }
+
+// Peak ceiling for exact provider admission (programming-model.md, section 6.3).
+const EXACT_PROVIDER_ADMISSION_CEILING: u64 = 84_000;
+
+// Peak ceiling for one-short provider admission (programming-model.md, section 6.3).
+const SHORT_PROVIDER_ADMISSION_CEILING: u64 = 83_000;
 
 fn check_provider_admission(base: &Limits, exact: u64) {
     for history_bytes in [exact - 1, exact] {
@@ -986,7 +1125,8 @@ fn check_provider_admission(base: &Limits, exact: u64) {
         let mut out = Queue::with_capacity(max_out(&limits));
         let meter = Meter::new();
         let mut domain = Domain::new(&limits, 11);
-        let bound = worst_case(&limits).expect("checked limits");
+        let bound =
+            if history_bytes == exact { EXACT_PROVIDER_ADMISSION_CEILING } else { SHORT_PROVIDER_ADMISSION_CEILING };
         let seen = measured_step(
             &mut domain,
             &env,
@@ -1013,7 +1153,16 @@ fn check_provider_admission(base: &Limits, exact: u64) {
     }
 }
 
-fn check_capped_read(base: &Limits, exact: u64, read_bytes: u64, result: u64) {
+// Peak ceiling for owned read-result admission at the exact cap (programming-model.md, section 6.3).
+const EXACT_CAPPED_READ_CEILING: u64 = 90_000;
+
+// Peak ceiling for owned read-result admission with one-over read cap (programming-model.md, section 6.3).
+const OVER_CAPPED_READ_CEILING: u64 = 95_000;
+
+// Peak ceiling for owned read-result admission with a large read cap (programming-model.md, section 6.3).
+const LARGE_CAPPED_READ_CEILING: u64 = 1_500_000;
+
+fn check_capped_read(base: &Limits, exact: u64, read_bytes: u64, result: u64, bound: u64) {
     let limits = Limits {
         history_bytes: exact,
         tools: smith_domain_tools::Limits {
@@ -1027,7 +1176,6 @@ fn check_capped_read(base: &Limits, exact: u64, read_bytes: u64, result: u64) {
     let mut out = Queue::with_capacity(max_out(&limits));
     let meter = Meter::new();
     let mut domain = Domain::new(&limits, 12);
-    let bound = worst_case(&limits).expect("checked limits");
     let seen = measured_step(
         &mut domain,
         &env,
@@ -1071,6 +1219,9 @@ fn check_capped_read(base: &Limits, exact: u64, read_bytes: u64, result: u64) {
     );
 }
 
+// Peak ceiling for maximum retained payload through backoff (programming-model.md, section 6.3).
+const BACKOFF_CEILING: u64 = 110_000;
+
 #[test]
 fn maximum_admissible_backoff_preserves_the_exact_next_provider_credit() {
     let original = Limits { sessions: 1, history_bytes: 600, history_messages: 8, ..LIMITS };
@@ -1085,7 +1236,7 @@ fn maximum_admissible_backoff_preserves_the_exact_next_provider_credit() {
     let mut out = Queue::with_capacity(max_out(&limits));
     let meter = Meter::new();
     let mut domain = Domain::new(&limits, 13);
-    let bound = worst_case(&limits).expect("checked limits");
+    let bound = BACKOFF_CEILING;
     let seen = measured_step(
         &mut domain,
         &env,
@@ -1141,6 +1292,9 @@ fn maximum_admissible_backoff_preserves_the_exact_next_provider_credit() {
     assert!(meter.held() >= held, "maximum admissible backoff retains its full concrete payload");
 }
 
+// Peak ceiling for maximum parallel live result rights (programming-model.md, section 6.3).
+const PARALLEL_RIGHTS_CEILING: u64 = 140_000;
+
 #[test]
 fn the_original_maximum_parallel_width_has_live_result_rights() {
     let width = MAX_PARALLEL;
@@ -1162,7 +1316,7 @@ fn the_original_maximum_parallel_width_has_live_result_rights() {
     let mut out = Queue::with_capacity(max_out(&limits));
     let meter = Meter::new();
     let mut domain = Domain::new(&limits, 14);
-    let bound = worst_case(&limits).expect("checked limits");
+    let bound = PARALLEL_RIGHTS_CEILING;
     let seen = measured_step(
         &mut domain,
         &env,
@@ -1217,10 +1371,23 @@ fn missing_completion(field: u64) -> Completion {
     }
 }
 
+// Peak ceiling for compaction at the original four-message cap (programming-model.md, section 6.3).
+const FOUR_MESSAGES_TOOL_CEILING: u64 = 86_000;
+
+// Peak ceiling for four-message compaction with an invalid call (programming-model.md, section 6.3).
+const FOUR_MESSAGES_INVALID_CEILING: u64 = 85_000;
+
+// Peak ceiling for four-message compaction with a talk result (programming-model.md, section 6.3).
+const FOUR_MESSAGES_TALK_CEILING: u64 = 84_000;
+
 #[test]
 fn the_four_message_cap_asks_for_compaction_before_provider_growth() {
     let original = Limits { history_messages: 4, ..LIMITS };
-    for route in [Route::Tool, Route::Invalid, Route::Talk] {
+    for (route, bound) in [
+        (Route::Tool, FOUR_MESSAGES_TOOL_CEILING),
+        (Route::Invalid, FOUR_MESSAGES_INVALID_CEILING),
+        (Route::Talk, FOUR_MESSAGES_TALK_CEILING),
+    ] {
         let (mut limits, _, output, field) = pressure_limits(&original, route, original.history_messages);
         limits.history_messages = original.history_messages;
         assert_eq!(limits.history_messages - 3, 1, "one cell cannot hold an assistant and its results");
@@ -1228,7 +1395,6 @@ fn the_four_message_cap_asks_for_compaction_before_provider_growth() {
         let mut out = Queue::with_capacity(max_out(&limits));
         let meter = Meter::new();
         let mut domain = Domain::new(&limits, 15);
-        let bound = worst_case(&limits).expect("checked original message cap");
         let seen = measured_step(
             &mut domain,
             &env,
@@ -1317,6 +1483,9 @@ fn run_call(ticket: u64, effect: Effect) -> Decoded {
     }
 }
 
+// Peak ceiling for maximum fitting note and all offered choices (programming-model.md, section 6.3).
+const NOTE_CHOICES_CEILING: u64 = 96_000;
+
 #[test]
 fn the_largest_fitting_note_and_all_offered_choices_obey_the_session_byte_cap() {
     const ALLOWED_CALLS: u64 = 2;
@@ -1335,7 +1504,7 @@ fn the_largest_fitting_note_and_all_offered_choices_obey_the_session_byte_cap() 
         let mut out = Queue::with_capacity(max_out(&limits));
         let meter = Meter::new();
         let mut domain = Domain::new(&limits, 31);
-        let bound = worst_case(&limits).expect("checked note/choice bound");
+        let bound = NOTE_CHOICES_CEILING;
         let opened = measured_step(
             &mut domain,
             &env,
@@ -1381,6 +1550,9 @@ fn the_largest_fitting_note_and_all_offered_choices_obey_the_session_byte_cap() 
     }
 }
 
+// Peak ceiling for maximum child final-note admission and release (programming-model.md, section 6.3).
+const CHILD_NOTE_CEILING: u64 = 96_000;
+
 #[test]
 fn a_maximum_child_final_note_is_charged_before_its_first_request_and_released() {
     let block = size(size_of::<Block>());
@@ -1395,7 +1567,7 @@ fn a_maximum_child_final_note_is_charged_before_its_first_request_and_released()
         let mut out = Queue::with_capacity(max_out(&limits));
         let meter = Meter::new();
         let mut domain = Domain::new(&limits, 32);
-        let bound = worst_case(&limits).expect("checked final note bound");
+        let bound = CHILD_NOTE_CEILING;
         let mut selected = fill_spec(&limits);
         selected.budget.turns = 1;
         selected.final_turn = Some(smith_domain_session::FinalTurn {

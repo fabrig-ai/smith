@@ -1,6 +1,6 @@
 //! What the memory tests build (programming-model.md, section 6.3): small limits, and
 //! the largest of each thing they take, an authority, a path and a file, so
-//! that a domain holds as much as its worst case allows.
+//! that a domain fills its configured admission limits.
 
 use skein_lib::{Duration, Token};
 use smith_domain_tools::{Authority, Call, Grants, Limits, Name, Part, Path, Repo};

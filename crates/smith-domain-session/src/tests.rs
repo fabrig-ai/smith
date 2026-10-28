@@ -2016,6 +2016,8 @@ fn the_minimum_fact_reserve_keeps_the_same_complete_native_call_history() {
 #[test]
 fn invalid_limits_are_refused() {
     assert!(valid(&LIMITS));
+    // Heap-total overflow alone is not constructor invalidity.
+    assert!(valid(&Limits { history_bytes: u64::MAX, completion_bytes: u64::MAX, answer_bytes: u64::MAX, ..LIMITS }));
     // The child reserves a whole batch of entrance observations.
     assert!(!valid(&Limits { tools: tools::Limits { facts: 23, ..TOOLS }, ..LIMITS }));
     // The session reserves its own full fact batch.

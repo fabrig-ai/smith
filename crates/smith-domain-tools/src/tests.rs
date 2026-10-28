@@ -587,6 +587,8 @@ fn a_small_call_limit_reserves_held_job_outputs() {
 #[test]
 fn invalid_limits_are_refused() {
     assert!(valid(&LIMITS));
+    // Heap-total overflow alone is not constructor invalidity.
+    assert!(valid(&Limits { list_bytes: u64::MAX, ..LIMITS }));
     // One shell capture's head and tail share a u32 byte budget.
     assert!(!valid(&Limits { shell_head: u32::MAX, ..LIMITS }));
     // Every native entrance can emit its reserved observations.

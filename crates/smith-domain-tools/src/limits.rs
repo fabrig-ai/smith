@@ -106,10 +106,6 @@ pub fn valid(limits: &Limits) -> bool {
 /// outcomes answered.
 #[must_use]
 pub fn worst_case(limits: &Limits) -> Option<u64> {
-    limits.shell_head.checked_add(limits.shell_tail)?;
-    if limits.facts < crate::max_facts(limits) {
-        return None;
-    }
     if !valid(limits) {
         return None;
     }

@@ -994,6 +994,8 @@ fn the_deadline_closes_main_and_fails_the_run_for_time() {
 #[test]
 fn invalid_limits_are_refused() {
     assert!(valid(&LIMITS));
+    // Heap-total overflow alone is not constructor invalidity.
+    assert!(valid(&Limits { run_bytes: u64::MAX, ..LIMITS }));
     // The fact reserve must hold both message observations and the terminal.
     assert!(!valid(&Limits { facts: crate::max_facts(&LIMITS) - 1, ..LIMITS }));
     // Doubling the message count must not overflow.

@@ -13,7 +13,7 @@ use smith_domain::run::outcome::{Verdict, VerdictRule};
 use smith_domain::run::{self, Ask, Charter};
 use smith_domain::run::{Directory, Workspace};
 use smith_domain::tools::{Call, Done, Entry, Exit, Fault, Hit, Kind, Name, Op, Part, Path, Version};
-use smith_domain::{Domain, Event, Limits, Request, fire, max_out, resume, step, worst_case};
+use smith_domain::{Domain, Event, Limits, Request, fire, max_out, resume, step};
 
 use fixture::{charter, workspace};
 use random::completion_owned;
@@ -405,11 +405,10 @@ fn served(prompt: &Prompt) -> (bool, bool) {
 /// Drives a domain under `limits` for `rounds` rounds from `seed`, as the
 /// loop would: each round resumes what is ready, takes an event, and fires
 /// what is due, then reaches the reclaim point; checking the peak of the heap
-/// in every entry point against the worst case.
+/// in every entry point under its scenario ceiling.
 #[must_use]
-pub fn churn(limits: &Limits, seed: u64, rounds: u32) -> [u32; 18] {
+pub fn churn(limits: &Limits, seed: u64, rounds: u32, bound: u64) -> [u32; 18] {
     let limits = *limits;
-    let bound = worst_case(&limits).expect("the test limits fit");
     let mut env = Env { now: Time::ZERO, wall: Wall::EPOCH, limits };
     let mut out = Queue::with_capacity(max_out(&limits));
     let mut driver = Driver {

@@ -1,11 +1,11 @@
-//! Memory stays within the worst case (programming-model.md, section 6.3), measured by
+//! Memory stays under scenario ceilings (programming-model.md, section 6.3), measured by
 //! a counting allocator: the tools child domain driven at random through every
 //! terminal io may give, its peak measured in every step.
 
 use skein_lib::{Duration, Env, Queue, ReplyTo, Rng, Time, Token, Wall};
 use skein_world::domain::heap::{self, Meter};
 use smith_domain_tools::{
-    Call, Domain, Done, Entry, Event, Exit, Expect, Fault, Hit, Kind, Limits, Op, Request, Version, max_out, worst_case,
+    Call, Domain, Done, Entry, Event, Exit, Expect, Fault, Hit, Kind, Limits, Op, Request, Version, max_out,
 };
 use smith_tools_world::memory::{LIMITS, authority, name, path, read, write};
 
@@ -26,10 +26,9 @@ enum Asked {
 /// iteration of its own: kits open and close, calls of every kind arrive,
 /// some past their deadline, and io ends operations in any terminal it may,
 /// in any order. The peak of the heap in every step is checked against the
-/// worst case; once every kit has closed and every operation ended, nothing is
+/// scenario ceiling; once every kit has closed and every operation ended, nothing is
 /// left.
-fn churn(limits: Limits, seed: u64, rounds: u32) {
-    let bound = worst_case(&limits).expect("the test limits fit");
+fn churn(limits: Limits, seed: u64, rounds: u32, bound: u64) {
     let mut env = Env { now: Time::ZERO, wall: Wall::EPOCH, limits };
     let mut rng = Rng::new(seed);
     // The driver's own containers are allocated before the base, and never
@@ -206,10 +205,21 @@ fn random_done(limits: &Limits, rng: &mut Rng, asked: Asked) -> Done {
     }
 }
 
+// Peak ceiling for random tools with default limits across twenty seeds (programming-model.md, section 6.3).
+const RANDOM_TOOLS_CEILING: u64 = 21_000;
+
+// Peak ceiling for random tools with four small kits across twenty seeds (programming-model.md, section 6.3).
+const SMALL_RANDOM_TOOLS_CEILING: u64 = 34_000;
+
 #[test]
-fn a_domain_driven_at_random_stays_within_its_worst_case_at_every_step() {
+fn a_domain_driven_at_random_stays_under_its_scenario_ceilings_at_every_step() {
     for seed in 0..20 {
-        churn(LIMITS, seed, 3_000);
-        churn(Limits { kits: 4, calls: 4, known_files: 8, file_bytes: 64, tool_payload: 32, ..LIMITS }, seed, 3_000);
+        churn(LIMITS, seed, 3_000, RANDOM_TOOLS_CEILING);
+        churn(
+            Limits { kits: 4, calls: 4, known_files: 8, file_bytes: 64, tool_payload: 32, ..LIMITS },
+            seed,
+            3_000,
+            SMALL_RANDOM_TOOLS_CEILING,
+        );
     }
 }

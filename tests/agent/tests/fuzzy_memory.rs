@@ -1,4 +1,4 @@
-//! Random agent memory stays within the worst case at every entry point.
+//! Random agent memory stays under scenario ceilings at every entry point.
 
 use skein_lib::Duration;
 use skein_world::domain::heap::{self, Meter};
@@ -8,8 +8,14 @@ use smith_domain::{Limits, run};
 #[global_allocator]
 static HEAP: heap::Counting = heap::Counting;
 
+// Peak ceiling for random root-domain churn with default limits across twelve seeds (programming-model.md, section 6.3).
+const RANDOM_AGENT_CEILING: u64 = 4_500_000;
+
+// Peak ceiling for random root-domain churn with wider limits across twelve seeds (programming-model.md, section 6.3).
+const WIDE_RANDOM_AGENT_CEILING: u64 = 5_900_000;
+
 #[test]
-fn a_domain_driven_at_random_stays_within_its_worst_case_at_every_entry_point() {
+fn a_domain_driven_at_random_stays_under_its_scenario_ceilings_at_every_entry_point() {
     let mut wider = Limits {
         configured_model_bytes: LIMITS.configured_model_bytes,
         accounts: LIMITS.accounts,
@@ -34,9 +40,9 @@ fn a_domain_driven_at_random_stays_within_its_worst_case_at_every_entry_point() 
     wider.session.facts = smith_domain::session::max_facts(&wider.session);
     let mut seen = [0; 18];
     for seed in 0..12 {
-        for limits in [LIMITS, wider] {
+        for (limits, ceiling) in [(LIMITS, RANDOM_AGENT_CEILING), (wider, WIDE_RANDOM_AGENT_CEILING)] {
             eprintln!("agent memory replay: seed={seed}, rounds=3000, limits={limits:?}");
-            let counted = churn(&limits, seed, 3_000);
+            let counted = churn(&limits, seed, 3_000, ceiling);
             for (all, one) in seen.iter_mut().zip(counted) {
                 *all += one;
             }

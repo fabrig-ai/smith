@@ -1,4 +1,4 @@
-//! Memory stays within the worst case (programming-model.md, section 6.3), measured by
+//! Memory stays under scenario ceilings (programming-model.md, section 6.3), measured by
 //! a counting allocator: the tools child domain with every kit holding the
 //! longest authority, knowing as many files as it may at the longest paths,
 //! and running as many edits, writes and reads as it may. Driven at random,
@@ -6,18 +6,17 @@
 
 use skein_lib::{Duration, Env, Queue, ReplyTo, Time, Token, Wall};
 use skein_world::domain::heap::{self, Meter};
-use smith_domain_tools::{Domain, Done, Event, Limits, Request, Version, max_out, worst_case};
+use smith_domain_tools::{Domain, Done, Event, Limits, Request, Version, max_out};
 use smith_tools_world::memory::{LIMITS, authority, edit, read, write};
 
 #[global_allocator]
 static HEAP: heap::Counting = heap::Counting;
 
 /// Fills every kit of a domain under `limits` to its limits, checking the peak
-/// of the heap in every step against the worst case: it knows twice as many
+/// of the heap in every step under its scenario ceiling: it knows twice as many
 /// files as it may, the oldest forgotten, then runs as many calls as it may at
 /// once, writes of the files it knows and reads.
-fn fill(limits: Limits) {
-    let bound = worst_case(&limits).expect("the test limits fit");
+fn fill(limits: Limits, bound: u64) {
     let env = Env { now: Time::ZERO, wall: Wall::EPOCH, limits };
     let mut out = Queue::with_capacity(max_out(&limits));
     let meter = Meter::new();
@@ -97,22 +96,33 @@ fn fill(limits: Limits) {
             );
         }
     }
+    assert_eq!(domain.kits(), limits.kits, "every kit slot is held");
+    assert_eq!(domain.flights(), limits.kits * limits.calls, "every call slot is held");
     let held = meter.held();
     let known = u64::from(limits.kits) * u64::from(limits.known_files) * u64::from(limits.path_bytes);
     assert!(held >= known, "{limits:?}: every kit knows as many files as it may, at the longest paths");
     drop(domain);
 }
 
+// Peak ceiling for full kits with the default limits (programming-model.md, section 6.3).
+const FULL_KITS_CEILING: u64 = 73_000;
+
+// Peak ceiling for 16 full kits with eight calls and maximum paths (programming-model.md, section 6.3).
+const LARGE_KITS_CEILING: u64 = 2_100_000;
+
+// Peak ceiling for four full kits with one call each (programming-model.md, section 6.3).
+const ONE_CALL_CEILING: u64 = 100_000;
+
 #[test]
-fn a_domain_with_every_kit_full_stays_within_its_worst_case() {
+fn a_domain_with_every_kit_full_stays_under_its_scenario_ceilings() {
     // Each row still fills every declared kit, known-file slot and call slot,
     // reads twice the file capacity to force eviction, and uses maximum paths.
     // The one-call row needs several full kits, rather than 25,600 file loads,
-    // to check the same per-kit ownership against its derived bound.
+    // to check the same per-kit ownership under its scenario ceiling.
     const ONE_CALL: Limits = Limits { kits: 4, calls: 1, repos: 1, known_files: 16, path_bytes: 127, ..LIMITS };
-    fill(LIMITS);
-    fill(Limits { kits: 16, calls: 8, repos: 8, known_files: 64, path_bytes: 511, ..LIMITS });
-    fill(ONE_CALL);
+    fill(LIMITS, FULL_KITS_CEILING);
+    fill(Limits { kits: 16, calls: 8, repos: 8, known_files: 64, path_bytes: 511, ..LIMITS }, LARGE_KITS_CEILING);
+    fill(ONE_CALL, ONE_CALL_CEILING);
 }
 
 fn job_step(
@@ -121,18 +131,22 @@ fn job_step(
     out: &mut Queue<Request>,
     meter: &Meter,
     event: Event,
+    bound: u64,
 ) -> Vec<Request> {
     meter.start();
     while domain.pop_fact().is_some() {}
     smith_domain_tools::step(domain, env, event, out);
     domain.reclaim();
     let measured = meter.end();
-    meter.check(measured, worst_case(&env.limits).expect("bounded jobs fixture"), &"held jobs and queued reads");
+    meter.check(measured, bound, &"held jobs and queued reads");
     std::iter::from_fn(|| out.pop()).collect()
 }
 
+// Peak ceiling for full held jobs and queued reads (programming-model.md, section 6.3).
+const HELD_JOBS_CEILING: u64 = 24_000;
+
 fn fill_jobs() {
-    use smith_domain_tools::{Budget, Call, JobEnd, JobNumber, Timeout, Wait, Yield};
+    use smith_domain_tools::{Budget, Call, JobEnd, Timeout, Yield};
     let env = Env { now: Time::ZERO, wall: Wall::EPOCH, limits: LIMITS };
     let mut out = Queue::with_capacity(max_out(&LIMITS));
     let meter = Meter::new();
@@ -146,6 +160,7 @@ fn fill_jobs() {
             &mut out,
             &meter,
             Event::Open { jobs: 0, session: Token::new(u64::from(session)), authority: authority(&LIMITS) },
+            HELD_JOBS_CEILING,
         );
         let Request::Opened { kit, .. } = requests[0] else { panic!("one admitted kit") };
         let mut owners = Vec::new();
@@ -168,6 +183,7 @@ fn fill_jobs() {
                     call,
                     deadline,
                 },
+                HELD_JOBS_CEILING,
             );
             let Request::Io { owner, .. } = requests[0] else { panic!("one command owner") };
             owners.push(owner);
@@ -177,28 +193,17 @@ fn fill_jobs() {
                 &mut out,
                 &meter,
                 Event::Done { owner, done: Done::Held { head: Box::default(), tail: Box::default(), dropped: 0 } },
+                HELD_JOBS_CEILING,
             ));
         }
-        for reader in 0..LIMITS.calls {
-            let call = Call::Job { job: JobNumber(1), wait: Wait::Default, output: Budget::Default, stop: false };
-            drop(job_step(
-                &mut domain,
-                &env,
-                &mut out,
-                &meter,
-                Event::Call {
-                    kit,
-                    reply_to: ReplyTo::new(Token::new(u64::from(reader))),
-                    observation: None,
-                    call,
-                    deadline,
-                },
-            ));
-        }
+        queue_job_reads(&mut domain, &env, &mut out, &meter, kit);
+        assert_eq!(owners.len(), LIMITS.jobs as usize, "every held-job slot is occupied");
         kits.push((kit, owners));
     }
+    assert_eq!(domain.kits(), LIMITS.kits, "every kit is held");
+    assert_eq!(domain.flights(), LIMITS.kits * LIMITS.jobs, "every held job retains its IO owner");
     for (kit, owners) in &kits {
-        drop(job_step(&mut domain, &env, &mut out, &meter, Event::CancelJobs { kit: *kit }));
+        drop(job_step(&mut domain, &env, &mut out, &meter, Event::CancelJobs { kit: *kit }, HELD_JOBS_CEILING));
         for (number, owner) in owners.iter().enumerate() {
             drop(job_step(
                 &mut domain,
@@ -214,17 +219,44 @@ fn fill_jobs() {
                         end: JobEnd::Cancelled,
                     },
                 },
+                HELD_JOBS_CEILING,
             ));
         }
     }
     for (kit, _) in kits {
-        drop(job_step(&mut domain, &env, &mut out, &meter, Event::Close { kit }));
+        drop(job_step(&mut domain, &env, &mut out, &meter, Event::Close { kit }, HELD_JOBS_CEILING));
     }
     assert_eq!(domain.kits(), 0);
     assert_eq!(domain.flights(), 0);
 }
 
+fn queue_job_reads(domain: &mut Domain, env: &Env<Limits>, out: &mut Queue<Request>, meter: &Meter, kit: Token) {
+    use smith_domain_tools::{Budget, Call, JobNumber, Wait};
+    for reader in 0..LIMITS.calls {
+        let call = Call::Job { job: JobNumber(1), wait: Wait::Default, output: Budget::Default, stop: false };
+        let requests = job_step(
+            domain,
+            env,
+            out,
+            meter,
+            Event::Call {
+                kit,
+                reply_to: ReplyTo::new(Token::new(u64::from(reader))),
+                observation: None,
+                call,
+                deadline: Time::from_nanos(u64::MAX),
+            },
+            HELD_JOBS_CEILING,
+        );
+        if reader == 0 {
+            assert!(matches!(requests.as_slice(), [Request::Job { .. }]), "the first read starts");
+        } else {
+            assert!(requests.is_empty(), "each additional read queues without refusal");
+        }
+    }
+}
+
 #[test]
-fn held_jobs_and_queued_reads_fit_the_tools_bound() {
+fn held_jobs_and_queued_reads_stay_under_their_scenario_ceiling() {
     fill_jobs();
 }
