@@ -237,9 +237,6 @@ impl Host for Process {
     fn exit(&self) -> Option<kernel::Exit> {
         self.host().exit()
     }
-    fn worst_case(&self) -> u64 {
-        self.host().worst_case().checked_add(4096).expect("wrapper bound")
-    }
     fn operations(&self) -> u32 {
         self.host().operations()
     }

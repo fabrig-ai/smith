@@ -86,14 +86,6 @@ impl Host for Proc {
         self.host().exit()
     }
 
-    fn worst_case(&self) -> u64 {
-        self.host()
-            .worst_case()
-            .checked_add(u64::try_from(size_of::<Self>()).expect("process wrapper size"))
-            .and_then(|bound| bound.checked_add(4096))
-            .expect("wrapper bound")
-    }
-
     fn operations(&self) -> u32 {
         self.host().operations()
     }
