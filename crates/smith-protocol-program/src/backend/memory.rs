@@ -12,6 +12,9 @@ use smith_domain::llm;
 /// Native I/O tables and the shared file driver are priced by the service.
 #[must_use]
 pub fn backend_worst_case(settings: &Settings) -> Option<u64> {
+    if !backend_valid(settings) {
+        return None;
+    }
     let mut paths = u64::try_from(settings.program.directory.len().max(4096)).ok()?;
     paths = paths
         .checked_add(u64::try_from(settings.program.claude.len()).ok()?)?
@@ -25,20 +28,14 @@ pub fn backend_worst_case(settings: &Settings) -> Option<u64> {
     // These workspaces run in separate step phases. A line's collected
     // document survives decoding/correlation, whereas its collector has gone.
     // Include ignored fields: stream_tokens comes from the enforced line bytes.
-    let document = skein_json::document::worst_case(&skein_json::document::Limits {
-        tokens: settings.stream_tokens,
-        text: settings.line_bytes,
-    })?;
-    let left = skein_json::document::worst_case(&skein_json::document::Limits {
-        tokens: settings.adapter.stated.call_input_bytes,
-        text: settings.mcp.message_bytes,
-    })?;
+    let document = document_bound(settings.stream_tokens, settings.line_bytes)?;
+    let left = document_bound(settings.adapter.stated.call_input_bytes, settings.mcp.message_bytes)?;
     let input = settings.adapter.stated.call_input_bytes;
     let decode_collect = stream::worst_case(input, settings.adapter.client.depth, input)?;
     // The typed decoder builds fields/items after its collector has gone.
     // A call admits at most one JSON record per argument byte;
     // an item-array capacity can overlap its nested field-array capacities.
-    let decode_build = skein_json::document::worst_case(&skein_json::document::Limits { tokens: input, text: input })?
+    let decode_build = document_bound(input, input)?
         .checked_add(
             u64::from(input).checked_mul(
                 u64::try_from(
@@ -58,7 +55,7 @@ pub fn backend_worst_case(settings: &Settings) -> Option<u64> {
     // collector or document is live in that phase.
     let workspace = stream::worst_case(settings.line_bytes, settings.adapter.client.depth, settings.stream_tokens)?
         .max(document.checked_add(decode.max(compare))?)
-        .max(skein_json::writer::worst_case(&skein_json::writer::Limits { depth: 8, length: settings.input_bytes })?)
+        .max(writer_bound(8, settings.input_bytes)?)
         // Tail passes borrow text. Consumed served results replace prompt
         // payloads; at most one input ceiling plus one temporary result
         // coexists with the encoded line during this separate workspace.
@@ -150,4 +147,66 @@ pub fn backend_worst_case(settings: &Settings) -> Option<u64> {
         .checked_add(4096)? // a failed Store's bounded temporary leaf
         .checked_add(Queue::<io::Request>::worst_case(32)?)?
         .checked_add(Queue::<Below>::worst_case(32)?)
+}
+
+/// Whether backend capacities and JSON edges fit (programming-model.md, 6.3).
+#[must_use]
+pub fn backend_valid(settings: &Settings) -> bool {
+    backend_edges(settings).is_some()
+}
+
+fn backend_edges(settings: &Settings) -> Option<()> {
+    settings.path_bytes.checked_mul(2)?.checked_add(1)?;
+    settings.receiving.max_completion_blocks.checked_mul(5)?;
+    measures::capacity(settings)?;
+    settings.adapter.client.tools.checked_add(u32::try_from(super::policy::BUILTINS.len()).ok()?.checked_add(1)?)?;
+    super::redaction::capacity(settings)?;
+    let input = settings.adapter.stated.call_input_bytes;
+    // Probe the individual document/collector/writer edges, without their
+    // enclosing retained and transient heap accounting.
+    document_bound(settings.stream_tokens, settings.line_bytes)?;
+    document_bound(input, settings.mcp.message_bytes)?;
+    document_bound(input, input)?;
+    stream_edges(input, settings.adapter.client.depth, input)?;
+    stream_edges(settings.mcp.message_bytes, settings.adapter.client.depth, input)?;
+    stream_edges(settings.line_bytes, settings.adapter.client.depth, settings.stream_tokens)?;
+    writer_bound(8, settings.input_bytes)?;
+    for bound in [settings.mcp.message_bytes, settings.mcp.schema_bytes] {
+        bound.checked_add(2)?;
+        json_edges(skein_json::collector::Limits {
+            tokenizer: skein_json::tokenizer::Limits {
+                depth: bound,
+                string: bound,
+                number: bound,
+                chunk: bound,
+                length: bound,
+            },
+            tokens: bound.checked_add(2)?,
+            text: bound,
+            skip: u64::from(bound),
+        })?;
+    }
+    Some(())
+}
+
+fn stream_edges(bound: u32, depth: u32, tokens: u32) -> Option<()> {
+    json_edges(stream::limits(bound, depth, tokens))
+}
+
+fn json_edges(limits: skein_json::collector::Limits) -> Option<()> {
+    skein_json::collector::worst_case(
+        &limits,
+        &[],
+        &skein_json::collector::Filter { root: skein_json::collector::Keep::Value },
+    )?;
+    writer_bound(limits.tokenizer.depth, limits.tokenizer.length)?;
+    Some(())
+}
+
+fn document_bound(tokens: u32, text: u32) -> Option<u64> {
+    skein_json::document::worst_case(&skein_json::document::Limits { tokens, text })
+}
+
+fn writer_bound(depth: u32, length: u32) -> Option<u64> {
+    skein_json::writer::worst_case(&skein_json::writer::Limits { depth, length })
 }

@@ -120,6 +120,9 @@ pub const fn max_out(_limits: &Limits) -> MaxOut {
 /// Price the machine, the opening event queue and caller output queues.
 #[must_use]
 pub fn worst_case(limits: &Limits) -> Option<u64> {
+    if !valid(limits) {
+        return None;
+    }
     let schema = schema(limits).ok()?;
     let mut duplicate = List::<skein_channel::Version>::worst_case(schema.versions.capacity())?;
     for version in &schema.versions {
@@ -160,6 +163,35 @@ pub fn worst_case(limits: &Limits) -> Option<u64> {
         .checked_add(skein_lib::Map::<(u32, u64), crate::GrantValue>::worst_case(limits.grants)?)?
         .checked_add(u64::from(limits.grants).checked_mul(grant_value_bytes)?)?
         .checked_add(u64::try_from(size_of::<Component>()).ok()?)
+}
+
+/// Whether codec edges and responder capacities fit (programming-model.md, 6.3).
+#[must_use]
+pub fn valid(limits: &Limits) -> bool {
+    let schema = match schema(limits) {
+        Ok(schema) => schema,
+        Err(_) => return false,
+    };
+    // Skein's channel sum also checks these control-frame and queue capacities.
+    // Check them explicitly rather than probing that heap sum.
+    let terms = match limits.channel.kinds.checked_mul(6) {
+        Some(kinds) => kinds.checked_add(4),
+        None => return false,
+    };
+    let open = limits.channel.credential.checked_add(14);
+    let control = match terms {
+        Some(terms) => match open {
+            Some(open) => terms.max(open).max(262),
+            None => return false,
+        },
+        None => return false,
+    };
+    schema.check(skein_channel::Role::Responder, &limits.channel).is_ok()
+        && limits.channel.output_frames.checked_add(3).is_some()
+        && control.checked_add(8).is_some()
+        && start_cells(&limits.bodies).is_some()
+        && charter_cells(&limits.charter).is_some()
+        && turn_cells(&limits.transcript).is_some()
 }
 
 /// Build this agent's directional schema, using its aggregate Start entrance.

@@ -156,3 +156,51 @@ fn compaction_rendering_stays_under_its_scenario_ceiling() {
         assert!(peak <= COMPACTION_CEILING, "peak={peak} ceiling={COMPACTION_CEILING}");
     }
 }
+
+#[test]
+fn invalid_limits_are_refused() {
+    let mut settings = super::lifecycle_tests::backend().settings;
+    assert!(super::backend_valid(&settings));
+    let path = settings.path_bytes;
+    settings.path_bytes = u32::MAX;
+    assert!(!super::backend_valid(&settings));
+    settings.path_bytes = path;
+    let blocks = settings.receiving.max_completion_blocks;
+    for count in [u32::MAX / 5 + 1, u32::MAX - 15] {
+        settings.receiving.max_completion_blocks = count;
+        assert!(!super::backend_valid(&settings));
+    }
+    settings.receiving.max_completion_blocks = blocks;
+    let tools = settings.adapter.client.tools;
+    settings.adapter.client.tools = u32::MAX - 6;
+    assert!(!super::backend_valid(&settings));
+    settings.adapter.client.tools = tools;
+    let input = settings.adapter.stated.call_input_bytes;
+    for bound in [0, u32::MAX] {
+        settings.adapter.stated.call_input_bytes = bound;
+        assert!(!super::backend_valid(&settings));
+    }
+    settings.adapter.stated.call_input_bytes = input;
+    let line = settings.line_bytes;
+    for bound in [0, u32::MAX] {
+        settings.line_bytes = bound;
+        assert!(!super::backend_valid(&settings));
+    }
+    settings.line_bytes = line;
+    let message = settings.mcp.message_bytes;
+    for bound in [0, u32::MAX - 1, u32::MAX] {
+        settings.mcp.message_bytes = bound;
+        assert!(!super::backend_valid(&settings));
+    }
+    settings.mcp.message_bytes = message;
+    let schema = settings.mcp.schema_bytes;
+    for bound in [0, u32::MAX - 1, u32::MAX] {
+        settings.mcp.schema_bytes = bound;
+        assert!(!super::backend_valid(&settings));
+    }
+    settings.mcp.schema_bytes = schema;
+    // These extremes only enlarge heap totals; they do not invalidate an edge.
+    settings.prompt_bytes = u64::MAX;
+    settings.receiving.max_completion_bytes = u64::MAX;
+    assert!(super::backend_valid(&settings));
+}

@@ -12,8 +12,12 @@ pub(super) struct Carry {
 }
 
 pub(super) fn capacity(settings: &super::Settings) -> Option<u32> {
+    directory_capacity(settings.program.directory.len())
+}
+
+fn directory_capacity(length: usize) -> Option<u32> {
     // directory + optional slash + .runs/<32 hex bytes>/instructions.md.
-    u32::try_from(settings.program.directory.len()).ok()?.checked_add(55)?.max(64).checked_sub(1)
+    u32::try_from(length).ok()?.checked_add(55)?.max(64).checked_sub(1)
 }
 
 pub(super) fn carries(settings: &super::Settings) -> List<Carry> {
@@ -96,5 +100,15 @@ impl Backend {
         for block in 0..self.delta_carry.len() {
             self.flush_delta(at, block);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn invalid_limits_are_refused() {
+        assert_eq!(super::directory_capacity(0), Some(63));
+        assert!(super::directory_capacity(usize::try_from(u32::MAX - 54).unwrap()).is_none());
+        assert!(super::directory_capacity(usize::MAX).is_none());
     }
 }

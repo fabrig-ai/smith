@@ -34,6 +34,6 @@ mod tests;
 pub use boundary::{Below, BelowEvent, FromDomain, Spawn, ToDomain};
 pub use component::Component;
 pub use environment::{Environment, Unencodable, Variable};
-pub use limits::{Derivation, Field, Limits, MaxOut, derive, max_out, worst_case};
+pub use limits::{Derivation, Field, Limits, MaxOut, derive, max_out, valid, worst_case};
 
 pub use listing::Listing;

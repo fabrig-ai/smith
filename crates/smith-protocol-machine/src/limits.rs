@@ -64,6 +64,9 @@ pub const fn max_out(limits: &Limits) -> MaxOut {
 /// Caller-owned request buffers handed below are accounted by their owner.
 #[must_use]
 pub fn worst_case(limits: &Limits) -> Option<u64> {
+    if !valid(limits) {
+        return None;
+    }
     // Installing a new workspace temporarily coexists with the old root list.
     let roots = List::<Root>::worst_case(limits.roots)?.checked_mul(2)?;
     // A create in a directory hands io one directory path of its own at a
@@ -136,6 +139,20 @@ pub fn worst_case(limits: &Limits) -> Option<u64> {
         .checked_add(listing)?
         .checked_add(environment)?
         .checked_add(scratch)
+}
+
+/// Whether the machine's capacities and search edge fit (programming-model.md, 6.3).
+#[must_use]
+pub fn valid(limits: &Limits) -> bool {
+    limits.processes.checked_mul(2).is_some()
+        && tokenizer::worst_case(&tokenizer::Limits {
+            depth: 8,
+            string: limits.search_line_bytes.max(1),
+            number: 20,
+            chunk: 64,
+            length: limits.search_line_bytes.max(1),
+        })
+        .is_some()
 }
 
 /// Numeric declarations needed by this layer's transitional derivation.
@@ -235,6 +252,14 @@ mod memory {
             env_bytes: 0,
             group_stop: Duration::from_secs(1),
         }
+    }
+
+    #[test]
+    fn invalid_limits_are_refused() {
+        let limits = caps();
+        assert!(super::valid(&limits));
+        assert!(!super::valid(&Limits { processes: u32::MAX, ..limits }));
+        assert!(!super::valid(&Limits { search_line_bytes: u32::MAX, ..limits }));
     }
 
     fn workspace() -> run::Workspace {

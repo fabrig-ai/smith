@@ -4,9 +4,8 @@ use skein_lib::{Queue, stream};
 
 use crate::{Component, Limits, OpenEvent};
 
-#[test]
-fn the_agent_demands_the_open_before_the_domain_hears_anything() {
-    let limits = Limits {
+fn limits() -> Limits {
+    Limits {
         bodies: smith_channel::CEILINGS,
         start_bytes: u32::try_from(
             smith_channel::Start::worst_case_bytes(&smith_channel::CEILINGS).expect("fixture Start bound"),
@@ -30,7 +29,12 @@ fn the_agent_demands_the_open_before_the_domain_hears_anything() {
             output_frames: 2,
             kinds: 20,
         },
-    };
+    }
+}
+
+#[test]
+fn the_agent_demands_the_open_before_the_domain_hears_anything() {
+    let limits = limits();
     let mut component =
         Component::new(&limits, StreamMode::Two, crate::Endpoints::new(skein_lib::List::with_capacity(0)))
             .expect("checked schema");
@@ -831,5 +835,44 @@ fn grant_forms_keep_their_policy_at_start_and_refresh() {
         assert_eq!(decoded.grants.len(), 1);
         let kept = &decoded.grants[0];
         assert_eq!((kept.name, kept.valid, kept.renewable), (refresh.name, refresh.valid, renewable));
+    }
+}
+
+#[test]
+fn invalid_limits_are_refused() {
+    let base = limits();
+    assert!(crate::valid(&base));
+    let mut cases = Vec::new();
+    cases.push(Limits { start_bytes: 0, ..base });
+    cases.push(Limits { start_bytes: base.start_bytes + 1, ..base });
+    let mut body = base;
+    body.bodies.message_text = u32::MAX;
+    cases.push(body);
+    for channel in [
+        skein_channel::Limits { chunk: 0, ..base.channel },
+        skein_channel::Limits { output_bytes: 7, ..base.channel },
+        skein_channel::Limits { output_frames: 0, ..base.channel },
+        skein_channel::Limits { kinds: 19, ..base.channel },
+        skein_channel::Limits { output_bytes: 8, ..base.channel },
+        skein_channel::Limits { output_frames: u32::MAX, ..base.channel },
+        skein_channel::Limits { kinds: u32::MAX, ..base.channel },
+        skein_channel::Limits { kinds: u32::MAX / 6, ..base.channel },
+        skein_channel::Limits { credential: u32::MAX, ..base.channel },
+        skein_channel::Limits { credential: u32::MAX - 14, ..base.channel },
+    ] {
+        cases.push(Limits { channel, ..base });
+    }
+    let mut charter = base;
+    charter.charter.contract_verdicts = u32::MAX;
+    charter.charter.verdict_rule_kinds = u32::MAX;
+    charter.charter.item_kind_fields = u32::MAX;
+    cases.push(charter);
+    let mut transcript = base;
+    transcript.transcript.turn_messages = u32::MAX;
+    transcript.transcript.message_blocks = u32::MAX;
+    transcript.transcript.listed_entries = u32::MAX;
+    cases.push(transcript);
+    for (index, limits) in cases.into_iter().enumerate() {
+        assert!(!crate::valid(&limits), "invalid channel case {index}");
     }
 }
