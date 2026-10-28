@@ -10,7 +10,7 @@ fn open_main_is_told_to_reply_without_a_result_contract() {
     selected.mode = Mode::Open;
     selected.outcome.report = Some(TextSpec { max: 64, fields: Box::new([]) });
     selected.reserve = Reserve { turns: 2, time: Duration::from_secs(3) };
-    let rendered = system(&selected, None, &Found::with_capacity(0), selected.budget);
+    let rendered = system(&selected, None, &Found::with_capacity(0), selected.budget, false);
     let rendered = core::str::from_utf8(&rendered).expect("prompt text");
     assert!(rendered.contains("Call `wait` when you need another message;"));
     assert_eq!(rendered.matches(core::str::from_utf8(REPLYING).expect("reply guide")).count(), 1);

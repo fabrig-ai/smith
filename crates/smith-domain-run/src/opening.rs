@@ -24,6 +24,7 @@ use crate::workspace::{self, Workspace};
 )]
 pub(crate) fn main(
     charter: &Charter,
+    resumed: bool,
     activation: u64,
     identity: crate::Identity,
     workspace: Option<&Workspace>,
@@ -60,7 +61,7 @@ pub(crate) fn main(
         deliver: charter.grants.deliver.is_some(),
         llm: charter.llm.clone(),
         line: super::charter::line(&charter.llm, limits.compaction_material),
-        system: prompt::system(charter, workspace, found, charter.budget.remainder(spent, left)),
+        system: prompt::system(charter, workspace, found, charter.budget.remainder(spent, left), resumed),
         prompt: copy_of(prompt::BEGIN),
         summary: copy_of(prompt::SUMMARY),
         preamble: copy_of(prompt::PREAMBLE),

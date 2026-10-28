@@ -6,6 +6,8 @@ mod program;
 
 mod open;
 
+mod opening;
+
 use alloc::boxed::Box;
 
 use skein_lib::{Duration, Env, List, Queue, ReplyTo, Time, Token, Wall};
@@ -416,7 +418,7 @@ fn an_admitted_run_reads_its_checkout_then_opens_main_with_the_whole_budget() {
         deliver: false,
         llm: charter().llm,
         line: 7168,
-        system: super::prompt::system(&charter(), Some(&workspace()), &found, BUDGET),
+        system: super::prompt::system(&charter(), Some(&workspace()), &found, BUDGET, false),
         prompt: bytes(super::prompt::BEGIN),
         summary: bytes(super::prompt::SUMMARY),
         preamble: bytes(super::prompt::PREAMBLE),
@@ -1333,7 +1335,7 @@ fn a_guide_that_is_not_text_is_not_there() {
     let [Request::Open { opening, .. }] = &*emitted else { panic!("expected main to open, got {emitted:?}") };
     assert_eq!(
         opening.system,
-        super::prompt::system(&charter(), Some(&workspace()), &Found::with_capacity(1), opening.budget)
+        super::prompt::system(&charter(), Some(&workspace()), &Found::with_capacity(1), opening.budget, false)
     );
 }
 

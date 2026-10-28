@@ -1,8 +1,9 @@
-//! Main receives literal host instructions, then ordered titled Brief sections;
+//! Main receives literal host instructions; a fresh Open main receives its
+//! ordered titled Brief as the first user message, a Finite main in system text;
 //! a child receives only its caller's raw task (domain/run.md, sections 3.1,
 //! 3.3, 3.4, 5.3 and 9.2). Both then receive selected guides, run mechanics and
 //! budget prose fixed at their actual opening.
-//! `opening` composes a fresh main begin instruction and its bounded message offer;
+//! `opening` composes a fresh main brief or begin instruction and its bounded message offer;
 //! with concrete history, it offers only messages or a saved-conversation continuation.
 //! No prompt state is retained here; title/text meaning and authority are never
 //! inferred. `system` and `child` consume only admitted immutable source data;
@@ -24,7 +25,7 @@ use crate::outcome::{FieldRule, OutcomeSpec, TextSpec, VerdictRule};
 use crate::prepare::{Found, Guide};
 use crate::workspace::{self, Directory, Workspace};
 
-/// The first user message of a main conversation.
+/// The first user instruction of a Finite main or child conversation.
 pub(crate) const BEGIN: &[u8] = b"Begin the work your brief describes.";
 
 /// The summary keeps the work ready to continue in a new window.
@@ -83,7 +84,7 @@ fn render_fixed(text: &mut Text) {
     text.put(WAIT);
     render_finishing(text, &OutcomeSpec { change: None, verdicts: Box::new([]), failure: None, report: None }, false);
     render_answering(text);
-    text.put(&opening(false, false, None));
+    text.put(&begin(false, false, None));
     text.put(b"\n\n");
     render_fixed_budget(text);
     render_wind_down(
@@ -141,8 +142,27 @@ pub(crate) fn has_brief(charter: &Charter) -> bool {
     false
 }
 
-/// Begin a fresh main, or continue concrete history with one unchanged ordered offer.
-pub(crate) fn opening(brief: bool, resumed: bool, messages: Option<Box<[u8]>>) -> Box<[u8]> {
+/// Open with the person's whole brief, or the unchanged Finite/history instruction.
+pub(crate) fn opening(charter: &Charter, resumed: bool, messages: Option<Box<[u8]>>) -> Box<[u8]> {
+    match charter.mode {
+        Mode::Open if !resumed && !charter.brief.sections.is_empty() => {
+            let mut measured = Text::measuring();
+            render_brief(&mut measured, charter);
+            if let Some(messages) = &messages {
+                measured.put(messages);
+            }
+            let mut text = measured.writing();
+            render_brief(&mut text, charter);
+            if let Some(messages) = &messages {
+                text.put(messages);
+            }
+            text.finish()
+        }
+        Mode::Finite | Mode::Open => begin(has_brief(charter), resumed, messages),
+    }
+}
+
+fn begin(brief: bool, resumed: bool, messages: Option<Box<[u8]>>) -> Box<[u8]> {
     match messages {
         Some(messages) if resumed || !brief => messages,
         Some(messages) => {
@@ -208,7 +228,8 @@ pub(crate) fn host_bytes(charter: &Charter, mounted: Option<&Workspace>, guide_b
         }
     }
     let mut text = Text::measuring();
-    render_main_prefix(&mut text, charter);
+    // The brief consumes the same host part regardless of its message role.
+    render_main_prefix(&mut text, charter, true);
     render_system(&mut text, charter, mounted, &found, Families::of(&charter.grants), true);
     for directory in repositories {
         let name = if repositories.len() == 1 { None } else { Some(directory.name.as_ref()) };
@@ -254,14 +275,24 @@ pub(crate) fn child_host_bytes(
 
 /// The system text of a run's main conversation, given what the run found in
 /// its checkout.
-pub(crate) fn system(charter: &Charter, mounted: Option<&Workspace>, found: &Found, budget: Budget) -> Box<[u8]> {
+pub(crate) fn system(
+    charter: &Charter,
+    mounted: Option<&Workspace>,
+    found: &Found,
+    budget: Budget,
+    resumed: bool,
+) -> Box<[u8]> {
     let families = workspace::families(mounted, Families::of(&charter.grants));
+    let brief = match charter.mode {
+        Mode::Finite => true,
+        Mode::Open => resumed,
+    };
     let mut measured = Text::measuring();
-    render_main_prefix(&mut measured, charter);
+    render_main_prefix(&mut measured, charter, brief);
     render_system(&mut measured, charter, mounted, found, families, true);
     render_budget(charter.mode, &mut measured, budget, charter.reserve, families.agents);
     let mut text = measured.writing();
-    render_main_prefix(&mut text, charter);
+    render_main_prefix(&mut text, charter, brief);
     render_system(&mut text, charter, mounted, found, families, true);
     render_budget(charter.mode, &mut text, budget, charter.reserve, families.agents);
     text.finish()
@@ -367,15 +398,22 @@ pub(crate) fn nudge(mode: Mode, stop: Stop, nudge: u32, nudges: u32) -> Box<[u8]
     text.finish()
 }
 
-/// Main's immutable literal prefix: instructions, then every section in order.
-/// Each section is `## {title}\n\n{text}` plus existing paragraph termination;
-/// the delimiter bound is two instruction LFs plus seven bytes per section.
-fn render_main_prefix(text: &mut Text, charter: &Charter) {
+/// Main's immutable literal instructions, with the brief in Finite or restored system text.
+fn render_main_prefix(text: &mut Text, charter: &Charter, brief: bool) {
     text.host = true;
     if !charter.instructions.is_empty() {
         text.put(&charter.instructions);
         end_paragraph(text, &charter.instructions);
     }
+    if brief {
+        render_brief(text, charter);
+    }
+    text.host = false;
+}
+
+/// Each section keeps its literal title/text and existing paragraph termination.
+/// The delimiter bound is seven bytes per section, in either message role.
+fn render_brief(text: &mut Text, charter: &Charter) {
     for section in &charter.brief.sections {
         text.put(b"## ");
         text.put(&section.title);
@@ -383,7 +421,6 @@ fn render_main_prefix(text: &mut Text, charter: &Charter) {
         text.put(&section.text);
         end_paragraph(text, &section.text);
     }
-    text.host = false;
 }
 
 /// A child's caller task, with no parent instructions or structured context.
@@ -805,7 +842,7 @@ mod tests {
             },
             ..charter()
         };
-        let rendered = system(&charter, Some(&workspace()), &found(), charter.budget);
+        let rendered = system(&charter, Some(&workspace()), &found(), charter.budget, false);
         let rendered = text(&rendered);
         let brief = rendered.find("Review the change.").expect("brief");
         let guide = rendered.find("## AGENTS.md").expect("guide");
@@ -835,7 +872,7 @@ mod tests {
         let mut charter = charter();
         charter.outcome.change = Some(ChangeSpec { checks_must_pass: false, fields: Box::new([]) });
         charter.grants.deliver = Some(ChangeSpec { checks_must_pass: true, fields: Box::new([]) });
-        let rendered = system(&charter, Some(&workspace()), &found(), charter.budget);
+        let rendered = system(&charter, Some(&workspace()), &found(), charter.budget, false);
         assert!(skein_lib::bytes::find(&rendered, b"A failed check does not block delivery.").is_some());
         assert!(skein_lib::bytes::find(&rendered, b"a failing check does not block it.").is_some());
     }
@@ -857,7 +894,7 @@ mod tests {
             },
             ..charter()
         };
-        let rendered = system(&charter, None, &Found::with_capacity(0), charter.budget);
+        let rendered = system(&charter, None, &Found::with_capacity(0), charter.budget, false);
         let rendered = text(&rendered);
         assert!(rendered.contains("There is no checkout."));
         assert!(rendered.contains("Report: text up to 16 bytes, with these host-required fields:\n(none)"));
@@ -915,7 +952,7 @@ At open, your share is 3 turns and less than a second. Your answer may hold at m
             policy.grants.agents = agents;
             policy.reserve = crate::charter::Reserve { turns: 2, time: skein_lib::Duration::from_nanos(750_000_000) };
             let budget = crate::Budget { turns: 7, time: skein_lib::Duration::from_nanos(1_999_000_000), spend: 123 };
-            let rendered = system(&policy, None, &Found::with_capacity(0), budget);
+            let rendered = system(&policy, None, &Found::with_capacity(0), budget, false);
             let expected = "\n## Budget\n\nAt open, you have 7 turns and 1 second of wall time. Spend is bounded too.\nKeep 2 turns and less than a second to finish. When the ordinary budget is spent, live children close and you finish on that reserve.\n";
             let delegation = "Sub-agents share only what is above the reserve. Ask for focused turn or time shares; leaving a part unasked gives the child all of that part left.\n";
             let expected = if agents { [expected, delegation].concat() } else { expected.into() };
@@ -983,7 +1020,7 @@ At open, your share is 3 turns and less than a second. Your answer may hold at m
             },
             ..charter()
         };
-        let main = system(&selected, None, &Found::with_capacity(0), selected.budget);
+        let main = system(&selected, None, &Found::with_capacity(0), selected.budget, false);
         let prefix = b"literal role\n\n## Repeated\n\nparent first body\n\n## \n\n\n\n## Repeated\n\nparent last body\n\n## Tools\n\n";
         assert!(main.starts_with(prefix), "host bytes and exact paragraph delimiters: {}", text(&main));
         let child = child(
@@ -1007,14 +1044,14 @@ At open, your share is 3 turns and less than a second. Your answer may hold at m
     fn empty_role_and_brief_emit_no_prefix_but_empty_sections_are_still_rendered() {
         let selected =
             Charter { instructions: Box::new([]), brief: crate::Brief { sections: Box::new([]) }, ..charter() };
-        assert!(system(&selected, None, &Found::with_capacity(0), selected.budget).starts_with(b"## Tools\n\n"));
+        assert!(system(&selected, None, &Found::with_capacity(0), selected.budget, false).starts_with(b"## Tools\n\n"));
         let selected = Charter {
             instructions: bytes(b"role without LF"),
             brief: crate::Brief { sections: Box::new([crate::Section { title: Box::new([]), text: Box::new([]) }]) },
             ..selected
         };
         assert!(
-            system(&selected, None, &Found::with_capacity(0), selected.budget)
+            system(&selected, None, &Found::with_capacity(0), selected.budget, false)
                 .starts_with(b"role without LF\n\n## \n\n\n\n## Tools\n\n")
         );
     }
@@ -1054,7 +1091,7 @@ At open, your share is 3 turns and less than a second. Your answer may hold at m
         mounted.directories = Box::new([mounted.directories[0].clone()]);
         let mut found = Found::with_capacity(1);
         found.guides.push(Guide { repository: 0, text: bytes(b"Guide text."), whole: true }).unwrap();
-        let rendered = system(&charter, Some(&mounted), &found, charter.budget);
+        let rendered = system(&charter, Some(&mounted), &found, charter.budget, false);
         let rendered = text(&rendered);
         assert!(!rendered.contains(text(&mounted.directories[0].name)), "the one mount's name is hidden");
         assert!(rendered.contains("## AGENTS.md in the working directory\n\nGuide text."));
@@ -1069,7 +1106,7 @@ At open, your share is 3 turns and less than a second. Your answer may hold at m
         other.name = bytes(b"docs");
         other.root = skein_lib::Token::new(901);
         mounted.directories = Box::new([mounted.directories[0].clone(), other]);
-        let rendered = system(&charter, Some(&mounted), &Found::with_capacity(0), charter.budget);
+        let rendered = system(&charter, Some(&mounted), &Found::with_capacity(0), charter.budget, false);
         let rendered = text(&rendered);
         assert!(rendered.contains("Your working directory is `temper`. Relative paths start there; reach the other directories as `/name/...`. Use `list /` to list their names."));
         for directory in &mounted.directories {
