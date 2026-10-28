@@ -720,6 +720,12 @@ fn backlog(service: &Service) -> u64 {
     total
 }
 
+// Dispatch an entrance's effects before advancing the domain again. Its facts
+// must not overtake the preceding turn and channel notifications.
+fn domain_requests_dispatched(service: &Service) -> bool {
+    service.domain_requests.is_empty()
+}
+
 fn admits(service: &Service) -> bool {
     backlog(service) < u64::from(service.limits.queue)
 }
@@ -769,7 +775,7 @@ pub fn work_pending(service: &Service, now: Time) -> bool {
             None => false,
         }
         || match &service.domain {
-            Some(domain) => takes && (domain.has_facts() || domain.is_ready()),
+            Some(domain) => takes && (domain.has_facts() || (domain_requests_dispatched(service) && domain.is_ready())),
             None => false,
         }
         || !service.completions.is_empty()
@@ -779,7 +785,7 @@ pub fn work_pending(service: &Service, now: Time) -> bool {
         || (!service.pending_messages.is_empty() && service.admitted.is_some() && admits(service))
         || (takes && !service.llm_events.is_empty())
         || !service.machine_events.is_empty()
-        || (takes && !service.domain_events.is_empty())
+        || (takes && domain_requests_dispatched(service) && !service.domain_events.is_empty())
         || (takes && !service.domain_requests.is_empty() && channel_takes(service) && program::requests_ready(service))
         || !service.channel_below.is_empty()
         || program::pending(service)
