@@ -206,7 +206,7 @@ fn new(
     limits: &mut Limits,
     environment: &smith_protocol_machine::Environment,
 ) -> Result<Box<Program>, ConfigError> {
-    let settings = settings(&config, limits, environment).ok_or(ConfigError::Memory)?;
+    let settings = settings(&config, limits, environment).ok_or(ConfigError::Limits)?;
     if config.entropy.len() != 32
         || !config.relay.starts_with(b"/")
         || config.relay.len() > 4096
@@ -216,20 +216,20 @@ fn new(
     {
         return Err(ConfigError::Io);
     }
-    *limits = reserved(limits, &settings).ok_or(ConfigError::Memory)?;
-    let process_slots = limits.machine.processes.checked_mul(3).ok_or(ConfigError::Memory)?;
+    *limits = reserved(limits, &settings).ok_or(ConfigError::Limits)?;
+    let process_slots = limits.machine.processes.checked_mul(3).ok_or(ConfigError::Limits)?;
     let minimum = limits
         .llm
         .connection
         .connections
         .checked_add(3)
-        .ok_or(ConfigError::Memory)?
+        .ok_or(ConfigError::Limits)?
         .checked_add(process_slots)
-        .ok_or(ConfigError::Memory)?
+        .ok_or(ConfigError::Limits)?
         .checked_add(IO_SLOTS)
-        .ok_or(ConfigError::Memory)?;
+        .ok_or(ConfigError::Limits)?;
     if limits.io.sockets < minimum
-        || limits.file_slots < limits.machine.roots.checked_add(FILE_SLOTS).ok_or(ConfigError::Memory)?
+        || limits.file_slots < limits.machine.roots.checked_add(FILE_SLOTS).ok_or(ConfigError::Limits)?
     {
         return Err(ConfigError::Io);
     }
@@ -725,4 +725,3 @@ mod tests {
         assert_eq!(service.file_events.len(), 1, "file terminals still await their consumer");
     }
 }
-

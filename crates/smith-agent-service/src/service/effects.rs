@@ -6,8 +6,8 @@ use super::down::{component_down, domain_down};
 use super::routing::{io_down, io_event_owner};
 use super::up::{component_up, io_up, lower_events};
 use super::{
-    COMPONENT_OWNER_BIT, Config, ConfigError, Failure, Service, USAGE_OWNER, clocks, credential, done,
-    effects_worst_case, next_deadline, teardown, work_pending,
+    COMPONENT_OWNER_BIT, Config, ConfigError, Failure, Service, USAGE_OWNER, clocks, credential, done, effects_valid,
+    next_deadline, teardown, work_pending,
 };
 use alloc::boxed::Box;
 use skein_io::{self as io, kernel};
@@ -31,10 +31,8 @@ impl Effects {
         if !config.limits.io.is_usable() || config.limits.file_slots < config.limits.machine.roots {
             return Err(ConfigError::Queue);
         }
-        // The parts refuse limits they cannot be built under; each part's
-        // `valid` replaces this sum (dynamic memory 7.6).
-        if effects_worst_case(&config.limits, &config.llm_endpoints).is_none() {
-            return Err(ConfigError::Memory);
+        if !effects_valid(&config.limits, &config.llm_endpoints) {
+            return Err(ConfigError::Limits);
         }
         let service = Service::parts(config, None)?;
         Ok(Self { service, installed: Map::with_capacity(accounts) })

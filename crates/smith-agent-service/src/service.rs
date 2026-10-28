@@ -102,7 +102,7 @@ pub enum ConfigError {
     /// A stage cannot reserve its maximum output.
     Queue,
     /// A part cannot be built under the requested limits.
-    Memory,
+    Limits,
     /// The host channel cannot open under these limits or endpoints.
     Channel(channel::Error),
     /// The LLM pool cannot retain these endpoints or limits.
@@ -326,10 +326,8 @@ impl Service {
         if limits.routes < lower_routes {
             return Err(ConfigError::Queue);
         }
-        // The parts refuse limits they cannot be built under; each part's
-        // `valid` replaces these sums (dynamic memory 7.6).
-        if worst_case(&limits, &config.llm_endpoints).is_none() || program_worst_case(&config).is_none() {
-            return Err(ConfigError::Memory);
+        if !valid(&limits, &config.llm_endpoints) || !program_valid(&config) {
+            return Err(ConfigError::Limits);
         }
         Self::parts(config, Some(seed))
     }
@@ -409,7 +407,7 @@ impl Service {
             pending_start: None,
             directories: List::with_capacity(limits.machine.roots),
             root_index: 0,
-            pipe_routes: Map::with_capacity(limits.machine.processes.checked_mul(2).ok_or(ConfigError::Memory)?),
+            pipe_routes: Map::with_capacity(limits.machine.processes.checked_mul(2).ok_or(ConfigError::Limits)?),
             roots: List::with_capacity(limits.machine.roots),
             root_close_next: 0,
             root_close_pending: false,

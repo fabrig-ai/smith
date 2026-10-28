@@ -453,13 +453,11 @@ fn build_parts(document: Document) -> Result<Configuration, ConfigurationRefusal
 }
 
 fn check_limits(config: &service::Config) -> Result<(), ConfigurationRefusal> {
-    service::worst_case(&config.limits, &config.llm_endpoints)
-        .and_then(|bytes| bytes.checked_add(service::program_worst_case(config)?))
-        .ok_or_else(|| {
-            ConfigurationRefusal::Profile(Refusal::Derived {
-                limit: LimitName::deployment(Layer::Service, "worst_case"),
-            })
-        })?;
+    if !service::valid(&config.limits, &config.llm_endpoints) || !service::program_valid(config) {
+        return Err(ConfigurationRefusal::Profile(Refusal::Derived {
+            limit: LimitName::deployment(Layer::Service, "limits"),
+        }));
+    }
     Ok(())
 }
 

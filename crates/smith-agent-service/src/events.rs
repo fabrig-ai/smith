@@ -100,7 +100,9 @@ impl EventLimits {
             conversations: limits.domain.run.conversations,
         };
         sinks.output = crate::sinks::output_bound(&sinks, capture)?;
-        crate::sinks::sinks_worst_case(&sinks, capture)?;
+        if !crate::sinks::valid(&sinks, capture) {
+            return None;
+        }
         Some(EventLimits { sinks, capture, front: false, write_deadline })
     }
 }

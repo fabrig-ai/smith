@@ -220,7 +220,7 @@ impl Sinks {
     /// and the write deadline IO keeps on each destination.
     #[must_use]
     pub fn new(limits: &SinkLimits, capture: Capture, io_output: u32, write_deadline: Duration) -> Sinks {
-        assert!(sinks_worst_case(limits, capture).is_some(), "startup checked the sink's ownership bound");
+        valid(limits, capture).then_some(()).expect("startup checked sink validity");
         let line = limits.line_ceiling(capture).expect("startup checked the produced record bound");
         assert!(io_output > 0, "a destination can send at least one byte");
         Sinks {
