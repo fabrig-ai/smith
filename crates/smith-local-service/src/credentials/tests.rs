@@ -191,3 +191,31 @@ fn zero_file_stall_is_refused_before_a_file_owner_is_constructed() {
 }
 
 mod private;
+
+#[test]
+fn invalid_limits_are_refused() {
+    let base = limits();
+    assert!(accounts_valid(&base));
+    let changes: &[fn(&mut oauth::Limits)] = &[
+        |limits| limits.accounts = u32::MAX,
+        |limits| limits.accounts = u32::MAX / 4 + 1,
+        |limits| limits.io.intake = 0,
+        |limits| limits.io.sockets = u32::MAX,
+        |limits| limits.client.parameter_bytes = u32::MAX,
+        |limits| limits.client.document.token_bytes = u32::MAX,
+        |limits| limits.http.head = 1,
+        |limits| limits.http.read = 0,
+        |limits| limits.http.send = 0,
+        |limits| limits.tls.read = 0,
+        |limits| limits.tls.send = 0,
+        |limits| limits.tls.records = skein_tls::client::MAX_RECORD - 1,
+        |limits| limits.tls.read = u32::MAX,
+        |limits| limits.tls.send = u32::MAX,
+    ];
+    for change in changes {
+        let mut invalid = base;
+        change(&mut invalid);
+        assert!(!accounts_valid(&invalid), "invalid: {invalid:?}");
+        assert_eq!(validate_sources(&List::with_capacity(0), &invalid), Err(crate::Error::Memory));
+    }
+}

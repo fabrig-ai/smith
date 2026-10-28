@@ -938,3 +938,41 @@ fn completion_fault(failure: smith_host_domain::CompletionFailure) -> smith_host
         report: smith_host_domain::Report::none(),
     }
 }
+
+#[test]
+#[expect(
+    clippy::disallowed_macros,
+    reason = "deterministic unit fixtures use ordinary Rust (programming-model.md, 10.2)"
+)]
+fn invalid_limits_are_refused() {
+    let base = limits();
+    assert!(crate::valid(&base));
+    let mut cases = vec![
+        Limits { models: 0, ..base.clone() },
+        Limits { unsaved: 0, ..base.clone() },
+        Limits { chat_bytes: u32::MAX, ..base.clone() },
+        Limits { show_bytes: base.chat_bytes + 51, ..base.clone() },
+        Limits { chat_bytes: 0, show_bytes: 63, ..base.clone() },
+    ];
+    let mut invalid = base.clone();
+    invalid.smith.run.messages = u32::MAX;
+    cases.push(invalid);
+    let mut invalid = base.clone();
+    invalid.smith.decoded_call_bytes = 0;
+    cases.push(invalid);
+    let mut invalid = base.clone();
+    let crate::AgentLimits::Inline(ref mut child) = invalid.agent else { panic!("inline fixture") };
+    child.window.turns = 0;
+    cases.push(invalid);
+    for limits in cases {
+        assert!(!crate::valid(&limits), "invalid: {limits:?}");
+        assert!(config().validate(&limits).is_err());
+    }
+    assert!(crate::AgentLimits::inline(base.smith, 0, Duration::from_secs(1), Duration::ZERO).is_none());
+    let mut spawned = base;
+    spawned.agent = crate::AgentLimits::Spawned(host_limits());
+    assert!(crate::valid(&spawned));
+    let crate::AgentLimits::Spawned(ref mut child) = spawned.agent else { unreachable!() };
+    child.turns = 0;
+    assert!(!crate::valid(&spawned));
+}

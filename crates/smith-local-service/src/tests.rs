@@ -1201,3 +1201,36 @@ fn a_spawned_trace_is_held_to_the_configured_write_deadline() {
     assert_eq!(service.pop_given_up(), Some(GivenUp { destination: Destination::Trace, why: Why::Behind }));
     assert_eq!(service.pop_given_up(), None, "the destination is named once");
 }
+
+#[test]
+fn invalid_limits_are_refused() {
+    let base = config().limits;
+    assert!(crate::valid(&base));
+    let changes: &[fn(&mut Limits)] = &[
+        |limits| limits.local.models = 0,
+        |limits| limits.local.line_bytes = 0,
+        |limits| limits.local.show_bytes = 0,
+        |limits| limits.process.io.refusals = 0,
+        |limits| limits.process.io.intake = 0,
+        |limits| limits.process.io.receive = 0,
+        |limits| limits.process.io.output = 0,
+        |limits| limits.process.io.sends = 0,
+        |limits| limits.process.io.accepts = 0,
+        |limits| limits.process.io.retry = Duration::ZERO,
+        |limits| limits.process.io.sockets = u32::MAX,
+        |limits| limits.process.io.sockets = u32::MAX / 8 + 1,
+        |limits| limits.process.channel.channel.chunk = 0,
+        |limits| limits.process.channel.bodies.start_charter = u32::MAX,
+        |limits| limits.local.smith.session.history_bytes = u64::MAX,
+    ];
+    for change in changes {
+        let mut config = config();
+        change(&mut config.limits);
+        assert!(!crate::valid(&config.limits), "invalid: {:?}", config.limits);
+        let Err(crate::Error::Memory) = Service::new(config, 1) else { panic!("invalid limits refusal") };
+    }
+    let mut inline = colocated_config();
+    inline.limits.process.channel.channel.chunk = 0;
+    assert!(crate::valid(&inline.limits), "inline mode has no framed process channel");
+    Service::new(inline, 1).expect("inline mode needs no process framing");
+}
