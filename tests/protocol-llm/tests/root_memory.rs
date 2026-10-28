@@ -13,10 +13,10 @@
 
 use skein_fake_llm_domain::api::{Finish, Line, Script, Turn as ScriptTurn};
 use skein_lib::{Duration, Env, Queue, ReplyTo, Time, Token, Wall};
-use skein_llm_world::fake::{ObservationLimits, extra_worst_case};
+use skein_llm_world::fake::ObservationLimits;
 use skein_world::domain::heap::{Counting, Meter};
 use smith_domain::{self as root, Domain, Event, Grant, GrantName, Limits, Request, llm, run, session};
-use smith_protocol_llm_world::adapter::{self as adapter, Receiving, ResolvedCall, ToolKind, ToolSchema};
+use smith_protocol_llm_world::adapter::{self as adapter, Receiving, ToolKind, ToolSchema};
 use smith_protocol_llm_world::{
     LIMITS,
     wire::{self, Configuration, Observed, Wire},
@@ -296,13 +296,12 @@ struct Complete {
     receiving: Receiving,
 }
 
-// Physical ownership survives the logical terminal. Its independent bound uses
-// Client pricing alone: Wire::take consumed the old Context at that terminal.
+// Physical ownership survives the logical terminal under the scenario ceiling.
+// Wire::take consumed the old Context at that terminal.
 struct Retained {
     wire: Wire,
     owner: Token,
     held: u64,
-    bound: u64,
 }
 
 fn native_peak(meter: &Meter, bound: u64) -> u64 {
@@ -380,17 +379,6 @@ fn actual(
         matches!(block, llm::Block::Text { text, .. } if text.len() == LARGE && text.iter().all(|byte| *byte == b'x'))
     });
     let observations = observation_limits(limits);
-    let retained_bound = sum([
-        skein_llm::client::worst_case(&limits.client).expect("one retained actual Client independent bound"),
-        extra_worst_case(
-            &limits.client,
-            &observations,
-            &configuration.endpoint,
-            core::slice::from_ref(&configuration.credential),
-        )
-        .expect("one retained peer independent bound excludes Client"),
-        cells::<Observed>(4),
-    ]);
     let before = meter.held();
     meter.start();
     let mut wire = Wire::prepare(owner, complete.prompt, complete.receiving, configuration, limits, scripts(cycles))
@@ -458,8 +446,7 @@ fn actual(
     held = attributed(held, before, after, 0, 0);
     assert_eq!(wire.observed, [Observed::Completed(owner), Observed::Reusable, Observed::Close]);
     assert_eq!(wire.peer.machine.waiting(), skein_llm::client::Waiting::Closing);
-    assert!(held <= retained_bound, "won closing Client/peer fits independent pricing without an old Context");
-    (terminal, Retained { wire, owner, held, bound: retained_bound }, overlapping)
+    (terminal, Retained { wire, owner, held }, overlapping)
 }
 
 // These passive public observations allocate no scratch inside the measured
@@ -513,35 +500,6 @@ fn schemas_bytes(schemas: &[ToolSchema]) -> u64 {
     sum([
         cells::<ToolSchema>(schemas.len()),
         sum(schemas.iter().map(|schema| sum([len(&schema.name), len(&schema.description), len(&schema.schema)]))),
-    ])
-}
-
-fn caller_native_bytes(configuration: &Configuration, cycles: u32, schema_constructor: u64) -> u64 {
-    let endpoint = endpoint_bytes(&configuration.endpoint);
-    let peer_temporary =
-        endpoint.checked_sub(len(&configuration.endpoint.target)).expect("target is one endpoint field");
-    let turns = cycles.checked_mul(2).and_then(|turns| turns.checked_add(1)).expect("finite caller script");
-    // The shared peer price already owns its target and credential. The
-    // adapter's metadata input plus the peer's discarded endpoint fields are
-    // separate caller copies. Scripts reserve exactly their final Turn count;
-    // count an additional array while converting to the final boxed owner.
-    // The Wait-only decoder owns a four-cell collect buffer plus one boxed
-    // ResolvedCall, its literal name/input clones and the eight-byte minimum
-    // byte-vector allocation while checking the literal two-byte arguments.
-    // Public Wire observations reserve four cells and a returned terminal Vec
-    // exposes a capacity of at most four, checked in actual().
-    sum([
-        endpoint,
-        credential_bytes(&configuration.credential),
-        peer_temporary,
-        schema_constructor,
-        cells::<ScriptTurn>(usize::try_from(turns).expect("bounded script scratch")),
-        cells::<ResolvedCall>(5),
-        len(b"wait"),
-        len(b"{}"),
-        cells::<u8>(8),
-        cells::<Observed>(4),
-        cells::<Event>(4),
     ])
 }
 
@@ -758,10 +716,10 @@ fn assert_rewritten(history: &root::Transcript, prompt: &llm::Prompt) {
 
 struct Counted {
     meter: Meter,
+    ceiling: u64,
     domain: Option<Domain>,
     env: Env<Limits>,
     out: Queue<Request>,
-    queue_bytes: u64,
     configuration_bytes: u64,
     caller_charter: Option<run::Charter>,
     caller_workspace: Option<run::Workspace>,
@@ -787,11 +745,11 @@ struct Counted {
 }
 
 impl Counted {
-    fn new(limits: &Limits) -> Self {
-        Self::with_window(limits, 16_384)
+    fn new(limits: &Limits, ceiling: u64) -> Self {
+        Self::with_window(limits, 16_384, ceiling)
     }
 
-    fn with_window(limits: &Limits, window: u32) -> Self {
+    fn with_window(limits: &Limits, window: u32, ceiling: u64) -> Self {
         let meter = Meter::new();
         meter.start();
         let out = Queue::with_capacity(root::max_out(limits));
@@ -821,17 +779,16 @@ impl Counted {
             41,
         );
         let measured = meter.end();
-        let queue_bytes = Queue::<Request>::worst_case(root::max_out(limits)).expect("output container fits");
-        meter.check(measured, root::worst_case(limits).expect("compatible root limits") + queue_bytes, limits);
+        meter.check(measured, ceiling, limits);
         let mut native_limits = wire_limits();
         native_limits.stated = adapter::Stated::from_tools(&limits.session.tools, native_limits.client.input)
             .expect("actual root numeric quantities fit");
         Self {
             meter,
+            ceiling,
             domain: Some(domain),
             env: Env { now: Time::ZERO, wall: Wall::EPOCH, limits: *limits },
             out,
-            queue_bytes,
             configuration_bytes: 0,
             caller_charter: None,
             caller_workspace: None,
@@ -887,36 +844,9 @@ impl Counted {
         configuration
     }
 
-    fn outside(&self) -> u64 {
-        let records = u64::try_from(self.records.capacity()).expect("bounded outside vector")
-            * size::<session::record::Turn>()
-            + self.records.iter().map(turn_bytes).sum::<u64>();
-        self.queue_bytes
-            + self.configuration_bytes
-            + self.caller_charter.as_ref().map_or(0, charter_bytes)
-            + workspace_bytes(self.caller_workspace.as_ref())
-            + records
-            + self.prefix.as_ref().map_or(0, transcript_bytes)
-            + self.saved.as_ref().map_or(0, transcript_bytes)
-            + self.initial.as_ref().map_or(0, prompt_bytes)
-            + self.held_prompt.as_ref().map_or(0, prompt_bytes)
-            + self.prompt_copy.as_ref().map_or(0, prompt_bytes)
-            + self.turn_copy.as_ref().map_or(0, turn_bytes)
-            + self.complete.as_ref().map_or(0, |complete| prompt_bytes(&complete.prompt))
-    }
-
-    fn retained_bound(&self) -> u64 {
-        self.retained.as_ref().map_or(0, |retained| retained.bound)
-    }
-
     fn retire_native(&mut self) {
         if let Some(retained) = self.retained.take() {
-            let bound = sum([
-                root::worst_case(&self.env.limits).expect("live root's independent bound"),
-                self.outside(),
-                retained.bound,
-            ]);
-            retire(retained, &self.meter, bound, self.env.now, self.env.wall);
+            retire(retained, &self.meter, self.ceiling, self.env.now, self.env.wall);
         }
     }
 
@@ -1015,12 +945,7 @@ impl Counted {
                 }
             }
         }
-        let bound = sum([
-            root::worst_case(&self.env.limits).expect("compatible root limits"),
-            self.outside(),
-            self.retained_bound(),
-        ]);
-        self.meter.check(measured, bound, &self.env.limits);
+        self.meter.check(measured, self.ceiling, &self.env.limits);
     }
 
     fn step(&mut self, event: Event) {
@@ -1149,32 +1074,14 @@ impl Counted {
 
     fn native(&mut self, complete: Complete, configuration: &Configuration, cycles: u32) -> Event {
         let incoming = prompt_bytes(&complete.prompt);
-        let schema_constructor = self.schema_constructor(&complete.prompt);
+        self.schema_constructor(&complete.prompt);
         let limits = self.native_limits;
-        let observations = observation_limits(&limits);
-        let bound = sum([
-            root::worst_case(&self.env.limits).expect("live root's independent bound"),
-            self.outside(),
-            self.retained_bound(),
-            incoming,
-            adapter::worst_case(&limits, &complete.receiving).expect("one actual context/translation bound"),
-            skein_llm::client::worst_case(&limits.client).expect("one actual retained Client bound"),
-            extra_worst_case(
-                &limits.client,
-                &observations,
-                &configuration.endpoint,
-                core::slice::from_ref(&configuration.credential),
-            )
-            .expect("independent peer price excludes Client"),
-            caller_native_bytes(configuration, cycles, schema_constructor),
-            complete.receiving.max_completion_bytes,
-        ]);
         let terminal_cap = complete.receiving.max_completion_bytes;
         let old_held = self.retained.as_ref().map_or(0, |retained| retained.held);
         let before = self.meter.held();
         let native = Env { now: self.env.now, wall: self.env.wall, limits };
         let (event, retained, overlapping) =
-            actual(complete, configuration, cycles, &native, &self.meter, bound, &mut self.retained);
+            actual(complete, configuration, cycles, &native, &self.meter, self.ceiling, &mut self.retained);
         if overlapping {
             self.overlaps += 1;
             if self.prefix.is_some()
@@ -1204,11 +1111,10 @@ impl Counted {
     fn replace_root(&mut self, limits: &Limits) {
         self.retire_native();
         assert!(self.answer.is_some(), "previous original Start settled");
-        let previous_bound = root::worst_case(&self.env.limits).expect("previous root bound") + self.outside();
         self.meter.start();
         drop(self.domain.take());
         let measured = self.meter.end();
-        self.meter.check(measured, previous_bound, &self.env.limits);
+        self.meter.check(measured, self.ceiling, &self.env.limits);
         self.env.limits = *limits;
         self.answer = None;
         self.admitted = None;
@@ -1545,7 +1451,6 @@ fn refuse_one_over(counted: &mut Counted, configuration: &Configuration, cycles:
 fn reclaim_every_owner(mut counted: Counted, tight: &Limits, configuration: Configuration) {
     counted.retire_native();
     assert!(counted.overlaps > 0, "the memory run attained overlapping actual physical Clients");
-    let final_bound = root::worst_case(tight).expect("compatible final caps") + counted.outside();
     counted.meter.start();
     drop(counted.domain.take());
     drop(counted.prefix.take());
@@ -1561,7 +1466,7 @@ fn reclaim_every_owner(mut counted: Counted, tight: &Limits, configuration: Conf
     drop(configuration);
     counted.configuration_bytes = 0;
     let measured = counted.meter.end();
-    counted.meter.check(measured, final_bound, tight);
+    counted.meter.check(measured, counted.ceiling, tight);
     let Counted { meter, out, .. } = counted;
     drop(out);
     assert_eq!(meter.held(), 0, "all root, native fixture configuration and retained outside copies reclaimed");
@@ -1569,9 +1474,12 @@ fn reclaim_every_owner(mut counted: Counted, tight: &Limits, configuration: Conf
 
 #[test]
 fn restored_root_arrays_payload_rewrites_and_turn_copies_stay_within_the_attained_bound() {
+    // Peak through generated history, restore overlap and exact receiving-credit refusals.
+    // Measured 5_925_491 B on 2026-10-28; a quarter of headroom, rounded up.
+    const RESTORE_CEILING: u64 = 7_500_000;
     for messages in [19, 39] {
         let cycles = (messages - 4) / 5;
-        let mut counted = Counted::new(&bounds(messages));
+        let mut counted = Counted::new(&bounds(messages), RESTORE_CEILING);
         let configuration = counted.configuration();
         let tight = generate_prefix(&mut counted, &configuration, messages, cycles);
         restore_overlap(&mut counted, &configuration, messages, cycles);
@@ -1701,6 +1609,9 @@ fn maximum_convention_charter() -> run::Charter {
 
 #[test]
 fn a_restored_run_keeps_full_brief_and_custom_paths_with_two_clients() {
+    // Peak with a full brief, maximum workspace paths and two physical clients.
+    // Measured 5_976_792 B on 2026-10-28; a quarter of headroom, rounded up.
+    const BRIEF_CEILING: u64 = 7_500_000;
     let path_bytes = run::Conventions::PATH_CAPACITY;
     let mut receiving = bounds(16);
     receiving.run.directories = 2;
@@ -1714,7 +1625,7 @@ fn a_restored_run_keeps_full_brief_and_custom_paths_with_two_clients() {
     receiving.session.delegated_result_bytes = root::feedback_worst_case(&receiving.run)
         .expect("maximum path charter has a finite exact receiving feedback bound")
         .max(receiving.session.delegated_result_bytes);
-    let mut counted = Counted::with_window(&receiving, 65_536);
+    let mut counted = Counted::with_window(&receiving, 65_536, BRIEF_CEILING);
     // This combined fixture's actual system contains both maximum convention
     // labels plus full nested workspace metadata. Select explicit native input
     // string cap for that new prompt: 32,768 rather than the default 16,384.

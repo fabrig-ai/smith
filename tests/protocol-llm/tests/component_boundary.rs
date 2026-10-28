@@ -155,7 +155,7 @@ fn invalid_limits_are_refused() {
     assert!(adapter::component_valid(&bounds, &endpoints()));
     Component::new(&bounds, endpoints()).expect("valid component");
     let mut cases = Vec::new();
-    for check in 0..12 {
+    for check in 0..16 {
         let mut invalid = bounds;
         let name = match check {
             0 => {
@@ -208,6 +208,22 @@ fn invalid_limits_are_refused() {
                 invalid.connection.tls.read = 0;
                 "TLS edge"
             }
+            12 => {
+                invalid.connection.tls.send = 0;
+                "TLS send"
+            }
+            13 => {
+                invalid.connection.tls.records = skein_tls::client::MAX_RECORD - 1;
+                "TLS record"
+            }
+            14 => {
+                invalid.connection.tls.read = u32::MAX;
+                "TLS intake arithmetic"
+            }
+            15 => {
+                invalid.connection.tls.send = u32::MAX;
+                "TLS record room arithmetic"
+            }
             _ => unreachable!(),
         };
         cases.push((name, invalid));
@@ -218,10 +234,12 @@ fn invalid_limits_are_refused() {
     }
     let mut incompatible = bounds;
     incompatible.adapter.client.tools -= 1;
+    assert!(!adapter::component_valid(&incompatible, &endpoints()));
     assert!(matches!(Component::new(&incompatible, endpoints()), Err(adapter::ComponentError::ClientLimits)));
     let mut large = bounds;
     large.contract_bytes = u64::MAX;
     assert!(adapter::component_valid(&large, &endpoints()), "retained heap total is not validity");
+    Component::new(&large, endpoints()).expect("aggregate heap arithmetic is not constructor validity");
 }
 
 #[test]
@@ -383,9 +401,12 @@ fn every_shared_failure_class_keeps_each_evidence_and_detail() {
 
 #[test]
 fn a_full_connection_pool_and_two_grant_generations_fit_the_component_bound() {
+    // Peak with two live connections and both credential generations retained.
+    // Measured 1_048_441 B on 2026-10-28; a quarter of headroom, rounded up.
+    const POOL_CEILING: u64 = 1_400_000;
+
     let limits = limits();
     let destinations = endpoints();
-    let component_bound = adapter::component_worst_case(&limits, &destinations).expect("component worst case");
     let first = complete(7, 1, limits.receiving);
     let second = complete(8, 2, limits.receiving);
     let first_credential = credential(b"first");
@@ -405,10 +426,7 @@ fn a_full_connection_pool_and_two_grant_generations_fit_the_component_bound() {
     component.from_domain(&env(2, &limits), second, &mut up, &mut io);
     let measured = meter.end();
     assert_eq!(io.len(), 2, "the pool holds two concurrent connections");
-    let bound = component_bound
-        + Queue::<ToDomain>::worst_case(adapter::MAX_OUT.above).expect("domain queue")
-        + Queue::<IoRequest>::worst_case(adapter::MAX_OUT.below).expect("io queue");
-    assert!(measured.peak() <= bound, "component peak {} exceeds {bound}", measured.peak());
+    assert!(measured.peak() <= POOL_CEILING, "component peak {} exceeds {POOL_CEILING}", measured.peak());
 }
 
 #[test]

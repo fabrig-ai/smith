@@ -182,10 +182,10 @@ impl Host for Parent {
             && self.submissions.is_empty()
     }
     fn worst_case(&self) -> u64 {
-        io::worst_case(&self.env.limits)
-            .and_then(|bound| bound.checked_add(smith_host_protocol::program_source_worst_case(32)?))
-            .and_then(|bound| bound.checked_add(1_048_576))
-            .expect("bounded source parent and queues")
+        // Peak of source check, login and refresh scenarios with the hosted fake.
+        // Measured 200_884 B on 2026-10-28; a quarter of headroom, rounded up.
+        const SOURCE_PARENT_CEILING: u64 = 260_000;
+        SOURCE_PARENT_CEILING
     }
     fn operations(&self) -> u32 {
         io::operations(&self.env.limits).expect("parent operations").checked_add(1).expect("root close")
@@ -238,7 +238,10 @@ impl Host for Process {
         self.host().exit()
     }
     fn worst_case(&self) -> u64 {
-        self.host().worst_case().checked_add(4096).expect("wrapper bound")
+        match self {
+            Self::Parent(parent) => parent.worst_case(),
+            Self::Fake(fake) => fake.worst_case().checked_add(4096).expect("wrapper bound"),
+        }
     }
     fn operations(&self) -> u32 {
         self.host().operations()

@@ -87,11 +87,15 @@ impl Host for Proc {
     }
 
     fn worst_case(&self) -> u64 {
-        self.host()
-            .worst_case()
-            .checked_add(u64::try_from(size_of::<Self>()).expect("process wrapper size"))
-            .and_then(|bound| bound.checked_add(4096))
-            .expect("wrapper bound")
+        match self {
+            Self::Parent(parent) => parent.worst_case(),
+            Self::Agent { .. } | Self::Peer(_) | Self::Error(_) => self
+                .host()
+                .worst_case()
+                .checked_add(u64::try_from(size_of::<Self>()).expect("process wrapper size"))
+                .and_then(|bound| bound.checked_add(4096))
+                .expect("wrapper bound"),
+        }
     }
 
     fn operations(&self) -> u32 {
@@ -133,41 +137,10 @@ impl Host for HostService {
     }
 
     fn worst_case(&self) -> u64 {
-        smith_host_domain::worst_case(&self.domain_env.limits)
-            .and_then(|bound| bound.checked_add(skein_io::worst_case(&self.io_env.limits)?))
-            .and_then(|bound| {
-                bound.checked_add(smith_host_protocol::process_worst_case(
-                    &self.process_limits,
-                    self.domain_env.limits.detail_bytes,
-                )?)
-            })
-            // Eight finite boundary queues may retain maximal charter/turn payloads.
-            .and_then(|bound| bound.checked_add(134_217_728))
-            .and_then(|bound| bound.checked_add(u64::try_from(size_of::<Self>()).ok()?))
-            .and_then(|bound| {
-                bound.checked_add(self.launch.as_ref().map_or(0, |launch| {
-                    let strings = launch
-                        .program
-                        .len()
-                        .checked_add(launch.directory.len())
-                        .and_then(|bytes| {
-                            launch
-                                .arguments
-                                .iter()
-                                .chain(&launch.environment)
-                                .try_fold(bytes, |bytes, argument| bytes.checked_add(argument.len()))
-                        })
-                        .expect("bounded launch strings");
-                    let slots = launch
-                        .arguments
-                        .len()
-                        .checked_add(launch.environment.len())
-                        .and_then(|slots| slots.checked_mul(size_of::<Box<[u8]>>()))
-                        .expect("bounded launch slots");
-                    u64::try_from(strings.checked_add(slots).expect("bounded launch ownership")).expect("launch memory")
-                }))
-            })
-            .expect("complete parent bound")
+        // Peak of the sample host parent in service and stderr-failure scenarios.
+        // Measured 454_471 B on 2026-10-28; a quarter of headroom, rounded up.
+        const HOST_PARENT_CEILING: u64 = 570_000;
+        HOST_PARENT_CEILING
     }
 
     fn operations(&self) -> u32 {

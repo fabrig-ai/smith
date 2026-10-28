@@ -9,8 +9,7 @@
 
 extern crate std;
 use super::{
-    ACK, Answer, CallId, Ended, Limits, PROMPT_TOOL, PROTOCOL_VERSIONS, Server, Tool, Up, Verdict, json,
-    mcp_worst_case, secret_text,
+    ACK, Answer, CallId, Ended, Limits, PROMPT_TOOL, PROTOCOL_VERSIONS, Server, Tool, Up, Verdict, json, secret_text,
 };
 use alloc::{boxed::Box, format, vec, vec::Vec};
 use serde_json::{Value, json as value};
@@ -489,31 +488,6 @@ fn a_tool_schema_is_bounded_before_listening() {
 }
 
 #[test]
-fn schema_collection_prices_its_ceiling() {
-    let larger = Limits { schema_bytes: 8192, ..limits() };
-    let increase = json::worst_case(larger.schema_bytes)
-        .expect("larger schema scratch")
-        .checked_sub(json::worst_case(limits().schema_bytes).expect("schema scratch"))
-        .expect("larger scratch");
-    assert_eq!(
-        mcp_worst_case(&larger).expect("larger memory").checked_sub(mcp_worst_case(&limits()).expect("memory")),
-        Some(increase),
-    );
-}
-
-#[test]
-fn collection_scratch_is_shared_between_phases() {
-    let smaller_schema = Limits { schema_bytes: 2048, ..limits() };
-    assert_eq!(mcp_worst_case(&smaller_schema), mcp_worst_case(&limits()), "request scratch dominates");
-    let smaller_message = Limits { message_bytes: 2048, ..limits() };
-    assert_eq!(
-        mcp_worst_case(&limits()).expect("memory").checked_sub(mcp_worst_case(&smaller_message).expect("memory")),
-        Some(2048 * 12),
-        "schema scratch dominates; only the retained message allowance changes",
-    );
-}
-
-#[test]
 fn a_ping_answers_empty() {
     assert_eq!(error_response(br#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#)["result"], value!({}));
 }
@@ -600,12 +574,6 @@ fn an_id_past_its_bound_answers_null() {
     let response = error_response(&message);
     assert_eq!(response["id"], Value::Null);
     assert_eq!(response["error"]["code"], -32_600_i32);
-}
-
-#[test]
-fn worst_case_rejects_overflow() {
-    assert!(mcp_worst_case(&limits()).expect("memory") > 4096);
-    assert_eq!(mcp_worst_case(&Limits { message_bytes: u32::MAX, ..limits() }), None);
 }
 
 #[test]

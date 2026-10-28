@@ -1,5 +1,5 @@
 //! Two saturated searches, their four output routes and root authority
-//! against the machine component's checked worst case.
+//! under measured scenario ceilings.
 
 use skein_lib::stream::Up;
 use skein_lib::{Duration, Env, Queue, Time, Token, Wall};
@@ -12,6 +12,10 @@ static HEAP: Counting = Counting;
 
 #[test]
 fn saturated_searches_and_pipe_routes_stay_within_the_machine_bound() {
+    // Peak with two saturated searches and their four pipe routes.
+    // Measured 9_537 B on 2026-10-28; a quarter of headroom, rounded up.
+    const SEARCH_CEILING: u64 = 12_000;
+
     let limits = Limits {
         operations: 0,
         roots: 1,
@@ -28,7 +32,6 @@ fn saturated_searches_and_pipe_routes_stay_within_the_machine_bound() {
         env_bytes: 128,
         group_stop: Duration::from_millis(1),
     };
-    let bound = machine::worst_case(&limits).expect("representable machine bound");
     let workspace = run::Workspace {
         directories: Box::new([run::Directory {
             host: Box::from(b"/host".as_slice()),
@@ -49,7 +52,7 @@ fn saturated_searches_and_pipe_routes_stay_within_the_machine_bound() {
     let mut component =
         Component::new(&limits, machine::Environment::encode(&variables, &limits).expect("empty environment fits"));
     component.workspace(&workspace);
-    meter.check(meter.end(), bound, &"new and workspace");
+    meter.check(meter.end(), SEARCH_CEILING, &"new and workspace");
 
     for index in 0_u64..2 {
         let owner = Token::new(index + 10);
@@ -71,7 +74,7 @@ fn saturated_searches_and_pipe_routes_stay_within_the_machine_bound() {
             Some(Below::Spawn { .. }) => {}
             other => panic!("search starts a child: {other:?}"),
         }
-        meter.check(measured, bound, &"search admitted");
+        meter.check(measured, SEARCH_CEILING, &"search admitted");
 
         meter.start();
         component.from_below(
@@ -86,7 +89,7 @@ fn saturated_searches_and_pipe_routes_stay_within_the_machine_bound() {
         );
         let measured = meter.end();
         assert!(below.pop().is_some() && below.pop().is_some(), "both pipe demands");
-        meter.check(measured, bound, &"both pipe routes");
+        meter.check(measured, SEARCH_CEILING, &"both pipe routes");
     }
     assert!(to_domain.is_empty(), "both searches remain live");
     let line =
@@ -101,7 +104,7 @@ fn saturated_searches_and_pipe_routes_stay_within_the_machine_bound() {
         );
         assert!(below.pop().is_some(), "stream rearms after each byte");
     }
-    meter.check(meter.end(), bound, &"bounded JSON line parse");
+    meter.check(meter.end(), SEARCH_CEILING, &"bounded JSON line parse");
     assert!(meter.held() > 0, "the component retains bounded state");
 }
 
@@ -145,6 +148,10 @@ fn shared_harness_meters_file_child_and_flood_runs_through_drop() {
 
 #[test]
 fn saturated_configured_environments_and_command_check_copies_fit_the_machine_bound() {
+    // Peak of retained environments and command/check translation copies.
+    // Measured 8_870 B on 2026-10-28; a quarter of headroom, rounded up.
+    const ENVIRONMENT_CEILING: u64 = 12_000;
+
     for many in [false, true] {
         let limits = Limits {
             operations: 0,
@@ -169,7 +176,6 @@ fn saturated_configured_environments_and_command_check_copies_fit_the_machine_bo
         } else {
             vec![machine::Variable { name: Box::new([b'A']), value: Box::new([b'x'; 126]) }]
         };
-        let bound = machine::worst_case(&limits).expect("bounded saturated environment");
         let workspace = run::Workspace {
             directories: Box::new([run::Directory {
                 host: Box::from(b"/host".as_slice()),
@@ -188,7 +194,7 @@ fn saturated_configured_environments_and_command_check_copies_fit_the_machine_bo
         let mut component =
             Component::new(&limits, machine::Environment::encode(&variables, &limits).expect("exact byte ceiling"));
         component.workspace(&workspace);
-        meter.check(meter.end(), bound, &"maximum environment encoding and retained configuration");
+        meter.check(meter.end(), ENVIRONMENT_CEILING, &"maximum environment encoding and retained configuration");
         for check in [false, true] {
             let owner = Token::new(if check { 12 } else { 11 });
             let request = if check {
@@ -227,7 +233,8 @@ fn saturated_configured_environments_and_command_check_copies_fit_the_machine_bo
                     panic!("configured process spawn: {other:?}")
                 }
             }
-            let peak = meter.check(meter.end(), bound, &"retained environment plus command/check translation");
+            let peak =
+                meter.check(meter.end(), ENVIRONMENT_CEILING, &"retained environment plus command/check translation");
             assert!(peak > 0);
         }
         assert!(up.is_empty());

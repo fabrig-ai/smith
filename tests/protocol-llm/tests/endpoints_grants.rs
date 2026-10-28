@@ -106,7 +106,6 @@ fn a_refresh_preserves_the_first_call_then_evicts_the_oldest_generation() {
     assert!(matches!(grants.read(second, Time::from_nanos(201)), Err(GrantError::Lapsed)));
     assert!(grants.read(third, Time::from_nanos(201)).expect("new value").value.as_ref() == b"third");
     assert!(matches!(grants.grant(second, credential(b"stale", b""), Time::from_nanos(400)), Err(GrantError::Stale)));
-    assert!(Grants::worst_case(1, 64).expect("bounded footprint") >= 128);
     assert!(!format!("{grants:?}").contains("third"), "debug hides bearer values");
 }
 

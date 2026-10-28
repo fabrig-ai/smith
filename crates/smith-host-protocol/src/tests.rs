@@ -453,16 +453,12 @@ fn the_host_reserves_its_joint_start_frame_in_its_sending_direction() {
     let schema = smith_protocol_channel::schema_for_start(&limits.bodies, limits.start_bytes).expect("joint schema");
     schema.check(skein_channel::Role::Initiator, &limits.channel).expect("exact host frame allowance");
     Component::new(&limits, StreamMode::Two, endpoints()).expect("constructor uses the same joint schema");
-    let exact = crate::worst_case(&limits).expect("same directional accounting");
     limits.channel.output_bytes = required - 1;
     assert_eq!(schema.check(skein_channel::Role::Initiator, &limits.channel), Err(skein_channel::SchemaError::Kind));
-    assert!(crate::worst_case(&limits).is_none());
     match Component::new(&limits, StreamMode::Two, endpoints()) {
         Err(error) => assert_eq!(error, crate::Error::Channel(skein_channel::SchemaError::Kind)),
         Ok(_) => panic!("short host output was admitted"),
     }
-    limits.channel.output_bytes = required;
-    assert_eq!(crate::worst_case(&limits), Some(exact));
     // A responder's smaller sending allowance cannot stand in for the host's Start.
     limits.channel.output_bytes = 8_388_642;
     match Component::new(&limits, StreamMode::Two, endpoints()) {

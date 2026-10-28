@@ -265,8 +265,8 @@ fn invalid_limits_are_refused() {
     let owner = skein_lib::Token::new(1);
     let root = skein_lib::Token::new(2);
     let deadline = skein_lib::Time::from_nanos(100);
-    assert!(Git::new(GitOp::Head, limits()).is_some());
-    for check in 0..3 {
+    assert!(Git::new(GitOp::Head, limits()).is_some(), "valid Git limits");
+    for check in 0_u8..3 {
         let mut invalid = limits();
         match check {
             0 => invalid.output_bytes = 0,
@@ -274,11 +274,11 @@ fn invalid_limits_are_refused() {
             2 => invalid.path_bytes = 0,
             _ => unreachable!(),
         }
-        assert!(Git::new(GitOp::Head, invalid).is_none());
+        assert!(Git::new(GitOp::Head, invalid).is_none(), "positive Git limit {check}");
     }
     let plain = crate::PlainLimits { entries: 2, path_bytes: 32, file_bytes: 1024 };
-    assert!(crate::Plain::new(owner, root, plain, deadline).is_some());
-    for check in 0..3 {
+    assert!(crate::Plain::new(owner, root, plain, deadline).is_some(), "valid scan limits");
+    for check in 0_u8..3 {
         let mut invalid = plain;
         match check {
             0 => invalid.entries = 0,
@@ -286,12 +286,15 @@ fn invalid_limits_are_refused() {
             2 => invalid.file_bytes = 0,
             _ => unreachable!(),
         }
-        assert!(crate::Plain::new(owner, root, invalid, deadline).is_none());
+        assert!(crate::Plain::new(owner, root, invalid, deadline).is_none(), "positive scan limit {check}");
     }
     let terminal = crate::TerminalLimits { line_bytes: 32, show_bytes: 64 };
-    assert!(crate::Terminal::new(terminal).is_some());
-    assert!(crate::Terminal::new(crate::TerminalLimits { line_bytes: 0, ..terminal }).is_none());
-    assert!(crate::Terminal::new(crate::TerminalLimits { show_bytes: 0, ..terminal }).is_none());
+    assert!(crate::Terminal::new(terminal).is_some(), "valid terminal limits");
+    assert!(crate::Terminal::new(crate::TerminalLimits { line_bytes: 0, ..terminal }).is_none(), "positive line limit");
+    assert!(
+        crate::Terminal::new(crate::TerminalLimits { show_bytes: 0, ..terminal }).is_none(),
+        "positive display limit"
+    );
     let store = crate::StoreLimits { file_bytes: 4096, turns: 2, deliveries: 2, scan_bytes: 4096 };
     let construct = |limits| {
         crate::Store::new(
@@ -302,7 +305,7 @@ fn invalid_limits_are_refused() {
             smith_protocol_channel::Endpoints::new(skein_lib::List::with_capacity(0)),
         )
     };
-    assert!(construct(store).is_some());
+    assert!(construct(store).is_some(), "valid store limits");
     for invalid in [
         crate::StoreLimits { file_bytes: 0, ..store },
         crate::StoreLimits { turns: 0, ..store },
@@ -310,7 +313,7 @@ fn invalid_limits_are_refused() {
         crate::StoreLimits { scan_bytes: 0, ..store },
         crate::StoreLimits { turns: u32::MAX - 5, ..store },
     ] {
-        assert!(construct(invalid).is_none());
+        assert!(construct(invalid).is_none(), "store file, scan and record limits are checked");
     }
     assert!(
         construct(crate::StoreLimits { scan_bytes: u64::MAX, ..store }).is_some(),

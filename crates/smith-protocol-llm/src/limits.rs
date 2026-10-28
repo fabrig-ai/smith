@@ -98,9 +98,8 @@ pub fn valid(limits: &Limits, receiving: &Receiving) -> bool {
     if limits.rendered_result < crate::CUT_MARKER_BYTES {
         return false;
     }
-    let completion = match completion_worst_case(&limits.client, receiving.decoded_call_bytes) {
-        Some(completion) => completion,
-        None => return false,
+    let Some(completion) = completion_worst_case(&limits.client, receiving.decoded_call_bytes) else {
+        return false;
     };
     if completion > receiving.max_completion_bytes
         || limits.client.output_items > receiving.max_completion_blocks
@@ -108,13 +107,11 @@ pub fn valid(limits: &Limits, receiving: &Receiving) -> bool {
     {
         return false;
     }
-    let document_bytes = match u32::try_from(limits.tool_bytes.max(u64::from(limits.client.input))) {
-        Ok(bytes) => bytes,
-        Err(_) => return false,
+    let Ok(document_bytes) = u32::try_from(limits.tool_bytes.max(u64::from(limits.client.input))) else {
+        return false;
     };
-    let replay = match replay_limits(&limits.client) {
-        Some(replay) => replay,
-        None => return false,
+    let Some(replay) = replay_limits(&limits.client) else {
+        return false;
     };
     skein_llm::replay_worst_case(&document_limits(&limits.client, document_bytes)).is_some()
         && skein_llm::replay_worst_case(&replay).is_some()

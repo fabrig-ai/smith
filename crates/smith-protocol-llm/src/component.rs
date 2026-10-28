@@ -47,7 +47,7 @@ pub struct ComponentLimits {
 pub enum ComponentError {
     /// A configured endpoint and the adapter disagree on client bounds.
     ClientLimits,
-    /// A finite bound or worst case is invalid.
+    /// A configured count, receiving contract or edge bound is invalid.
     Limits,
     /// The grant table could not be allocated at its bound.
     Grants(GrantError),
@@ -170,15 +170,17 @@ pub fn component_valid(limits: &ComponentLimits, endpoints: &Endpoints) -> bool 
             Some(reservation) => reservation,
             None => return false,
         };
-        if reservation > pool.memory
-            || shared::client::worst_case(&native).is_none()
-            || shared::client::encoding_worst_case(&native).is_none()
-        {
+        if reservation > pool.memory || shared::client::encoding_worst_case(&native).is_none() {
             return false;
         }
         match &endpoint.transport {
             connection::Transport::Tls { .. } => {
-                if skein_tls::client::worst_case(&pool.tls).is_none() {
+                if pool.tls.read == 0
+                    || pool.tls.send == 0
+                    || pool.tls.records < skein_tls::client::MAX_RECORD
+                    || pool.tls.read.checked_add(skein_tls::client::MAX_PLAINTEXT).is_none()
+                    || skein_tls::client::room_for(pool.tls.send).is_none()
+                {
                     return false;
                 }
             }

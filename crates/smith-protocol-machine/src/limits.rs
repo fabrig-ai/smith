@@ -207,7 +207,7 @@ pub fn derive(inputs: &Derivation) -> Result<Limits, Field> {
 
 #[cfg(test)]
 mod memory {
-    use super::{Limits, worst_case};
+    use super::Limits;
     use crate::{Below, BelowEvent, Component, Environment, FromDomain, ToDomain};
     use alloc::boxed::Box;
     use skein_io::{file, kernel};
@@ -252,9 +252,12 @@ mod memory {
 
     #[test]
     fn every_pending_listing_keeps_its_largest_filter_within_the_bound() {
+        // Peak with eight pending listings holding their largest filters.
+        // Measured 598_592 B on 2026-10-28; a quarter of headroom, rounded up.
+        const FILTERS_CEILING: u64 = 750_000;
+
         let limits = caps();
         let env = Env { now: Time::ZERO, wall: Wall::EPOCH, limits };
-        let bound = worst_case(&limits).expect("bounded listing ownership");
         let workspace = workspace();
         let mut terminals = Queue::<ToDomain>::with_capacity(1);
         let mut below = Queue::<Below>::with_capacity(1);
@@ -262,14 +265,14 @@ mod memory {
         meter.start();
         let mut component = Component::new(&limits, Environment::encode(&[], &limits).expect("empty environment"));
         component.workspace(&workspace);
-        meter.check(meter.end(), bound, &"component and root");
+        meter.check(meter.end(), FILTERS_CEILING, &"component and root");
         for index in 0..limits.processes {
             meter.start();
             component.from_domain(&env, listing(index), &mut terminals, &mut below);
             let measured = meter.end();
             assert!(terminals.is_empty());
             assert_eq!(below.pop(), Some(directory(index)));
-            meter.check(measured, bound, &index);
+            meter.check(measured, FILTERS_CEILING, &index);
         }
         assert_eq!(component.next_deadline(), Some(Time::from_nanos(100)));
         for index in 0..limits.processes {
@@ -333,18 +336,13 @@ mod memory {
         const LISTINGS_HELD_CEILING: u64 = 500_000;
         // Ceiling on listing path peak: a quarter above 10-28's figure, moved by hand when a real change passes it.
         const LISTINGS_PEAK_CEILING: u64 = 540_000;
-        let mut limits = caps();
-        limits.file_bytes = 0;
-        limits.tool_payload = 0;
-        limits.search_line_bytes = 16_384;
-        let bound = worst_case(&limits).expect("bounded pathname ownership");
         let meter = Meter::new();
         meter.start();
         let mut listings: [Option<crate::Listing>; 8] = [const { None }; 8];
         for listing in &mut listings {
             *listing = Some(crate::Listing::new(0, 0, tools::Depth::Whole, 16_384));
         }
-        meter.check(meter.end(), bound, &"eight record buffers");
+        meter.check(meter.end(), LISTINGS_PEAK_CEILING, &"eight record buffers");
         let mut peak = 0;
         for listing in &mut listings {
             let listing = listing.as_mut().expect("eight saturated listings");
@@ -354,7 +352,7 @@ mod memory {
                     listing.push(byte);
                 }
                 listing.push(0);
-                peak = peak.max(meter.check(meter.end(), bound, &byte));
+                peak = peak.max(meter.check(meter.end(), LISTINGS_PEAK_CEILING, &byte));
             }
         }
         assert!(
@@ -371,11 +369,6 @@ mod memory {
         const LISTING_ENTRIES_HELD_CEILING: u64 = 140_000;
         // Ceiling on finishing listings' peak: a quarter above 10-28's figure, moved by hand when a real change passes it.
         const LISTING_TERMINALS_PEAK_CEILING: u64 = 150_000;
-        let mut limits = caps();
-        limits.entries = 512;
-        limits.entry_bytes = 13_312;
-        limits.search_line_bytes = 2;
-        let bound = worst_case(&limits).expect("bounded listing terminals");
         let meter = Meter::new();
         meter.start();
         let mut listings: [Option<crate::Listing>; 8] = [const { None }; 8];
@@ -388,7 +381,7 @@ mod memory {
             }
             *slot = Some(listing);
         }
-        meter.check(meter.end(), bound, &"eight full entry lists");
+        meter.check(meter.end(), LISTING_TERMINALS_PEAK_CEILING, &"eight full entry lists");
         assert!(
             meter.held() <= LISTING_ENTRIES_HELD_CEILING,
             "held listing entries {} exceed {LISTING_ENTRIES_HELD_CEILING}",
@@ -399,7 +392,7 @@ mod memory {
         for (listing, terminal) in listings.iter_mut().zip(&mut terminals) {
             meter.start();
             *terminal = Some(listing.take().expect("full listing").finish(Some(kernel::Exit::Code(0)), false));
-            peak = peak.max(meter.check(meter.end(), bound, &"one terminal list"));
+            peak = peak.max(meter.check(meter.end(), LISTING_TERMINALS_PEAK_CEILING, &"one terminal list"));
         }
         assert!(
             peak <= LISTING_TERMINALS_PEAK_CEILING,

@@ -1,9 +1,9 @@
 //! Selected-file streams against an independent whole-tree set and checked heap bound.
 
-use skein_lib::{Duration, Rng};
+use skein_lib::Rng;
 use skein_world::domain::heap::{Counting, Meter};
 use smith_domain::tools;
-use smith_protocol_machine::{Limits, Listing};
+use smith_protocol_machine::Listing;
 use std::collections::{BTreeMap, BTreeSet};
 
 #[global_allocator]
@@ -11,6 +11,9 @@ static HEAP: Counting = Counting;
 
 #[test]
 fn seeded_selected_paths_keep_the_exact_tree_prefix_and_omitted_count_within_memory() {
+    // Peak of the 128 seeded selected-prefix and omitted-count scenarios.
+    // Measured 1_201 B on 2026-10-28; a quarter of headroom, rounded up.
+    const SELECTED_PATHS_CEILING: u64 = 1_600;
     const BRANCHES: u64 = 4;
     const CHILDREN: u64 = 3;
     for seed in 0..128 {
@@ -70,23 +73,6 @@ fn seeded_selected_paths_keep_the_exact_tree_prefix_and_omitted_count_within_mem
             used = next;
         }
         let more = u64::try_from(all.len() - expected.len()).expect("finite remainder");
-        let limits = Limits {
-            operations: 0,
-            roots: 0,
-            path_bytes: 32,
-            file_bytes: 0,
-            tool_payload: 0,
-            entries: maximum,
-            entry_bytes: bytes,
-            processes: 1,
-            output_bytes: 0,
-            search_hits: 0,
-            search_bytes: 0,
-            search_line_bytes: 256,
-            env_bytes: 0,
-            group_stop: Duration::ZERO,
-        };
-        let bound = smith_protocol_machine::worst_case(&limits).expect("checked memory bound");
         let meter = Meter::new();
         meter.start();
         let mut listing = Listing::new(maximum, bytes, depth, 256);
@@ -94,7 +80,7 @@ fn seeded_selected_paths_keep_the_exact_tree_prefix_and_omitted_count_within_mem
             listing.push(*byte);
         }
         let actual = listing.finish(Some(skein_io::kernel::Exit::Code(0)), false);
-        let peak = meter.check(meter.end(), bound, &seed);
+        let peak = meter.check(meter.end(), SELECTED_PATHS_CEILING, &seed);
         assert!(peak > 0);
         assert_eq!(actual, tools::Done::Listed { entries: expected.into(), more }, "seed {seed}");
     }

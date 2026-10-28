@@ -205,9 +205,6 @@ fn the_first_prompt_prices_every_program_tool() {
     for name in [b"Read".as_slice(), b"Glob", b"Grep", b"Write", b"Edit", b"Bash", b"permission_prompt"] {
         assert!(tools.iter().any(|tool| tool.as_ref() == name));
     }
-    assert!(
-        measures::worst_case(&backend.settings).unwrap() >= Queue::<Measure>::worst_case(measures::MEASURES).unwrap()
-    );
 }
 
 fn delta(backend: &mut Backend, text: &[u8]) {

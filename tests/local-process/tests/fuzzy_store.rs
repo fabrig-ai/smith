@@ -166,7 +166,10 @@ impl Host for Owner {
             && self.events.is_empty()
     }
     fn worst_case(&self) -> u64 {
-        Store::worst_case(limits()).unwrap() + FileIo::worst_case(2, 4096, 8, 4096).unwrap() + 65536
+        // Peak across generated turn loading and every recovery/cut scenario.
+        // Measured 20_926 B on 2026-10-28; a quarter of headroom, rounded up.
+        const STORE_SCENARIOS_CEILING: u64 = 27_000;
+        STORE_SCENARIOS_CEILING
     }
     fn operations(&self) -> u32 {
         4
