@@ -469,6 +469,51 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_declared_memory_below_the_old_worst_case_checks() {
+        let files = crate::credentials::tests::Files::new();
+        crate::credentials::tests::private_key(&files);
+        let certificate = skein_scratch::paths::workspace().join("tests/protocol-llm/fixtures/root.der");
+        let text = format!(
+            "credentials='{}'\nmodel='codex/gpt-6-luna'\n\
+             [deployment]\nmemory=1\n[environment]\ninherit=['PATH']\n\
+             [accounts.codex]\nsource='key'\n[endpoints.codex]\n\
+             trust.system=false\ntrust.der=['{}']\n[trace]\npath='unopened-events'\n",
+            files.0.display(),
+            certificate.display()
+        );
+        let mut settings = settings::merge(
+            &command::Shared::default(),
+            files.0.clone(),
+            &[settings::Source { layer: settings::Layer::User, path: files.0.join("check.toml"), text }],
+        )
+        .unwrap_or_else(|why| panic!("{}", why.line()));
+        settings.paths.path = Some("/usr/bin:/bin".into());
+        let execution = command::Exec {
+            shared: command::Shared::default(),
+            prompt: command::Prompt::Argument(b"hello".as_slice().into()),
+            output: Some(files.0.join("unopened-result")),
+            ephemeral: true,
+            deliver: false,
+            json: true,
+        };
+        for invocation in [Some(&execution), None] {
+            let report = match report_for(&settings, skein_lib::Wall::EPOCH, &skein_shell::Clock::new(), invocation) {
+                Verdict::Ready(report) => report,
+                Verdict::Refused(why) => panic!("{}", why.line()),
+            };
+            assert!(report.credentials_ready(), "check succeeds with the synthetic key");
+            let declaration = report
+                .named_limits
+                .iter()
+                .find(|limit| limit["name"] == "declared.memory")
+                .expect("emitted memory declaration");
+            assert_eq!(declaration["value"], 1);
+        }
+        assert!(!files.0.join("unopened-result").exists());
+        assert!(!files.0.join("unopened-events").exists());
+    }
+
+    #[test]
     fn interactive_checks_enable_the_live_front() {
         let mut resolved = execution_fixture();
         let (limits, _) = interactive_limits(&mut resolved).expect("interactive admission");

@@ -1,4 +1,4 @@
-//! The spawned program chat's complete startup admission (shell.md, sections 4.4 and 9).
+//! Spawned program invocation derivation (shell.md, sections 4.4 and 9).
 use super::*;
 
 #[test]
@@ -44,7 +44,7 @@ fn program_invocations_select_spawned_placement_and_the_consumed_producer() {
             json,
         };
         let (limits, _) = derive_invocation(&mut resolved, &invocation, skein_lib::Wall::EPOCH, interactive)
-            .expect("program invocation startup admission");
+            .expect("program invocation checks");
         assert!(matches!(limits.local.agent, smith_local_domain::AgentLimits::Spawned(_)), "program placement");
         assert!(limits.inline.is_none(), "spawned composition has no inline effects");
         assert_eq!(resolved.agent.memory, MEMORY);

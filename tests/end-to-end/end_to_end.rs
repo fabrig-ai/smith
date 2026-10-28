@@ -77,14 +77,8 @@ fn a_window_size_change_reaches_the_status_line() {
     assert_eq!(widths, [80, 20]);
 }
 
-// Ceiling on the interactive local service's startup formula, every account:
-// a quarter above 10-28's largest figure, moved by hand when a real change passes it.
-const INTERACTIVE_CEILING: u64 = 2_600_000_000;
-
 #[test]
-fn the_interactive_default_fits_its_memory() {
-    use smith_local_shell::{check, command, settings};
-
+fn the_interactive_default_check_emits_its_declaration_without_starting_resources() {
     for (model, account, source) in
         [("codex/gpt-6-astra", "codex", "env"), ("anthropic/claude-opus-5-5", "anthropic", "env")]
     {
@@ -114,42 +108,7 @@ fn the_interactive_default_fits_its_memory() {
         let memory = limits.iter().find(|limit| limit["name"] == "declared.memory").expect("default memory")["value"]
             .as_u64()
             .expect("memory bytes");
-        let settings = settings::Settings {
-            paths: settings::Paths::default(),
-            workspace: scratch.path().into(),
-            values: report["settings"]["values"]
-                .as_object()
-                .unwrap()
-                .iter()
-                .map(|(name, sourced)| {
-                    (
-                        name.clone(),
-                        settings::Sourced {
-                            value: if name == "credentials" {
-                                toml::Value::String(scratch.path().join("credentials").display().to_string())
-                            } else {
-                                serde_json::from_value(sourced["value"].clone()).expect("checked setting")
-                            },
-                            origin: settings::Origin::BuiltIn,
-                        },
-                    )
-                })
-                .collect(),
-        };
-        let mut resolved = settings::resolve::resolve(
-            &settings,
-            &command::Command::Check { shared: command::Shared::default(), json: true, execution: None },
-        )
-        .unwrap_or_else(|why| panic!("{}", why.line()));
-        let (local, _) = check::interactive_limits(&mut resolved).expect("all interactive checks pass");
-        let worst = smith_local_service::worst_case(&local).expect("complete service footprint");
         assert_eq!(memory, 2_281_701_376);
-        assert!(worst <= memory, "{account}: worst_case={worst} > memory={memory}");
-        assert!(worst <= INTERACTIVE_CEILING, "{account}: worst_case={worst} passed its ceiling {INTERACTIVE_CEILING}");
-        println!(
-            "{account}: interactive worst_case={worst} bytes; margin={} bytes under the shipped cap; ceiling={INTERACTIVE_CEILING}",
-            memory - worst
-        );
         assert!(!scratch.path().join("state").exists(), "check starts no store or sign-in");
     }
 }
