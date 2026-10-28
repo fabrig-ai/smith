@@ -211,7 +211,7 @@ impl Domain {
             choice: None,
             interactive: false,
             closing_last: None,
-            agent: Agent::new(&child_limits, agent_config, seed, max_out(limits))?,
+            agent: Agent::new(&child_limits, agent_config, seed)?,
             chat: Chat::new(seed),
             transcript: None,
             records: Map::with_capacity(limits.smith.run.answered_calls),

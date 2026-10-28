@@ -182,36 +182,23 @@ pub(crate) enum Output {
 }
 
 impl Agent {
-    pub(crate) fn new(
-        limits: &AgentLimits,
-        configuration: root::Config,
-        seed: u64,
-        output_cap: u32,
-    ) -> Result<Self, Invalid> {
+    pub(crate) fn new(limits: &AgentLimits, configuration: root::Config, seed: u64) -> Result<Self, Invalid> {
         match limits {
             AgentLimits::Inline(limits) => {
-                if inline::worst_case(limits).is_none()
-                    || inline::max_out(limits).checked_mul(2).ok_or(Invalid::Limits)? > output_cap
-                {
+                if inline::worst_case(limits).is_none() {
                     return Err(Invalid::Limits);
                 }
                 Ok(Self::Inline {
                     domain: inline::Domain::new(limits, configuration, seed),
                     limits: *limits,
-                    out: Queue::with_capacity(output_cap),
+                    out: Queue::uncapped(),
                 })
             }
             AgentLimits::Spawned(limits) => {
-                if host::worst_case(limits).is_none()
-                    || host::max_out(limits).checked_mul(2).ok_or(Invalid::Limits)? > output_cap
-                {
+                if host::worst_case(limits).is_none() {
                     return Err(Invalid::Limits);
                 }
-                Ok(Self::Spawned {
-                    domain: host::Domain::new(limits),
-                    limits: *limits,
-                    out: Queue::with_capacity(output_cap),
-                })
+                Ok(Self::Spawned { domain: host::Domain::new(limits), limits: *limits, out: Queue::uncapped() })
             }
         }
     }

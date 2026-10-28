@@ -244,8 +244,7 @@ impl ProcessAdapter {
         Some([store, delivery, routing])
     }
 
-    // Part 2 consumes this count for admission; edges never contribute.
-    #[cfg_attr(not(test), expect(dead_code, reason = "prepared for the service watermark in part 2"))]
+    // Internal handoffs count toward admission; edges never contribute.
     pub(crate) fn backlog(&self) -> u32 {
         let mut total = 0_u32;
         for entries in [
@@ -261,6 +260,12 @@ impl ProcessAdapter {
             total = total.checked_add(entries).expect("process backlog entries fit u32");
         }
         total
+    }
+
+    // O2: dispatch a store transition's actions before consuming the next file
+    // terminal, so its answer precedes a later marker or plain-scan result.
+    fn store_actions_dispatched(&self) -> bool {
+        self.store_actions.is_empty()
     }
 
     pub(crate) fn completions(&mut self) -> &mut Queue<kernel::Complete> {
@@ -401,9 +406,6 @@ impl ProcessAdapter {
 
     fn store_pass(&mut self, now: Time, local_events: &mut Queue<local::Event>) {
         for _ in 0_u8..3_u8 {
-            if local_events.room() == 0 {
-                break;
-            }
             let Some(action) = self.store_actions.pop() else { break };
             match action {
                 local_protocol::Action::Io { request, deadline } => self.file_requests.push((request, deadline)),
@@ -742,7 +744,7 @@ impl ProcessAdapter {
             || self.window_read == WindowRead::Requested
             || self.process_work_pending()
             || !self.completions.is_empty()
-            || !self.file_events.is_empty()
+            || (self.store_actions_dispatched() && !self.file_events.is_empty())
             || !self.store_actions.is_empty()
             || (!self.store_requests.is_empty()
                 && match &self.store {
@@ -796,7 +798,7 @@ impl ProcessAdapter {
         }
         self.store_pass(now, local_events);
         for _ in 0..self.limits.queue {
-            if local_events.room() == 0 {
+            if !self.store_actions_dispatched() {
                 break;
             }
             let Some(event) = self.file_events.pop() else { break };
@@ -856,9 +858,6 @@ impl ProcessAdapter {
 
     pub(crate) fn effects_up(&mut self, effects: &mut smith_agent_service::Effects) {
         for _ in 0..self.io_events.len() {
-            if !effects.io_takes() {
-                break;
-            }
             let event = self.io_events.pop().expect("bounded native terminals");
             if effects.owns_io(&event) {
                 effects.io_event(event);
@@ -882,7 +881,6 @@ impl ProcessAdapter {
         for _ in 0..self.limits.queue {
             if !self.output_room()
                 || terminal_events.room() < local_protocol::terminal_max_out()
-                || local_events.room() == 0
                 || self.shell_events.room() == 0
             {
                 break;
@@ -1010,10 +1008,6 @@ impl ProcessAdapter {
     fn drain_process(&mut self, host_events: &mut Queue<host::Input>) {
         for _ in 0..self.process_events.len() {
             let event = self.process_events.pop().expect("bounded queued events");
-            if host_events.room() == 0 {
-                self.process_events.push(event);
-                continue;
-            }
             match &event {
                 protocol::ProcessEvent::Channel { event, .. } => match event.as_ref() {
                     protocol::OpenEvent::WriteFailed => continue,
@@ -1078,8 +1072,8 @@ impl ProcessAdapter {
             }
             trace.producer.sinks().down(now, &mut self.io_requests);
         }
-        for _ in 0..requests.capacity() {
-            if !self.output_room() || host_events.room() == 0 {
+        for _ in 0..self.limits.queue {
+            if !self.output_room() {
                 break;
             }
             let Some(request) = requests.pop() else { break };

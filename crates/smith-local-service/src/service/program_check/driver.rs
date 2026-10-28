@@ -23,9 +23,6 @@ impl Checks {
 
     pub(crate) fn drain_interrupted(&mut self, events: &mut Queue<local::Event>, notify: bool) -> bool {
         for _ in 0..self.interrupted {
-            if notify && events.room() == 0 {
-                return false;
-            }
             let account = self.waiting.pop().expect("cancelled waiting prefix");
             self.interrupted = self.interrupted.checked_sub(1).expect("cancelled prefix remains");
             if notify {
@@ -47,7 +44,7 @@ impl Checks {
         if !self.drain_interrupted(events, notify) {
             return;
         }
-        if events.room() == 0 || shell.room() == 0 || below.room() < 4 {
+        if shell.room() == 0 || below.room() < 4 {
             return;
         }
         if let Some(active) = &mut self.active {

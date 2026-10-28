@@ -37,10 +37,7 @@ impl Service {
     }
 
     pub(super) fn accounts_pass(&mut self, now: Time, wall: Wall) {
-        if self.local_events.room() < crate::ACCOUNTS_MAX_OUT
-            || self.shell.room() < crate::ACCOUNTS_MAX_OUT
-            || self.output.room() < crate::ACCOUNTS_MAX_OUT
-        {
+        if self.shell.room() < crate::ACCOUNTS_MAX_OUT || self.output.room() < crate::ACCOUNTS_MAX_OUT {
             return;
         }
         let Some(mut accounts) = self.accounts.take() else { return };

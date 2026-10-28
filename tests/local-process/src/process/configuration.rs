@@ -135,6 +135,7 @@ fn configuration_for(
                 envelope_bytes: host.answer_bytes,
                 process,
                 queue,
+                watermark: queue,
             },
             endpoints,
             paths: policy.2,

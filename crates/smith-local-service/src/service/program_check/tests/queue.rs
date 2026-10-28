@@ -108,9 +108,9 @@ fn interruption_leaves_later_waiters_live() {
     fixture.request(2);
     fixture.checks.cancel(&mut fixture.below);
     fixture.request(3);
-    fixture.events = Queue::with_capacity(1);
+    fixture.events = Queue::uncapped();
     fixture.events.push(local::Event::Closed);
-    assert!(!fixture.checks.drain_interrupted(&mut fixture.events, true));
+    assert!(fixture.checks.drain_interrupted(&mut fixture.events, true));
     fixture.events.pop().unwrap();
     fixture.advance();
     fixture.refused(2, local::CredentialFailure::ProgramInterrupted);

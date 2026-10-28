@@ -1,5 +1,5 @@
-//! Bounded local-to-host domain routing. Local policy owns durability and
-//! delivery; the host kit owns child lifecycle and channel rights. The saved
+//! Local-to-host routing keeps uncapped internal handoffs and capped edges.
+//! Local policy owns durability and delivery; the host kit owns child lifecycle and channel rights. The saved
 //! conversation position continues across activation-local channel turn numbers
 //! (protocol/channel.md, section 5; protocol/hosts.md, section 5.3).
 
@@ -33,7 +33,10 @@ pub struct Limits {
     /// Maximum tagged grant payload bytes retained by the owner.
     pub envelope_bytes: u64,
     pub process: ProcessLimits,
+    /// Edge capacity (kernel, terminal, shell) and the work drained per iteration.
     pub queue: u32,
+    /// Backlog at which a person's new line or command waits (protocol/limits.md 3.8).
+    pub watermark: u32,
 }
 
 /// Startup policy, configured endpoint names and spawned-agent launch choices.
@@ -168,6 +171,7 @@ pub fn memory_parts(limits: &Limits) -> Option<[(&'static str, u64); 6]> {
         line_bytes: limits.local.line_bytes,
         show_bytes: limits.local.show_bytes,
     })?;
+    // Internal queues are estimated at queue entries.
     let routing = Queue::<local::Event>::worst_case(limits.queue)?
         .checked_add(Queue::<local::Request>::worst_case(limits.queue)?.checked_mul(2)?)?
         .checked_add(Queue::<host::Input>::worst_case(limits.queue)?)?
@@ -251,8 +255,7 @@ pub struct StartValues {
 impl Service {
     /// Construct the child kind selected by the local limits, without performing IO.
     pub fn new(mut config: Config, seed: u64) -> Result<Self, Error> {
-        let required = local::max_out(&config.limits.local).max(64);
-        if config.limits.queue < required {
+        if config.limits.queue < 64 {
             return Err(Error::Queue);
         }
         worst_case(&config.limits).ok_or(Error::Memory)?;
@@ -321,12 +324,12 @@ impl Service {
             line_mode: None,
             terminal_events: Queue::with_capacity(queue),
             output: Queue::with_capacity(queue),
-            local_events: Queue::with_capacity(queue),
-            local_requests: Queue::with_capacity(queue),
+            local_events: Queue::uncapped(),
+            local_requests: Queue::uncapped(),
             interrupted_credentials: 0,
-            host_events: Queue::with_capacity(queue),
+            host_events: Queue::uncapped(),
             shell: Queue::with_capacity(queue),
-            lower: Queue::with_capacity(queue),
+            lower: Queue::uncapped(),
             values: Map::with_capacity(accounts),
             paths: config.paths,
             start_values: None,
@@ -644,6 +647,86 @@ impl Service {
         next
     }
 
+    // Entries between the service's own children (protocol/limits.md 3.8).
+    // Edges and each child's own internal queues never count.
+    fn backlog(&self) -> u64 {
+        let mut total = u64::from(self.below.process().backlog());
+        for entries in [self.local_events.len(), self.local_requests.len(), self.host_events.len(), self.lower.len()] {
+            total = total.checked_add(u64::from(entries)).expect("service backlog entries fit u64");
+        }
+        total
+    }
+
+    // New work waits at the watermark (dynamic-memory.md 4.2).
+    fn admits(&self) -> bool {
+        self.backlog() < u64::from(self.limits.watermark)
+    }
+
+    // O1: dispatch the previous entrance's requests before its successor's
+    // facts. Interrupt and Drop pass to cancel undispatched credentials.
+    fn local_requests_dispatched(&self) -> bool {
+        self.local_requests.is_empty()
+    }
+
+    fn local_head_ready(&self) -> bool {
+        match self.local_events.iter().next() {
+            Some(local::Event::Interrupt | local::Event::Drop) => true,
+            Some(
+                local::Event::Line { .. }
+                | local::Event::Slash(_)
+                | local::Event::Closed
+                | local::Event::SelectChat { .. }
+                | local::Event::ChatSelected { .. }
+                | local::Event::Loaded { .. }
+                | local::Event::StateSaved
+                | local::Event::TurnSaved { .. }
+                | local::Event::DeliverySaved { .. }
+                | local::Event::Git { .. }
+                | local::Event::PlainStatus { .. }
+                | local::Event::StoreFailed { .. }
+                | local::Event::Credential { .. }
+                | local::Event::NoCredential { .. }
+                | local::Event::Below { .. }
+                | local::Event::Process(_),
+            ) => self.local_requests_dispatched(),
+            None => false,
+        }
+    }
+
+    fn local_request_ready(&self) -> bool {
+        self.shell.room() > 0
+            && self.terminal_events.room() >= protocol::terminal_max_out()
+            && self.below.process().output_room()
+    }
+
+    // Admission and FIFO head readiness are shared by the drain and readiness.
+    // Only a person's new line or command waits (dynamic-memory.md 4.2–4.3).
+    fn terminal_head_ready(&self) -> bool {
+        match self.terminal_events.iter().next() {
+            Some(protocol::TerminalEvent::Domain(event)) => match event.as_ref() {
+                local::Event::Line { .. } | local::Event::Slash(_) => self.admits(),
+                local::Event::Interrupt
+                | local::Event::Drop
+                | local::Event::Closed
+                | local::Event::SelectChat { .. }
+                | local::Event::ChatSelected { .. }
+                | local::Event::Loaded { .. }
+                | local::Event::StateSaved
+                | local::Event::TurnSaved { .. }
+                | local::Event::DeliverySaved { .. }
+                | local::Event::Git { .. }
+                | local::Event::PlainStatus { .. }
+                | local::Event::StoreFailed { .. }
+                | local::Event::Credential { .. }
+                | local::Event::NoCredential { .. }
+                | local::Event::Below { .. }
+                | local::Event::Process(_) => true,
+            },
+            Some(protocol::TerminalEvent::DropRun | protocol::TerminalEvent::Write(_)) => true,
+            None => false,
+        }
+    }
+
     #[must_use]
     pub fn work_pending(&self, now: Time) -> bool {
         match &self.accounts {
@@ -660,14 +743,15 @@ impl Service {
         self.end_work()
             || !self.completions.is_empty()
             || !self.submissions.is_empty()
-            || (takes && (self.local.is_ready() || self.local.is_due(now)))
+            || (takes && self.local_requests_dispatched() && (self.local.is_ready() || self.local.is_due(now)))
             || match self.below.inline() {
                 Some(effects) => effects.work_pending(now),
                 None => false,
             }
-            || (takes && (!self.local_events.is_empty() || !self.local_requests.is_empty()))
+            || (takes && self.local_head_ready())
+            || (takes && !self.local_requests.is_empty() && self.local_request_ready() && self.told.is_none())
             || !self.host_events.is_empty()
-            || !self.terminal_events.is_empty()
+            || (self.terminal_head_ready() && self.output.room() > 0 && self.below.process().output_room())
             || self.below.process().work_pending(now)
             || match &self.stream {
                 Some(stream) => {
@@ -1048,7 +1132,7 @@ impl Service {
 
     fn drain_terminal(&mut self) {
         for _ in 0..self.terminal_events.capacity() {
-            if self.local_events.room() == 0 || self.output.room() == 0 || !self.below.process_mut().output_room() {
+            if !self.terminal_head_ready() || self.output.room() == 0 || !self.below.process().output_room() {
                 break;
             }
             let Some(event) = self.terminal_events.pop() else { break };
@@ -1141,10 +1225,7 @@ impl Service {
     }
 
     fn process_terminals(&mut self) {
-        for _ in 0..self.host_events.capacity() {
-            if self.local_events.room() == 0 {
-                break;
-            }
+        for _ in 0..self.limits.queue {
             match self.host_events.pop() {
                 Some(host::Input::Process(event)) => self.local_events.push(local::Event::Process(event)),
                 Some(host::Input::Parent(_)) => unreachable!("the process adapter supplies process terminals only"),
@@ -1205,9 +1286,6 @@ pub fn iterate(service: &mut Service, now: Time, wall: Wall) {
     if let Some(effects) = service.below.inline_mut() {
         effects.up(now, wall);
         for _ in 0..service.limits.queue {
-            if service.local_events.room() == 0 {
-                break;
-            }
             let Some(event) = effects.event() else { break };
             service.local_events.push(local::Event::Below {
                 agent: service.lower_agent.expect("terminal belongs to an inline lower request"),
@@ -1243,7 +1321,7 @@ pub fn iterate(service: &mut Service, now: Time, wall: Wall) {
     match &mut service.below {
         Effects::Inline { agent, local } => {
             agent.down();
-            for _ in 0..agent.io_requests().capacity() {
+            for _ in 0..service.limits.queue {
                 if local.io_requests().room() == 0 {
                     break;
                 }
@@ -1263,11 +1341,11 @@ const EFFECT_OPERATION_BIT: u64 = 1 << 63;
 
 fn local_pass(service: &mut Service, now: Time, wall: Wall) {
     let local_env = Env { now, wall, limits: service.limits.local.clone() };
-    for _ in 0..service.local_events.capacity() {
+    for _ in 0..service.limits.queue {
         if !service.drain_run_facts() {
             break;
         }
-        if service.local_requests.room() < local::max_out(&service.limits.local) {
+        if !service.local_head_ready() {
             break;
         }
         let Some(event) = service.local_events.pop() else { break };
@@ -1323,31 +1401,17 @@ fn local_pass(service: &mut Service, now: Time, wall: Wall) {
         }
         local::step(&mut service.local, &local_env, local::Event::StateSaved, &mut service.local_requests);
     }
-    if service.drain_run_facts()
-        && service.local.is_due(now)
-        && service.local_requests.room() >= local::max_out(&service.limits.local)
-    {
+    if service.drain_run_facts() && service.local.is_due(now) && service.local_requests_dispatched() {
         local::fire(&mut service.local, &local_env, &mut service.local_requests);
     }
-    if service.drain_run_facts()
-        && service.local.is_ready()
-        && service.local_requests.room() >= local::max_out(&service.limits.local)
-    {
+    if service.drain_run_facts() && service.local.is_ready() && service.local_requests_dispatched() {
         local::resume(&mut service.local, &local_env, &mut service.local_requests);
     }
-    for _ in 0..service.local_requests.capacity() {
+    for _ in 0..service.limits.queue {
         if !service.drain_program_interruptions()
             || service.told.is_some()
             || !service.drain_run_facts()
-            || service.shell.room() == 0
-            || service.host_events.room() == 0
-            || service.local_events.room() == 0
-            || service.terminal_events.room() < protocol::terminal_max_out()
-            || !service.below.process().output_room()
-            || match service.below.inline() {
-                Some(effects) => effects.request_room() == 0,
-                None => false,
-            }
+            || !service.local_request_ready()
         {
             break;
         }
@@ -1439,6 +1503,10 @@ fn to_root_request(request: inline::Lower) -> agent::Request {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "tests.rs"]
+pub(crate) mod entry_tests;
 
 #[cfg(test)]
 mod live_tests;

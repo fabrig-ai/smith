@@ -1,7 +1,7 @@
 //! One local chat and its spawned or colocated agent (protocol/hosts.md,
 //! sections 5–6; protocol/README.md, sections 5–6). The service keeps local
 //! policy and the selected lower components, a credential-value
-//! table, and bounded routing queues. The process adapter owns terminal and
+//! table, and internal routing queues. The process adapter owns terminal and
 //! delivery descriptors; each lower layer has its own operation tokens.
 //! It never knows OAuth provider responses or token-file paths. [`iterate`]
 //! runs the up, domain and down passes, including the durable store; the shell
@@ -21,7 +21,7 @@ pub mod stream;
 pub mod profile;
 
 #[cfg(test)]
-mod tests;
+use service::entry_tests as tests;
 
 pub use credentials::{ACCOUNTS_MAX_OUT, Accounts, CredentialRequest, Settled, Source, accounts_worst_case};
 pub use live::{LIVE_BYTES, LIVE_SLOTS, LivePiece, RemoteTurn};

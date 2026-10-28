@@ -40,6 +40,7 @@ pub fn effective(
     let service = [
         entry(Layer::Local, "service.envelope_bytes", Value::Bytes(limits.envelope_bytes)),
         entry(Layer::Local, "service.queue", Value::Count(u64::from(limits.queue))),
+        entry(Layer::Local, "service.watermark", Value::Count(u64::from(limits.watermark))),
     ];
     let (bodies, transcript) = match limits.local.agent {
         smith_local_domain::AgentLimits::Inline(_) => (Box::from([]), Box::from([])),
