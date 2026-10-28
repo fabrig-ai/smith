@@ -520,6 +520,21 @@ mod tests {
     use crate::sinks::{Capture, Delivery, Destination, Ended};
     use skein_lib::Duration;
 
+    #[test]
+    fn invalid_limits_are_refused() {
+        let mut limits = source();
+        limits.sessions = 2;
+        assert!(valid(&limits));
+        for invalid in [
+            session::Limits { sessions: u32::MAX, ..limits },
+            session::Limits { parallel_tools: u32::MAX, ..limits },
+            session::Limits { answer_bytes: u64::MAX, ..limits },
+            session::Limits { completion_blocks: u32::MAX, ..limits },
+        ] {
+            assert!(!valid(&invalid));
+        }
+    }
+
     fn no_tool_result(record: &Record, capture: Capture) {
         let limits = crate::sinks::tests::limits(1).records;
         let line = smith_events::write(record, &capture.encoded(), &limits).unwrap().unwrap();

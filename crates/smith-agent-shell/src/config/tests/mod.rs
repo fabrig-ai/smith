@@ -517,3 +517,20 @@ fn check_product_startup(with_program: bool) {
     assert!(limits.file_bytes >= limits.domain.session.tools.file_bytes);
     assert!(configuration.service.domain.valid(&limits.domain), "product declarations fit the root");
 }
+
+#[test]
+fn invalid_limits_are_refused() {
+    for domain in [false, true] {
+        let mut configuration = build(document()).expect("valid test configuration");
+        assert!(check_limits(&configuration.service).is_ok());
+        if domain {
+            configuration.service.limits.domain.run.conversations =
+                configuration.service.limits.domain.session.sessions + 1;
+        } else {
+            configuration.service.limits.io.receive += 1;
+        }
+        let refusal = check_limits(&configuration.service).expect_err("invalid limits");
+        assert!(matches!(refusal, ConfigurationRefusal::Profile(Refusal::Derived { limit })
+            if limit == LimitName::deployment(Layer::Service, "limits")));
+    }
+}

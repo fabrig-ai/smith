@@ -118,7 +118,7 @@ fn limits() -> Limits {
     }
 }
 
-pub(super) fn configuration() -> Config {
+pub(crate) fn configuration() -> Config {
     let limits = limits();
     let channel_endpoints = channel::Endpoints::new(List::with_capacity(1));
     let llm_endpoints = llm::Endpoints::new(Box::new([]), 1).expect("empty endpoint table");
@@ -881,4 +881,113 @@ fn work_pending_waits_on_the_kernel_for_a_pending_message_at_the_watermark() {
     io_down(&mut service);
     domain_down(&mut service);
     assert!(service.pending_messages.is_empty());
+}
+
+mod validity {
+    use super::*;
+
+    mod effects {
+        use super::*;
+
+        #[test]
+        fn invalid_limits_are_refused() {
+            let config = configuration();
+            let base = config.limits;
+            assert!(effects_valid(&base, &config.llm_endpoints));
+            let mut cases = vec![
+                Limits { file_slots: 0, ..base },
+                Limits { file_read: 0, ..base },
+                Limits { file_entries: 0, ..base },
+                Limits { file_bytes: 0, ..base },
+                Limits { file_timeout: Duration::ZERO, ..base },
+            ];
+            let mut limits = base;
+            limits.machine.processes = u32::MAX;
+            cases.push(limits);
+            let mut limits = base;
+            limits.llm.accounts = 0;
+            cases.push(limits);
+            let mut limits = base;
+            limits.events = Some(crate::EventLimits {
+                sinks: crate::sinks::tests::limits(1),
+                capture: crate::sinks::Capture::None,
+                front: false,
+                write_deadline: Duration::from_secs(1),
+            });
+            limits.events.as_mut().unwrap().sinks.output = 0;
+            cases.push(limits);
+            for limits in cases {
+                assert!(!effects_valid(&limits, &config.llm_endpoints));
+            }
+            // Effects has no root, framed channel or native IO owner.
+            let mut limits = base;
+            limits.domain.run.conversations = u32::MAX;
+            limits.channel.start_bytes = 0;
+            limits.io.sockets = 0;
+            assert!(effects_valid(&limits, &config.llm_endpoints));
+            let mut config = configuration();
+            config.limits.file_read = 0;
+            assert!(matches!(Effects::new(config, 1), Err(ConfigError::Limits)));
+        }
+    }
+
+    mod native_io {
+        use super::*;
+
+        #[test]
+        fn invalid_limits_are_refused() {
+            let base = limits();
+            assert!(io_valid(&base));
+            for native in [
+                io::Limits { sockets: u32::MAX, ..base.io },
+                io::Limits { sockets: u32::MAX / 8 + 1, ..base.io },
+                io::Limits { sockets: 1, ..base.io },
+                io::Limits { sockets: 2, ..base.io },
+                io::Limits { intake: base.io.intake + 1, ..base.io },
+                io::Limits { receive: base.io.receive + 1, ..base.io },
+                io::Limits { output: base.io.output + 1, ..base.io },
+                io::Limits { sends: base.io.sends + 1, ..base.io },
+                io::Limits { refusals: 0, ..base.io },
+                io::Limits { accepts: 0, ..base.io },
+                io::Limits { retry: Duration::ZERO, ..base.io },
+            ] {
+                assert!(!io_valid(&Limits { io: native, ..base }), "{native:?}");
+            }
+            let mut limits = base;
+            limits.events = Some(crate::EventLimits {
+                sinks: crate::sinks::tests::limits(u32::MAX),
+                capture: crate::sinks::Capture::None,
+                front: false,
+                write_deadline: Duration::from_secs(1),
+            });
+            assert!(!io_valid(&limits));
+            limits.events.as_mut().unwrap().sinks.destinations = base.io.sockets - base.llm.connection.connections;
+            assert!(!io_valid(&limits));
+            limits.events.as_mut().unwrap().sinks.destinations -= 1;
+            assert!(io_valid(&limits));
+            // Only the four shared buffer capacities must agree.
+            limits.llm.connection.io.refusals += 1;
+            assert!(io_valid(&limits));
+        }
+    }
+
+    #[test]
+    fn invalid_limits_are_refused() {
+        let config = configuration();
+        assert!(valid(&config.limits, &config.llm_endpoints));
+        for domain_mismatch in [false, true] {
+            let mut config = configuration();
+            if domain_mismatch {
+                config.limits.domain.run.conversations = config.limits.domain.session.sessions + 1;
+            } else {
+                config.limits.io.receive += 1;
+            }
+            assert!(!valid(&config.limits, &config.llm_endpoints));
+            assert!(matches!(Service::new(config, 1), Err(ConfigError::Limits)));
+        }
+        let mut config = configuration();
+        config.limits.channel.start_bytes = 0;
+        assert!(!valid(&config.limits, &config.llm_endpoints));
+        assert!(matches!(Service::new(config, 1), Err(ConfigError::Limits)));
+    }
 }

@@ -685,6 +685,33 @@ mod tests {
     use smith_domain::session;
 
     #[test]
+    fn invalid_limits_are_refused() {
+        let mut limits = crate::service::tests::configuration().limits;
+        assert!(valid(&limits));
+        limits.events = Some(EventLimits {
+            sinks: crate::sinks::tests::limits(1),
+            capture: Capture::Everything,
+            front: false,
+            write_deadline: Duration::from_secs(1),
+        });
+        assert!(valid(&limits));
+        let base = limits;
+        limits.events.as_mut().unwrap().sinks.output = 0;
+        assert!(!valid(&limits));
+        limits = base;
+        limits.channel.bodies.start_messages = u32::MAX;
+        assert!(!valid(&limits));
+        limits = base;
+        limits.domain.session.answer_bytes = u64::MAX;
+        assert!(!valid(&limits));
+        // Call joins exist even without content capture.
+        limits.events.as_mut().unwrap().capture = Capture::None;
+        assert!(!valid(&limits));
+        limits.events = None;
+        assert!(valid(&limits));
+    }
+
+    #[test]
     #[expect(
         clippy::too_many_lines,
         reason = "two independent raw-accounting terminal controls exercise the complete producer and wire"

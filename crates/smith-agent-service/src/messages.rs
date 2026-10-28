@@ -107,6 +107,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn invalid_limits_are_refused() {
+        let mut limits = crate::service::tests::configuration().limits;
+        assert!(valid(&limits, Capture::Everything));
+        limits.channel.bodies.start_messages = u32::MAX;
+        assert!(!valid(&limits, Capture::Everything));
+        assert!(valid(&limits, Capture::None));
+        assert!(valid(&limits, Capture::Calls));
+    }
+
+    #[test]
     fn repeated_names_keep_each_original_label_and_text_until_its_receipt() {
         let mut book = Book { pending: Queue::with_capacity(2) };
         let name = Token::new(4);
