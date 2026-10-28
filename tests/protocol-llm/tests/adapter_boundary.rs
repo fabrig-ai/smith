@@ -223,7 +223,7 @@ fn failed(configuration: &Configuration) -> (Context, Exchange, client::Event) {
     let config = fake::Config { overloaded: 1000, ..skein_llm_world::fake::config() };
     let mut domain = fake::Domain::new(&config, 7);
     let env = Env { now: Time::ZERO, wall: Wall::EPOCH, limits: config };
-    let mut out = Queue::with_capacity(fake::MAX_OUT);
+    let mut out = Queue::uncapped();
     fake::step(&mut domain, &env, peer.pending.pop().expect("actual independent peer request"), &mut out);
     assert!(out.pop().is_none(), "the actual fake decision awaits its timer entrance");
     fake::fire(&mut domain, &env, &mut out);

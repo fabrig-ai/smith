@@ -192,7 +192,7 @@ impl World {
             provider: smith_agent_world::scripted_provider(&configuration, seed),
             failure: None,
             provider_env: Env { now: Time::ZERO, wall: skein_lib::Wall::EPOCH, limits: configuration },
-            provider_out: Queue::with_capacity(provider::MAX_OUT),
+            provider_out: Queue::uncapped(),
             bindings: BTreeMap::new(),
             minted: 0,
             machine: smith_machine_world::World::bounded(
@@ -525,7 +525,8 @@ impl World {
     }
 
     fn provider_replies(&mut self) {
-        while let Some(request) = self.provider_out.pop() {
+        for _ in 0..self.provider_out.len() {
+            let request = self.provider_out.pop().expect("provider output present at pass start");
             let (to, result) = match request {
                 provider::Request::Reply { to, result } => (to, result),
                 other @ (provider::Request::Piece { .. } | provider::Request::Hold { .. }) => {

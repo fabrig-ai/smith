@@ -160,9 +160,9 @@ fn run(dialect: Provider, calls: bool, observed: bool, owner_close: bool) {
     let fake_env = Env { now: Time::ZERO, wall: pki::VALID, limits: fake_limits };
     let mut up = Queue::with_capacity(MAX_OUT.above);
     let mut io = Queue::with_capacity(MAX_OUT.below);
-    let mut peer_up = Queue::with_capacity(provider::MAX_UP);
-    let mut peer_down = Queue::with_capacity(provider::MAX_DOWN);
-    let mut replies = Queue::with_capacity(fake::MAX_OUT);
+    let mut peer_up = Queue::uncapped();
+    let mut peer_down = Queue::uncapped();
+    let mut replies = Queue::uncapped();
     let mut to_peer = Intake::with_capacity(32768);
     let mut peer_demand: Option<(Read, u32)> = None;
     let mut grant: Option<u32> = None;

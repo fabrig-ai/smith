@@ -33,8 +33,8 @@ fn browser_head() -> Vec<u8> {
 fn read_head(head: &[u8], limits: Limits) -> Result<Call, Error> {
     let mut server = Server::new(&limits);
     let env = Env { now: Time::ZERO, wall: Wall::EPOCH, limits };
-    let mut above = Queue::with_capacity(server::UP_MAX_OUT.above.max(server::DOWN_MAX_OUT.above));
-    let mut below = Queue::with_capacity(server::UP_MAX_OUT.below.max(server::DOWN_MAX_OUT.below));
+    let mut above = Queue::uncapped();
+    let mut below = Queue::uncapped();
     let mut intake = Intake::with_capacity(limits.head.max(u32::try_from(head.len()).expect("fixture length")));
     intake.append(head).expect("fixture fits intake");
     server::down(&mut server, &env, Request::Next, &mut above, &mut below);

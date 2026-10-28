@@ -711,7 +711,7 @@ impl World {
             out,
             provider,
             provider_env: Env { now: Time::ZERO, wall: Wall::EPOCH, limits: provider_config },
-            provider_out: Queue::with_capacity(provider::MAX_OUT),
+            provider_out: Queue::uncapped(),
             disk,
             disk_start,
             history,
