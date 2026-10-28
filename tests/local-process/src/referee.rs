@@ -176,7 +176,7 @@ impl Expectations for Meeting {
                     },
                     "provider work matches account availability",
                 );
-                let start = b"smith: local host started; worst case ";
+                let start = b"smith: local host started\n";
                 let diagnostic = if matches!(self.ending, Ending::HostFailure | Ending::HostFailureBeforeAnswer) {
                     errors.strip_suffix(b"smith: run failed: chat main: turn 2 could not be kept: write failed\n")
                 } else if matches!(self.ending, Ending::Dropped) {
@@ -238,10 +238,7 @@ impl Expectations for Meeting {
                             tail.split_inclusive(|byte| *byte == b'\n')
                                 .all(|line| line == b"smith: tool finish\n" || line == b"smith: tool read\n")
                         })
-                        || bytes
-                            .strip_prefix(start)
-                            .and_then(|tail| tail.strip_suffix(b" bytes\n"))
-                            .is_some_and(|count| !count.is_empty() && count.iter().all(u8::is_ascii_digit))
+                        || bytes == start
                 });
                 judge.check(expected_diagnostic, "only the expected local operator start and failure lines");
                 judge.check(

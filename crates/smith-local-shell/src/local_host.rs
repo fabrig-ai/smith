@@ -769,7 +769,7 @@ impl Host for Local {
             if self.headless.is_some() || self.interactive.is_some() {
                 drop(writeln!(self.errors, "smith: chat {}", String::from_utf8_lossy(self.service.chat_name())));
             } else {
-                drop(writeln!(self.errors, "smith: local host started; worst case {} bytes", self.worst));
+                drop(writeln!(self.errors, "smith: local host started"));
             }
         }
         if self.is_empty() && self.announcement != Announcement::Ended {
