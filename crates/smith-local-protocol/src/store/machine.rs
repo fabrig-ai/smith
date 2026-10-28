@@ -93,7 +93,7 @@ impl Store {
         limits: StoreLimits,
         endpoints: Endpoints,
     ) -> Option<Self> {
-        Self::worst_case(limits)?;
+        limits.turns.checked_add(limits.deliveries)?.checked_add(4)?;
         if limits.file_bytes < crate::format::max_bytes()
             || limits.turns == 0
             || limits.deliveries == 0

@@ -117,11 +117,82 @@ const MEASURES: u32 = MAX_OUT
     .checked_add(1)
     .expect("one translated prompt beside routed measures");
 
+fn clients_valid(limits: &ComponentLimits, endpoints: &Endpoints) -> bool {
+    for endpoint in endpoints.destinations() {
+        let native = endpoint.limits;
+        let maximum = limits.adapter.client;
+        let completion_fits = match crate::completion_worst_case(&native, limits.receiving.decoded_call_bytes) {
+            Some(bytes) => bytes <= limits.receiving.max_completion_bytes,
+            None => false,
+        };
+        if native.request > maximum.request
+            || native.tools > maximum.tools
+            || native.history_items > maximum.history_items
+            || native.output_items > maximum.output_items
+            || native.detail_bytes > maximum.detail_bytes
+            || native.strings > maximum.strings
+            || native.answer > maximum.answer
+            || !completion_fits
+        {
+            return false;
+        }
+    }
+    true
+}
+
+/// Whether the component's counts, receiving contract and endpoint edge bounds
+/// are usable (programming-model.md, section 6.3).
+#[must_use]
+pub fn component_valid(limits: &ComponentLimits, endpoints: &Endpoints) -> bool {
+    let pool = &limits.connection;
+    if limits.accounts == 0
+        || limits.llms == 0
+        || limits.accounts.checked_mul(2).is_none()
+        || pool.endpoints == 0
+        || pool.connections == 0
+        || pool.calls == 0
+        || pool.per_endpoint == 0
+        || pool.connections < pool.calls
+        || pool.per_endpoint > pool.connections
+        || endpoints.destinations().len() > pool.endpoints
+        || !crate::valid(&limits.adapter, &limits.receiving)
+        || !clients_valid(limits, endpoints)
+    {
+        return false;
+    }
+    for endpoint in endpoints.destinations() {
+        let mut native = endpoint.limits;
+        native.http.request = match shared::client::request_head(&endpoint.llm, &endpoint.credential, &native) {
+            Ok(head) => head,
+            Err(_) => return false,
+        };
+        let reservation = match shared::client::largest_reservation(&native) {
+            Some(reservation) => reservation,
+            None => return false,
+        };
+        if reservation > pool.memory
+            || shared::client::worst_case(&native).is_none()
+            || shared::client::encoding_worst_case(&native).is_none()
+        {
+            return false;
+        }
+        match &endpoint.transport {
+            connection::Transport::Tls { .. } => {
+                if skein_tls::client::worst_case(&pool.tls).is_none() {
+                    return false;
+                }
+            }
+            connection::Transport::Plaintext => {}
+        }
+    }
+    true
+}
+
 /// Checked retained pool, grant, context, and event-queue ownership, using
 /// configured endpoints to count their request heads and credential bounds.
 #[must_use]
 pub fn component_worst_case(limits: &ComponentLimits, endpoints: &Endpoints) -> Option<u64> {
-    if limits.accounts == 0 || limits.llms == 0 || limits.connection.connections == 0 {
+    if !component_valid(limits, endpoints) {
         return None;
     }
     let entrance = crate::worst_case(&limits.adapter, &limits.receiving)?;
@@ -166,26 +237,12 @@ fn capture_worst_case(limits: &ComponentLimits) -> Option<u64> {
 impl Component {
     /// Validate the configured endpoint and pool bounds before the loop.
     pub fn new(limits: &ComponentLimits, endpoints: Endpoints) -> Result<Component, ComponentError> {
-        for endpoint in endpoints.destinations() {
-            let native = endpoint.limits;
-            let maximum = limits.adapter.client;
-            let completion_fits = match crate::completion_worst_case(&native, limits.receiving.decoded_call_bytes) {
-                Some(bytes) => bytes <= limits.receiving.max_completion_bytes,
-                None => false,
-            };
-            if native.request > maximum.request
-                || native.tools > maximum.tools
-                || native.history_items > maximum.history_items
-                || native.output_items > maximum.output_items
-                || native.detail_bytes > maximum.detail_bytes
-                || native.strings > maximum.strings
-                || native.answer > maximum.answer
-                || !completion_fits
-            {
-                return Err(ComponentError::ClientLimits);
-            }
+        if !clients_valid(limits, &endpoints) {
+            return Err(ComponentError::ClientLimits);
         }
-        component_worst_case(limits, &endpoints).ok_or(ComponentError::Limits)?;
+        if !component_valid(limits, &endpoints) {
+            return Err(ComponentError::Limits);
+        }
         let grants = match Grants::new(limits.accounts, limits.grant_value_bytes) {
             Ok(grants) => grants,
             Err(error) => return Err(ComponentError::Grants(error)),

@@ -58,7 +58,9 @@ impl Terminal {
     /// Build the bounded terminal translator.
     #[must_use]
     pub fn new(limits: Limits) -> Option<Self> {
-        worst_case(&limits)?;
+        if limits.line_bytes == 0 || limits.show_bytes == 0 {
+            return None;
+        }
         Some(Self { line: List::with_capacity(limits.line_bytes), limits, discarding: false, cancelled: false })
     }
 

@@ -9,7 +9,7 @@ use skein_llm as shared;
 use smith_domain::{llm, run, tools};
 
 use crate::types::{Context, ToolKind, ToolSchema};
-use crate::{Error, Limits, worst_case};
+use crate::{Error, Limits, valid};
 
 /// Translate an admitted prompt and retain its declarations for one terminal.
 /// The component and protocol worlds use this same preparation before skein
@@ -21,7 +21,9 @@ pub fn prepare_prompt(
     receiving: crate::Receiving,
     limits: &Limits,
 ) -> Result<(shared::Prompt, Context), Error> {
-    worst_case(limits, &receiving).ok_or(Error::Limit)?;
+    if !valid(limits, &receiving) {
+        return Err(Error::Limit);
+    }
     let asker = prompt.asker;
     let grants = prompt.tools;
     let (translated, served) = translate(prompt, &application, limits)?;
@@ -38,7 +40,9 @@ pub(crate) fn prepare_component(
     receiving: crate::Receiving,
     limits: &Limits,
 ) -> Result<(shared::Prompt, Context), Error> {
-    worst_case(limits, &receiving).ok_or(Error::Limit)?;
+    if !valid(limits, &receiving) {
+        return Err(Error::Limit);
+    }
     let application =
         crate::tools::schemas_for_contract(&prompt, &limits.stated, outcome, deliver, limits.client.request)?;
     prepare_prompt(owner, prompt, application, receiving, limits)

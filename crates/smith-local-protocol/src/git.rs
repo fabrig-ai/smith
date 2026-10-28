@@ -97,7 +97,9 @@ impl Git {
     /// Begin one operation; the service must settle each returned child request.
     #[must_use]
     pub fn new(op: GitOp, limits: GitLimits) -> Option<(Self, GitAction)> {
-        git_worst_case(&limits)?;
+        if limits.output_bytes == 0 || limits.conflicts == 0 || limits.path_bytes == 0 {
+            return None;
+        }
         let arguments = match &op {
             GitOp::Commit { message } => message.len(),
             GitOp::Push { remote, branch } => remote.len().checked_add(branch.len())?,

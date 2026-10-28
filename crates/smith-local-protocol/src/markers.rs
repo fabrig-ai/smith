@@ -55,7 +55,6 @@ impl Markers {
     /// Admit original paths only within the configured count and byte bounds.
     #[must_use]
     pub fn new(owner: Token, root: Token, paths: Box<[Box<[u8]>]>, deadline: Time, limits: GitLimits) -> Option<Self> {
-        markers_worst_case(&limits)?;
         if paths.len() > usize::try_from(limits.conflicts).ok()? {
             return None;
         }

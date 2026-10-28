@@ -259,3 +259,61 @@ fn an_incomplete_or_unsupported_plain_tree_makes_the_snapshot_unknown() {
 }
 
 mod store;
+
+#[test]
+fn invalid_limits_are_refused() {
+    let owner = skein_lib::Token::new(1);
+    let root = skein_lib::Token::new(2);
+    let deadline = skein_lib::Time::from_nanos(100);
+    assert!(Git::new(GitOp::Head, limits()).is_some());
+    for check in 0..3 {
+        let mut invalid = limits();
+        match check {
+            0 => invalid.output_bytes = 0,
+            1 => invalid.conflicts = 0,
+            2 => invalid.path_bytes = 0,
+            _ => unreachable!(),
+        }
+        assert!(Git::new(GitOp::Head, invalid).is_none());
+    }
+    let plain = crate::PlainLimits { entries: 2, path_bytes: 32, file_bytes: 1024 };
+    assert!(crate::Plain::new(owner, root, plain, deadline).is_some());
+    for check in 0..3 {
+        let mut invalid = plain;
+        match check {
+            0 => invalid.entries = 0,
+            1 => invalid.path_bytes = 0,
+            2 => invalid.file_bytes = 0,
+            _ => unreachable!(),
+        }
+        assert!(crate::Plain::new(owner, root, invalid, deadline).is_none());
+    }
+    let terminal = crate::TerminalLimits { line_bytes: 32, show_bytes: 64 };
+    assert!(crate::Terminal::new(terminal).is_some());
+    assert!(crate::Terminal::new(crate::TerminalLimits { line_bytes: 0, ..terminal }).is_none());
+    assert!(crate::Terminal::new(crate::TerminalLimits { show_bytes: 0, ..terminal }).is_none());
+    let store = crate::StoreLimits { file_bytes: 4096, turns: 2, deliveries: 2, scan_bytes: 4096 };
+    let construct = |limits| {
+        crate::Store::new(
+            owner,
+            root,
+            skein_io::kernel::Fd::new(3),
+            limits,
+            smith_protocol_channel::Endpoints::new(skein_lib::List::with_capacity(0)),
+        )
+    };
+    assert!(construct(store).is_some());
+    for invalid in [
+        crate::StoreLimits { file_bytes: 0, ..store },
+        crate::StoreLimits { turns: 0, ..store },
+        crate::StoreLimits { deliveries: 0, ..store },
+        crate::StoreLimits { scan_bytes: 0, ..store },
+        crate::StoreLimits { turns: u32::MAX - 5, ..store },
+    ] {
+        assert!(construct(invalid).is_none());
+    }
+    assert!(
+        construct(crate::StoreLimits { scan_bytes: u64::MAX, ..store }).is_some(),
+        "aggregate scan ownership is not an edge overflow"
+    );
+}

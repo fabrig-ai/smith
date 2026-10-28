@@ -150,6 +150,81 @@ fn credential(value: &[u8]) -> Credential {
 }
 
 #[test]
+fn invalid_limits_are_refused() {
+    let bounds = limits();
+    assert!(adapter::component_valid(&bounds, &endpoints()));
+    Component::new(&bounds, endpoints()).expect("valid component");
+    let mut cases = Vec::new();
+    for check in 0..12 {
+        let mut invalid = bounds;
+        let name = match check {
+            0 => {
+                invalid.accounts = 0;
+                "accounts"
+            }
+            1 => {
+                invalid.llms = 0;
+                "LLMs"
+            }
+            2 => {
+                invalid.accounts = u32::MAX;
+                "grant generations"
+            }
+            3 => {
+                invalid.connection.endpoints = 0;
+                "endpoints"
+            }
+            4 => {
+                invalid.connection.connections = 0;
+                invalid.connection.calls = 0;
+                invalid.connection.per_endpoint = 0;
+                "connections"
+            }
+            5 => {
+                invalid.connection.calls = 0;
+                "calls"
+            }
+            6 => {
+                invalid.connection.per_endpoint = 0;
+                "per endpoint"
+            }
+            7 => {
+                invalid.connection.calls = invalid.connection.connections + 1;
+                "calls exceed connections"
+            }
+            8 => {
+                invalid.connection.per_endpoint = invalid.connection.connections + 1;
+                "per endpoint exceeds connections"
+            }
+            9 => {
+                invalid.adapter.rendered_result = 0;
+                "adapter"
+            }
+            10 => {
+                invalid.connection.memory = 0;
+                "call reservation"
+            }
+            11 => {
+                invalid.connection.tls.read = 0;
+                "TLS edge"
+            }
+            _ => unreachable!(),
+        };
+        cases.push((name, invalid));
+    }
+    for (check, invalid) in cases {
+        assert!(!adapter::component_valid(&invalid, &endpoints()), "{check}");
+        assert!(matches!(Component::new(&invalid, endpoints()), Err(adapter::ComponentError::Limits)), "{check}");
+    }
+    let mut incompatible = bounds;
+    incompatible.adapter.client.tools -= 1;
+    assert!(matches!(Component::new(&incompatible, endpoints()), Err(adapter::ComponentError::ClientLimits)));
+    let mut large = bounds;
+    large.contract_bytes = u64::MAX;
+    assert!(adapter::component_valid(&large, &endpoints()), "retained heap total is not validity");
+}
+
+#[test]
 fn a_lapsed_grant_fails_unsent_and_refresh_starts_a_call() {
     let limits = limits();
     let mut component = Component::new(&limits, endpoints()).expect("component");

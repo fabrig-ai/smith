@@ -276,6 +276,50 @@ fn both_shared_configurations_convey_whole_host_contract_input_and_exact_feedbac
 }
 
 #[test]
+fn invalid_limits_are_refused() {
+    let bounds = limits();
+    let accepted = receiving(&bounds);
+    assert!(adapter::valid(&bounds, &accepted));
+    smith_protocol_llm::prepare_prompt(Token::new(1), prompt(), Box::new([]), accepted, &bounds)
+        .expect("valid limits prepare a prompt");
+    let mut cases = Vec::new();
+    let mut invalid = bounds;
+    invalid.rendered_result = smith_protocol_llm::CUT_MARKER_BYTES - 1;
+    cases.push(("rendered result", invalid, accepted));
+    let mut invalid = accepted;
+    invalid.max_completion_bytes -= 1;
+    cases.push(("completion bytes", bounds, invalid));
+    let mut invalid = accepted;
+    invalid.max_completion_blocks -= 1;
+    cases.push(("completion blocks", bounds, invalid));
+    let mut invalid = accepted;
+    invalid.max_failure_bytes -= 1;
+    cases.push(("failure bytes", bounds, invalid));
+    let mut invalid = accepted;
+    invalid.decoded_call_bytes = 0;
+    cases.push(("decoded cell floor", bounds, invalid));
+    let mut invalid = bounds;
+    invalid.tool_bytes = u64::from(u32::MAX) + 1;
+    cases.push(("outgoing document bytes", invalid, accepted));
+    let mut invalid = bounds;
+    invalid.client.reasoning = u32::MAX;
+    cases.push(("replay representability", invalid, accepted));
+    for (check, bounds, receiving) in cases {
+        assert!(!adapter::valid(&bounds, &receiving), "{check}");
+        assert!(
+            matches!(
+                smith_protocol_llm::prepare_prompt(Token::new(1), prompt(), Box::new([]), receiving, &bounds),
+                Err(adapter::Error::Limit)
+            ),
+            "{check}"
+        );
+    }
+    let mut large = bounds;
+    large.history_bytes = u64::MAX;
+    assert!(adapter::valid(&large, &accepted), "aggregate heap arithmetic is not validity");
+}
+
+#[test]
 fn receiving_incompatibility_refuses_before_client_effects() {
     let bounds = limits();
     let mut receiving = receiving(&bounds);

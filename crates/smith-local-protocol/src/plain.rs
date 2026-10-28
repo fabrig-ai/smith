@@ -77,7 +77,6 @@ impl Plain {
     /// Admit a root scan with checked, nonzero bounds.
     #[must_use]
     pub fn new(owner: Token, root: Token, limits: PlainLimits, deadline: Time) -> Option<Self> {
-        plain_worst_case(&limits)?;
         if limits.entries == 0 || limits.path_bytes == 0 || limits.file_bytes == 0 {
             return None;
         }

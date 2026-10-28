@@ -41,7 +41,9 @@ mod types;
 pub use boundary::{Below, BelowEvent, Deltas, FromDomain, ToDomain};
 pub use capture::{Measure, Observation};
 pub use completion::completion;
-pub use component::{Component, ComponentError, ComponentLimits, MAX_OUT, MaxOut, component_worst_case};
+pub use component::{
+    Component, ComponentError, ComponentLimits, MAX_OUT, MaxOut, component_valid, component_worst_case,
+};
 pub use contract::{decode_deliver, decode_finish, deliver_schema, finish_schema};
 pub use decode::decode;
 pub use endpoints::{
@@ -51,7 +53,7 @@ pub use endpoints::{
 pub use failure::{cancelled, failed, refusal};
 pub use framing::prompt_allowance;
 pub use grants::{GrantError, Grants};
-pub use limits::{Limits, Receiving, completion_worst_case, render_worst_case, worst_case};
+pub use limits::{Limits, Receiving, completion_worst_case, render_worst_case, valid, worst_case};
 pub use prompt::{prepare_prompt, prompt};
 pub use render::{CUT_MARKER_BYTES, render_outcome};
 pub use schema_costs::schema_costs;

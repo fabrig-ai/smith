@@ -91,6 +91,35 @@ pub fn completion_worst_case(client_limits: &client::Limits, decoded_call_bytes:
         .checked_add(decoded_call_bytes)
 }
 
+/// Whether an adapter can serve under these receiving bounds: compatibility
+/// and representable edge workspaces (programming-model.md, section 6.3).
+#[must_use]
+pub fn valid(limits: &Limits, receiving: &Receiving) -> bool {
+    if limits.rendered_result < crate::CUT_MARKER_BYTES {
+        return false;
+    }
+    let completion = match completion_worst_case(&limits.client, receiving.decoded_call_bytes) {
+        Some(completion) => completion,
+        None => return false,
+    };
+    if completion > receiving.max_completion_bytes
+        || limits.client.output_items > receiving.max_completion_blocks
+        || limits.client.detail_bytes > receiving.max_failure_bytes
+    {
+        return false;
+    }
+    let document_bytes = match u32::try_from(limits.tool_bytes.max(u64::from(limits.client.input))) {
+        Ok(bytes) => bytes,
+        Err(_) => return false,
+    };
+    let replay = match replay_limits(&limits.client) {
+        Some(replay) => replay,
+        None => return false,
+    };
+    skein_llm::replay_worst_case(&document_limits(&limits.client, document_bytes)).is_some()
+        && skein_llm::replay_worst_case(&replay).is_some()
+}
+
 /// Protocol footprint, including its retained declaration context,
 /// native prompt/schema/replay transit and simultaneous translated output.
 /// The connection pool separately owns the Client and its native preparation.
@@ -99,16 +128,10 @@ pub fn completion_worst_case(client_limits: &client::Limits, decoded_call_bytes:
 /// receiving incompatibility or arithmetic overflow; no Client is prepared.
 #[must_use]
 pub fn worst_case(limits: &Limits, receiving: &Receiving) -> Option<u64> {
-    if limits.rendered_result < crate::CUT_MARKER_BYTES {
+    if !valid(limits, receiving) {
         return None;
     }
     let completion = completion_worst_case(&limits.client, receiving.decoded_call_bytes)?;
-    if completion > receiving.max_completion_bytes
-        || limits.client.output_items > receiving.max_completion_blocks
-        || limits.client.detail_bytes > receiving.max_failure_bytes
-    {
-        return None;
-    }
     let parts = limits.client.output_items;
     // Rules 1 and 2: neutral schema/replay documents share actual source
     // bytes. Each retained JSON record consumes a source byte; its Compact

@@ -8,8 +8,9 @@ pub use smith_protocol_llm::{
     Below, BelowEvent, Component, ComponentError, ComponentLimits, ConfiguredEndpoint, Context, EndpointError,
     EndpointOptions, Endpoints, Error, FromDomain, GrantError, Grants, IdentityProfile, Limits, MAX_OUT, MaxOut,
     Receiving, ResolvedCall, Stated, ToDomain, ToolKind, ToolSchema, cancelled, completion, completion_worst_case,
-    component_worst_case, decode, decode_deliver, decode_finish, deliver_schema, failed, finish_schema, prompt,
-    refusal, render_outcome, render_worst_case, schemas, schemas_for_contract, worst_case,
+    component_valid, component_worst_case, decode, decode_deliver, decode_finish, deliver_schema, failed,
+    finish_schema, prompt, refusal, render_outcome, render_worst_case, schemas, schemas_for_contract, valid,
+    worst_case,
 };
 
 /// All owned input to one preparation. Caller credentials are consumed as a grant;
