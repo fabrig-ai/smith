@@ -41,10 +41,6 @@ impl Owed {
         Owed { entries: Map::with_capacity(calls) }
     }
 
-    pub(super) fn worst_case(limits: &Limits) -> Option<u64> {
-        Map::<Box<[u8]>, Claim>::worst_case(limits.completion_blocks)?.checked_add(limits.answer_bytes)
-    }
-
     pub(super) fn is_empty(&self) -> bool {
         for (_, claim) in &self.entries {
             if !claim.kept {

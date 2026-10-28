@@ -296,14 +296,6 @@ pub(crate) fn done(
     }
 }
 
-pub(crate) fn worst_case(limits: &Limits) -> Option<u64> {
-    Map::<u32, Job>::worst_case(limits.jobs)?
-        .checked_add(Map::<u64, Read>::worst_case(limits.calls)?)?
-        .checked_add(skein_lib::List::<u64>::worst_case(limits.calls)?)?
-        .checked_add(skein_lib::List::<u32>::worst_case(limits.jobs)?)?
-        .checked_add(u64::from(limits.jobs).checked_mul(u64::from(limits.shell_head.checked_add(limits.shell_tail)?))?)
-}
-
 /// Cancel every live held owner; retained terminals still count until read.
 pub(crate) fn cancel(domain: &mut Domain, kit: Token, limits: &Limits, out: &mut Queue<Request>) {
     let kit = domain.kits.get_mut(Id::from_token(kit)).expect("a session owns its kit");

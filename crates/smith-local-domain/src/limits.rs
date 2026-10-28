@@ -67,13 +67,6 @@ impl AgentLimits {
         Some(Self::Inline(limits))
     }
 
-    pub(crate) fn max_out(self) -> u32 {
-        match self {
-            Self::Inline(limits) => smith_inline_agent::max_out(&limits),
-            Self::Spawned(limits) => smith_host_domain::max_out(&limits),
-        }
-    }
-
     fn valid(self) -> bool {
         match self {
             Self::Inline(limits) => smith_inline_agent::valid(&limits),

@@ -21,12 +21,6 @@ use crate::person::Lines;
 use crate::turns::Turns;
 use crate::{AgentLimits, Config, Fact, Invalid, Limits, charter};
 
-/// Upper bound on local output from one event or ready child step.
-#[must_use]
-pub fn max_out(limits: &Limits) -> u32 {
-    limits.agent.max_out().saturating_mul(4).saturating_add(limits.smith.run.messages).saturating_add(8)
-}
-
 /// One local chat and its inline or spawned agent behind the parent face.
 #[derive(Debug)]
 pub struct Domain {
@@ -1104,7 +1098,9 @@ fn store_failed(
 }
 
 fn route_agent(domain: &mut Domain, env: &Env<Limits>, out: &mut Queue<Request>) {
-    for _ in 0..max_out(&env.limits) {
+    // Route the current backlog in FIFO order. Replies made while routing
+    // remain ready for the next pass, without admitting another external event.
+    for _ in 0..domain.agent.backlog() {
         match domain.agent.pop() {
             Some(Output::Parent(request)) => {
                 drain_agent_content(domain, env);

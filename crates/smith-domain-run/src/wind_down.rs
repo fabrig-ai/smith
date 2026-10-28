@@ -77,10 +77,6 @@ impl Ready {
         Ready { now: Set::with_capacity(runs), next: Set::with_capacity(runs) }
     }
 
-    pub(crate) fn worst_case(runs: u32) -> Option<u64> {
-        Set::<Id<Run>>::worst_case(runs)?.checked_mul(2)
-    }
-
     pub(crate) fn is_ready(&self) -> bool {
         !self.now.is_empty()
     }

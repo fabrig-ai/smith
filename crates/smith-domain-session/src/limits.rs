@@ -1,19 +1,13 @@
-//! Ownership caps and checked worst-case arithmetic. This module retains no runtime state.
+//! Admission limits and checked capacities. This module retains no runtime state.
 //! `valid` checks limit compatibility and representable capacities, without knowing live ownership.
-//! `worst_case` retains the transitional container and payload sum for the parent.
 //!
 //! Contract: domain/session.md, sections 3 and 6; programming-model.md, sections 4.4, 4.5 and 6.3.
 
-use alloc::boxed::Box;
-
-use skein_lib::{Deadlines, Duration, List, Map, Queue, Slab};
+use skein_lib::Duration;
 use smith_domain_tools as tools;
 
 use crate::boundary::Budget;
-use crate::facts::Fact;
-use crate::llm::{Block, Message};
-use crate::record::{Opener, Opening, Turn};
-use crate::session::{Alarm, Ready, Run, Session, Slot};
+use crate::llm::Block;
 
 /// The most tool calls a session runs at once: what `Limits::parallel_tools`
 /// may be, and what bounds the requests a step emits.
@@ -125,88 +119,6 @@ pub fn valid(limits: &Limits) -> bool {
         && alarms(limits).is_some()
         && runs(limits).is_some()
         && tools::valid(&limits.tools)
-}
-
-/// The most memory the domain holds under `limits`, in bytes (programming-model.md, section 6.3), or `None`
-/// if it does not fit a `u64` or the limits cannot be honoured: a parallel
-/// batch wider than [`MAX_PARALLEL`] or than the tools run for a kit at once
-/// (so that a read never meets `Busy`), fewer kits than sessions, or a
-/// transcript too short for a prompt and its answer.
-///
-/// It is the session's own, the tools' it owns, and the queue that holds what
-/// the tools emit in a step. It counts the containers, their bookkeeping
-/// included, and the payloads, not allocator overhead. The prompts of calls in
-/// flight are copies held by the protocol layer, and the texts of yields copies
-/// held by the opener, which count them. Call observations copy only provider IDs and names, bounded by the completion byte cap.
-#[must_use]
-pub fn worst_case(limits: &Limits) -> Option<u64> {
-    if !valid(limits) {
-        return None;
-    }
-    let sessions = Slab::<Session>::worst_case(limits.sessions)?;
-    // Rules 1 and 5: two whole batches per session share their completion
-    // payload; each run owns a cell, not a fresh complete provider answer.
-    let runs = Slab::<Run>::worst_case(runs(limits)?)?;
-    // Active calls share two completion payloads. Retained job identities and
-    // closing observations each hold at most one answer's id/name bytes per
-    // job. Use the larger joint envelope, counting each owned copy once.
-    let previous = limits.completion_bytes.checked_mul(2)?.checked_add(limits.answer_bytes)?;
-    let identities = u64::from(limits.tools.jobs).checked_mul(2)?.checked_add(4)?.checked_mul(limits.answer_bytes)?;
-    let metadata = u64::from(limits.sessions).checked_mul(previous.max(identities))?;
-    let alarms = Deadlines::<Alarm>::worst_case(alarms(limits)?)?;
-    let ready = Ready::worst_case(limits.sessions)?;
-    // Rule 5: the parent drains facts before its next child entrance; copied
-    // call IDs/names share one answer total per emitting session.
-    let facts = Queue::<Fact>::worst_case(limits.facts)?;
-    let tools = tools::worst_case(&limits.tools)?;
-    let tools_out = Queue::<tools::Request>::worst_case(tools::max_out(&limits.tools))?;
-    // Each session owns its transcript's list and up to its byte limit.
-    // Result slots coexist with the assembled result Block array. The latter
-    // is charged in history_bytes; the full Slot container is additional.
-    // The whole byte-cap quotient and configured completion block cap form
-    // a conservative bound for any admitted live batch, also across restore.
-    // Keeping their maximum avoids assuming Slot <= Block.
-    let block = u64::try_from(size_of::<Block>()).ok()?;
-    let calls = u32::try_from(limits.history_bytes.checked_div(block)?)
-        .ok()?
-        .min(limits.history_blocks)
-        .max(limits.completion_blocks);
-    let slots = List::<Slot>::worst_case(calls)?;
-    let session = List::<Message>::worst_case(limits.history_messages)?
-        .checked_add(List::<Box<[u8]>>::worst_case(calls)?)?
-        .checked_add(slots)?
-        .checked_add(crate::session::builtin_worst_case(limits)?)?
-        .checked_add(Map::<u32, crate::ToolCall>::worst_case(limits.tools.jobs)?)?
-        .checked_add(limits.history_bytes)?
-        .checked_add(u64::from(limits.failure_bytes))?;
-    let held = u64::from(limits.sessions).checked_mul(session)?;
-    // One parent handoff owns exactly one fixed boxed Opening node. Its
-    // validated payload is charged by the session byte cap, and its restore
-    // envelopes may coexist while messages move into the transcript list.
-    // Count the node throughout input validation and transfer, independently
-    // of its release timing and all payload/record cells.
-    let opening = u64::try_from(size_of::<Opening>()).ok()?;
-    // Restore and completion are separate entrances; only one needs its scratch at a time.
-    let scratch =
-        limits.completion_bytes.max(limits.history_bytes.min(List::<Block>::worst_case(limits.history_blocks)?));
-    // A restored transcript holds one window, with one boxed opener; ordinary
-    // turns keep no opener payload (protocol/transcript.md, section 3).
-    let opener = u64::try_from(size_of::<Opener>()).ok()?;
-    let staging = List::<Turn>::worst_case(limits.history_messages)?
-        .checked_add(opener)?
-        .checked_add(List::<Message>::worst_case(limits.history_messages)?)?
-        .checked_add(opening)?
-        .checked_add(scratch)?;
-    sessions
-        .checked_add(runs)?
-        .checked_add(metadata)?
-        .checked_add(alarms)?
-        .checked_add(ready)?
-        .checked_add(facts)?
-        .checked_add(tools)?
-        .checked_add(tools_out)?
-        .checked_add(held)?
-        .checked_add(staging)
 }
 
 /// Two regular batches and one completion's retired program observations per

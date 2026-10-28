@@ -62,7 +62,5 @@ pub use boundary::{
 };
 pub use domain::{Domain, fire, max_facts, max_out, max_to_opener, resume, step};
 pub use facts::{Choice, Compacted, Fact, FactKind, ResponseInfo, ToolCall, ToolSource};
-pub use limits::{
-    Derivation, ENCODED_BYTES, Field, Limits, MAX_PARALLEL, completion_reserve, derive, valid, worst_case,
-};
+pub use limits::{Derivation, ENCODED_BYTES, Field, Limits, MAX_PARALLEL, completion_reserve, derive, valid};
 pub use session::{preview_completion, preview_reservation, reserve_completion};

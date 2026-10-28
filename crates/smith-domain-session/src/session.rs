@@ -371,12 +371,6 @@ impl Ready {
         Ready { now: Set::with_capacity(sessions), next: Set::with_capacity(sessions) }
     }
 
-    /// The most heap the list takes for `sessions` sessions, or `None` past a
-    /// `u64`.
-    pub(crate) fn worst_case(sessions: u32) -> Option<u64> {
-        Set::<Id<Session>>::worst_case(sessions)?.checked_mul(2)
-    }
-
     pub(crate) fn is_ready(&self) -> bool {
         !self.now.is_empty()
     }
@@ -3561,10 +3555,6 @@ fn finish_closing(conversation: &mut Conversation) {
 }
 
 pub(crate) use builtin::result as builtin_result;
-
-pub(crate) fn builtin_worst_case(limits: &Limits) -> Option<u64> {
-    builtin::Owed::worst_case(limits)
-}
 
 /// Result ids must resolve to the preceding assistant's calls, in call order.
 /// A yielded assistant may be the tail; resuming supplies its `NotRun` results.

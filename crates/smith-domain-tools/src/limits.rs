@@ -1,18 +1,12 @@
-//! Ownership caps and checked worst-case arithmetic. This module retains no runtime state.
+//! Admission limits and checked capacities. This module retains no runtime state.
 //! `valid` checks limit compatibility and representable capacities, without knowing live ownership.
-//! `worst_case` retains the transitional container and payload sum for the parent.
 //!
 //! Contract: domain/tools.md, section 4; programming-model.md, sections 4.4, 4.5 and 6.3.
 
-use skein_lib::{Duration, Id, List, Map, Queue, Set, Slab};
+use skein_lib::Duration;
 
-use crate::authority::Mount;
 use crate::call::{Call, Entry, Hit};
-use crate::facts::Fact;
-use crate::flight::{self, Flight};
-use crate::kit::Kit;
-use crate::knowledge::Seen;
-use crate::path::{Name, Place};
+use crate::flight;
 
 /// The tools child domain's limits (programming-model.md, sections 4.5 and 6.3), handed by its parent to every
 /// step read-only.
@@ -97,48 +91,6 @@ pub fn valid(limits: &Limits) -> bool {
         && limits.host_path_bytes.checked_add(1).is_some()
 }
 
-/// The most memory the domain holds under `limits`, in bytes (programming-model.md, section 6.3), or `None`
-/// if it does not fit a `u64` or the limits cannot be honoured.
-///
-/// It counts the containers, their bookkeeping included, and the payloads, not
-/// allocator overhead. What travels in events and requests is counted by the
-/// layer that holds it: the content of a file loaded or to be stored, and the
-/// outcomes answered.
-#[must_use]
-pub fn worst_case(limits: &Limits) -> Option<u64> {
-    if !valid(limits) {
-        return None;
-    }
-    let kits = Slab::<Kit>::worst_case(limits.kits)?.checked_add(u64::from(limits.kits).checked_mul(kit(limits)?)?)?;
-    // Only running flights hold a place, at most `calls` a kit; the slab has more
-    // slots, for the flights answered in an iteration.
-    let running = u64::from(limits.kits).checked_mul(u64::from(limits.calls))?;
-    // Every write in flight reserves a whole file and its result independently.
-    let held = flight::held(limits)?.checked_add(u64::from(limits.file_bytes).checked_mul(2)?)?;
-    let flights = Slab::<Flight>::worst_case(flight::slots(limits)?)?.checked_add(running.checked_mul(held)?)?;
-    // Facts own nothing beyond their queue.
-    let facts = Queue::<Fact>::worst_case(limits.facts)?;
-    // One call normalises a path at a time: flags for its raw components,
-    // references to those and the working directory, then the joined path
-    // and its copy beneath the chosen repository.
-    let parts = limits.path_bytes.checked_add(1)? / 2;
-    let host_refs = List::<&Name>::worst_case(limits.host_path_bytes.checked_add(1)? / 2)?;
-    let scratch = List::<bool>::worst_case(parts)?
-        .checked_add(List::<&Name>::worst_case(parts.checked_mul(2)?)?)?
-        .checked_add(u64::from(limits.path_bytes).checked_mul(2)?)?;
-    // A pure namespace listing borrows and sorts at most one name per mount.
-    let names = List::<&[u8]>::worst_case(limits.repos)?;
-    // One step recaptures one job answer; retained cancellations are per kit.
-    let capture = u64::from(limits.shell_head.checked_add(limits.shell_tail)?).checked_mul(2)?;
-    kits.checked_add(flights)?
-        .checked_add(facts)?
-        .checked_add(scratch)?
-        .checked_add(names)?
-        .checked_add(host_refs)?
-        .checked_add(capture)?
-        .checked_add(u64::from(limits.file_bytes).checked_mul(2)?)
-}
-
 /// Maximum dynamic ownership of this call's outcome, excluding its
 /// enclosing result block and copied provider ID, which the session reserves
 /// separately. The parent uses this before dispatch, including for a terminal
@@ -187,28 +139,6 @@ pub fn batch_result_worst_case(limits: &Limits, parallel: u32) -> Option<u64> {
         u64::from(limits.read_bytes.max(limits.tool_payload)).max(limits.list_bytes).max(search).max(path).max(shell);
     let edit = u64::try_from(size_of::<u32>()).ok()?.checked_mul(u64::from(limits.match_lines))?;
     Some(read.checked_mul(u64::from(parallel))?.max(edit).max(shell).max(path))
-}
-
-/// What one kit holds beyond its slot: its authority, each path in it at most
-/// `path_bytes` joined; what its LLM knows, a place for each file; and its
-/// flights' names.
-fn kit(limits: &Limits) -> Option<u64> {
-    let known = u64::from(limits.known_files).checked_mul(u64::from(limits.path_bytes))?;
-    let knowledge = Map::<Place, Seen>::worst_case(limits.known_files)?.checked_add(known)?;
-    let flights = Set::<Id<Flight>>::worst_case(limits.calls)?;
-    authority(limits)?.checked_add(knowledge)?.checked_add(flights)?.checked_add(crate::jobs::worst_case(limits)?)
-}
-
-/// What a kit's authority holds, each path in it at most `path_bytes` joined.
-fn authority(limits: &Limits) -> Option<u64> {
-    let path_bytes = u64::from(limits.path_bytes);
-    // A name is at least a byte, and a slash parts it from the next.
-    let cwd_names = limits.path_bytes.checked_add(1)? / 2;
-    let cwd = List::<Name>::worst_case(cwd_names)?.checked_add(path_bytes)?;
-    let mount_bytes = u64::from(limits.repos).checked_mul(path_bytes)?;
-    let hosts = u64::from(limits.repos).checked_mul(u64::from(limits.host_path_bytes))?;
-    let mounts = List::<Mount>::worst_case(limits.repos)?.checked_add(mount_bytes)?.checked_add(hosts)?;
-    cwd.checked_add(mounts)
 }
 
 /// Numeric declarations needed by this layer's transitional derivation.

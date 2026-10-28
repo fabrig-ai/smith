@@ -1,16 +1,11 @@
-//! Ownership caps and checked worst-case arithmetic. This module retains no runtime state.
+//! Admission limits and checked capacities. This module retains no runtime state.
 //! `valid` checks limit compatibility and representable capacities, without knowing live ownership.
-//! `worst_case` retains the transitional container and payload sum for the parent.
 //!
 //! Contract: domain/run.md, section 13; programming-model.md, sections 4.4, 4.5 and 6.3.
 
-use skein_lib::{Deadlines, Duration, List, Queue, Slab};
+use skein_lib::Duration;
 
 use crate::budget::Budget;
-use crate::call::Calls;
-use crate::facts::Fact;
-use crate::prepare::Guide;
-use crate::run::{Alarm, Conversation, Run};
 
 /// The run child domain's limits (programming-model.md, sections 4.5 and 6.3), handed by its parent to every
 /// step read-only.
@@ -150,72 +145,6 @@ pub fn valid(limits: &Limits) -> bool {
         && u64::from(limits.conflict_path_bytes)
             <= u64::try_from(crate::Marker::CAPACITY).expect("marker capacity fits u64")
         && alarms(limits).is_some()
-}
-
-/// The most memory the domain holds under `limits`, in bytes (programming-model.md, section 6.3), or `None`
-/// if it does not fit a `u64`.
-///
-/// It counts the containers, their bookkeeping included, and the payloads, not
-/// allocator overhead. What a run sends is a copy, which its receiver counts;
-/// what it receives and only passes on (a check's output) is the sender's.
-#[must_use]
-pub fn worst_case(limits: &Limits) -> Option<u64> {
-    if !valid(limits) {
-        return None;
-    }
-    let runs = Slab::<Run>::worst_case(limits.runs)?;
-    let ready = crate::wind_down::Ready::worst_case(limits.runs)?;
-    let conversations = Slab::<Conversation>::worst_case(limits.conversations)?;
-    // Two deadlines per run and two per call.
-    let alarms = Deadlines::<Alarm>::worst_case(alarms(limits)?)?;
-    // Each run holds its charter, including both convention path payloads, up
-    // to its byte limit (inline path wrappers are in Slab<Run>), and what it found in
-    // its checkout: a guide and a mark for checks per repository.
-    // Guide payloads are bounded by both their per-directory caps and the
-    // host part shared after the rendered charter; the list has its own cap
-    // (protocol/limits.md, sections 3.9 and 5).
-    let guide_bytes = u64::from(limits.directories).checked_mul(u64::from(limits.guide_bytes))?;
-    let guides = List::<Guide>::worst_case(limits.directories)?.checked_add(guide_bytes.min(limits.host_part))?;
-    let checks = List::<u32>::worst_case(limits.directories)?;
-    // A winding run holds the outcome it accepted.
-    let run = limits
-        .run_bytes
-        .checked_add(skein_lib::Set::<skein_lib::Id<Conversation>>::worst_case(
-            limits.run_conversations.saturating_sub(1),
-        )?)?
-        .checked_add(Queue::<crate::inbox::Queued>::worst_case(limits.messages)?)?
-        .checked_add(Queue::<skein_lib::Token>::worst_case(limits.messages)?)?
-        .checked_add(u64::from(limits.offer_bytes))?
-        .checked_add(u64::from(limits.messages).checked_mul(u64::from(limits.message_bytes))?)?
-        .checked_add(guides)?
-        .checked_add(checks)?
-        .checked_add(limits.outcome_bytes.max(crate::Delivered::worst_case()).max(crate::Report::BYTES))?;
-    let held = u64::from(limits.runs).checked_mul(run)?;
-    // A call landing a change holds it; a sub-agent's call, its answer.
-    let host = limits.run_bytes.checked_add(u64::from(limits.host_input_bytes))?;
-    let opening = limits
-        .host_part
-        .checked_add(limits.run_bytes)?
-        .checked_add(crate::prompt::budget_prompt_bytes()?)?
-        .checked_add(u64::try_from(size_of::<crate::Opening>()).ok()?)?
-        .checked_add(crate::prompt::BEGIN.len().try_into().ok()?)?
-        .checked_add(crate::prompt::SUMMARY.len().try_into().ok()?)?
-        .checked_add(crate::prompt::PREAMBLE.len().try_into().ok()?)?
-        .checked_add(crate::prompt::CHILD_FINAL.len().try_into().ok()?)?;
-    let call = limits.outcome_bytes.max(u64::from(limits.answer_bytes)).max(host).max(crate::Report::BYTES);
-    // The lease admits one writing child per run. Only that child's call
-    // retains an opening while its parent's jobs settle; other calls keep
-    // their ordinary payload. Replace one payload per run by the larger one.
-    let waiting = u64::from(limits.runs.min(limits.calls)).checked_mul(opening.saturating_sub(call))?;
-    let calls = Calls::worst_case(limits.calls)?.checked_add(u64::from(limits.calls).checked_mul(call)?)?;
-    let facts = Queue::<Fact>::worst_case(limits.facts)?;
-    runs.checked_add(ready)?
-        .checked_add(conversations)?
-        .checked_add(alarms)?
-        .checked_add(held)?
-        .checked_add(calls)?
-        .checked_add(waiting)?
-        .checked_add(facts)
 }
 
 /// Two alarms per run and two per delegated call.

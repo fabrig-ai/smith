@@ -429,30 +429,6 @@ pub(crate) fn ask_cost(ask: &Ask) -> Option<u64> {
     size(size_of::<Ask>())?.checked_add(payload)
 }
 
-/// The most an answer holds beyond its fixed size, as [`returned_cost`]
-/// counts it, under the run's `limits`, or `None` past a `u64`: a sub-agent's
-/// answer; a failed check's tail and its repository's name, which the charter
-/// holds; or the problems listed of an outcome rejected, each naming a field
-/// of the outcome spec, which the charter holds, or of the outcome declared.
-pub(crate) fn payload(limits: &run::Limits) -> Option<u64> {
-    let answered = u64::from(limits.answer_bytes);
-    let failed = u64::from(limits.check_tail).checked_add(limits.run_bytes)?;
-    // Rule 1: problem cells coexist, but names share one contract total.
-    let rejected = u64::from(run::outcome::Problems::LISTED)
-        .checked_mul(size(size_of::<run::outcome::Problem>())?)?
-        .checked_add(limits.run_bytes.max(limits.outcome_bytes))?;
-    let refused =
-        u64::try_from(run::Marker::CAPACITY).ok()?.checked_add(u64::try_from(run::DeliveryRefusal::CAPACITY).ok()?)?;
-    Some(
-        answered
-            .max(failed)
-            .max(rejected)
-            .max(run::Delivered::worst_case())
-            .max(refused)
-            .max(u64::from(limits.host_reply_bytes)),
-    )
-}
-
 fn len(bytes: &[u8]) -> Option<u64> {
     size(bytes.len())
 }

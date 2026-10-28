@@ -226,8 +226,8 @@ impl Agent {
 
     pub(crate) fn ready(&self) -> bool {
         match self {
-            Self::Inline { domain, .. } => domain.is_ready(),
-            Self::Spawned { .. } => false,
+            Self::Inline { domain, out, .. } => !out.is_empty() || domain.is_ready(),
+            Self::Spawned { out, .. } => !out.is_empty(),
         }
     }
 

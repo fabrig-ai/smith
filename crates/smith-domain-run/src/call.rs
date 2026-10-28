@@ -72,13 +72,6 @@ impl Calls {
         Calls { slab: Slab::with_capacity(capacity), named: Map::with_capacity(capacity) }
     }
 
-    /// The most heap calls take under a capacity of `capacity`, or `None` past
-    /// a `u64`. What their work holds is theirs to count.
-    pub(crate) fn worst_case(capacity: u32) -> Option<u64> {
-        let named = Map::<(Id<Conversation>, Token), Id<Call>>::worst_case(capacity)?;
-        Slab::<Call>::worst_case(capacity)?.checked_add(named)
-    }
-
     /// Calls present, returned ones included until they are reclaimed.
     pub(crate) fn len(&self) -> u32 {
         self.slab.len()

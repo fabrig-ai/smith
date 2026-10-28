@@ -2,8 +2,8 @@
 //! Keeps process proof, channel order, bounded call/turn metadata and terminal rights.
 //! Charter, transcript, post-transcript answers and host policy are opaque; credentials
 //! are names only. No IO, frame codec, durable policy record or agent internal state.
-//! `step` and `fire` consume typed events and injected clocks; the parent reserves
-//! `max_out` output slots and settles every issued operation, including during shutdown.
+//! `step` and `fire` consume typed events and injected clocks; the parent drains
+//! their ordered outputs and settles every issued operation, including during shutdown.
 //! Exact agent message refusals settle issued names even while draining; pending
 //! Send names protect reuse, and only Waiting establishes a watchdog claim.
 //! Turns move to the parent, with exact commitment ACK metadata retained here.
@@ -57,7 +57,7 @@ pub use delivery::{
     Marker, Receipt,
 };
 
-pub use domain::{Domain, fire, max_out, step};
+pub use domain::{Domain, fire, step};
 
 pub use facts::Fact;
 
@@ -65,7 +65,7 @@ pub use program::{FailureReason, ProgramCheck, ProgramFailure, ProgramMethod, Pr
 
 pub use inbox::Inbox;
 
-pub use limits::{Check, Limits, check, valid, worst_case};
+pub use limits::{Check, Limits, check, valid};
 
 pub use values::{Charter, Declared, Fields, Transcript, TurnValue};
 

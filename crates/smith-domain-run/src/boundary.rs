@@ -257,7 +257,7 @@ pub enum MessageRefusal {
 
 /// run -> parent
 #[derive(PartialEq, Eq, Debug)]
-#[expect(clippy::large_enum_variant, reason = "bounded diagnostics stay inline and are included in worst_case")]
+#[expect(clippy::large_enum_variant, reason = "bounded diagnostics move inline with their terminal")]
 pub enum Request {
     /// Internal notice after the last child settles; the root may release a held main completion.
     CompletionReady { conversation: Token },
@@ -469,7 +469,7 @@ pub enum Ask {
 
 /// The run's answer to a delegated call.
 #[derive(PartialEq, Eq, Hash, Debug)]
-#[expect(clippy::large_enum_variant, reason = "bounded diagnostics stay inline and are included in worst_case")]
+#[expect(clippy::large_enum_variant, reason = "bounded diagnostics move inline with their terminal")]
 pub enum Returned {
     /// Main finish crossed queued messages; the run offers them before another completion.
     Crossed { text: Box<[u8]> },

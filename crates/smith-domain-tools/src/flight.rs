@@ -637,10 +637,3 @@ pub(crate) fn kit(flight: &Flight) -> Id<Kit> {
 pub(crate) fn slots(limits: &Limits) -> Option<u32> {
     limits.kits.checked_mul(limits.calls.checked_add(limits.jobs)?)?.checked_mul(2)
 }
-
-/// What a running flight holds beyond its slot, or `None` past a `u64`: at most
-/// a place, and an edit's snippets.
-pub(crate) fn held(limits: &Limits) -> Option<u64> {
-    let cells = u64::try_from(size_of::<Replacement>()).ok()?.checked_mul(u64::from(limits.tool_payload))?;
-    u64::from(limits.tool_payload).checked_mul(2)?.checked_add(cells)?.checked_add(u64::from(limits.path_bytes))
-}

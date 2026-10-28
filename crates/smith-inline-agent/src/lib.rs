@@ -38,4 +38,4 @@ mod tests;
 pub use boundary::{Below, Input, Lower, Output};
 pub use domain::{Domain, fire, resume, step};
 pub use facts::{Fact, FactKind};
-pub use limits::{Limits, max_out, valid, worst_case};
+pub use limits::{Limits, valid};

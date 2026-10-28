@@ -42,8 +42,7 @@ pub enum Event {
         /// before any effect; refusal returns one `Ended` without `Opened`.
         /// Exactly one fixed `Opening` node is owned in transit, in addition
         /// to its bounded payload/envelopes. The entry consumes its ownership
-        /// as admission validates and moves content; `worst_case` separately
-        /// counts the node while it may coexist with admission state.
+        /// as admission validates and moves content.
         opening: Box<crate::record::Opening>,
     },
     /// Parent terminal for Delegate, possibly winning a Withdraw race. Its

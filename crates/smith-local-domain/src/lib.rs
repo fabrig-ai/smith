@@ -6,7 +6,7 @@
 //! trailer before answering (protocol/hosts.md, section 5.5).
 //!
 //! `step`, `fire` and `resume` take the injected clock and limits. The caller
-//! reserves `max_out` slots and settles each store, credential and agent IO
+//! drains ordered outputs and settles each store, credential and agent IO
 //! request once. `resume` first asks for the saved chat and later advances a
 //! ready child. A run answer is shown only after its turns are saved.
 //!
@@ -62,7 +62,7 @@ pub use boundary::{
 };
 pub use choices::Slash;
 pub use config::{Config, Contract, Invalid, Mode, PushTarget, charter};
-pub use domain::{Domain, fire, max_out, resume, step};
+pub use domain::{Domain, fire, resume, step};
 pub use end::EndCause;
 pub use facts::Fact;
 pub use limits::{AgentLimits, Limits, max_line_bytes, valid};

@@ -80,7 +80,7 @@ pub use domain::{
 };
 pub use identity::Identity;
 pub use inbox::rendered_bytes;
-pub use limits::{Derivation, Field, Limits, derive, valid, worst_case};
+pub use limits::{Derivation, Field, Limits, derive, valid};
 pub use prompt::{fixed_prompt, fixed_prompt_bytes, role_host_bytes, summary_bytes};
 pub use run::Most;
 pub use schema_costs::SchemaCosts;
