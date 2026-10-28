@@ -911,7 +911,7 @@ impl World {
             agent,
             agent_stage: Stage::new(settings.agent, max_out, max_out + SLACK),
             provider,
-            provider_stage: Stage::new(settings.provider, provider::MAX_OUT, provider::MAX_OUT + SLACK),
+            provider_stage: Stage::uncapped(settings.provider),
             wire: Schedule::new(),
             calls: Ledger::new("call to the provider"),
             calling: BTreeMap::new(),

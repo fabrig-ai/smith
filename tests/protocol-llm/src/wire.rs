@@ -202,7 +202,7 @@ impl Composition {
         let config = provider::Config { calls: 256, cache_entries: 256, ..skein_llm_world::fake::config() };
         Self {
             provider: provider::Domain::try_scripted(&config, 3, scripts.clone()).expect("bounded composition scripts"),
-            provider_stage: Stage::new(config, provider::MAX_OUT, provider::MAX_OUT + 3),
+            provider_stage: Stage::uncapped(config),
             provider_routes: BTreeMap::new(),
             configuration,
             limits,

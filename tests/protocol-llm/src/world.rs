@@ -294,7 +294,7 @@ impl Backend {
                 smith_session_world::provider::menu(),
             )
             .expect("scripts and application menu obey provider admission"),
-            stage: Stage::new(settings.provider, provider::MAX_OUT, provider::MAX_OUT + 3),
+            stage: Stage::uncapped(settings.provider),
             calls: Ledger::new("fake provider call"),
         }
     }

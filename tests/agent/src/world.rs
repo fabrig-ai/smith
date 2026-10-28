@@ -276,7 +276,7 @@ impl Backend {
     fn typed(settings: &Settings) -> Self {
         Self::Typed {
             provider: crate::scripted_provider(&settings.provider, settings.seed ^ 0x25),
-            stage: Stage::new(settings.provider, provider::MAX_OUT, provider::MAX_OUT + 3),
+            stage: Stage::uncapped(settings.provider),
             calls: Ledger::new("fake provider call"),
         }
     }
