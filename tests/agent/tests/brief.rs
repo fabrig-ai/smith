@@ -669,7 +669,7 @@ fn a_parked_open_run_resumes_on_the_delegate_result_without_a_new_begin() {
     assert!(matches!(first.answer(), run::Answer::Parked { turns: 1, .. }));
     assert_eq!(first.prompts().len(), 1);
     assert!(matches!(first.prompts()[0].messages[0].parts.as_ref(),
-        [Part::Text { text }] if text.as_ref() == b"Begin the work your brief describes."));
+        [Part::Text { text }] if text.as_ref() == SECTIONS.as_bytes()));
     let (saved, wait_id) = saved_wait(&first);
     let saved_messages: Vec<_> = saved
         .turns

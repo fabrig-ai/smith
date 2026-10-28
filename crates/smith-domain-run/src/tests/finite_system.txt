@@ -1,0 +1,53 @@
+Host instructions.
+
+## Request
+
+Read café; ask before coding.
+
+## 
+
+
+
+## Request
+
+Preserve this final line.
+
+## Tools
+
+You have no tools that act on the checkout.
+
+## Checkout
+
+There is no checkout.
+
+Call `wait` when you need another message; its result is withheld until messages arrive and returns with them in one request.
+
+## Finishing
+
+When the work is done, call `finish` with its result. A result outside the host's contract returns typed feedback; fix it and call `finish` again. Stopping without `finish` does not finish the run.
+
+Verdict: one exact host label from this closed list:
+- `approve`: text at most 1024 bytes; required result fields:
+(none)
+Items: 0 to 0; allowed kinds and their required fields:
+`blocking`:
+- `path`: nonempty, at most 1024 bytes
+- `body`: nonempty, at most 1024 bytes
+`nit`:
+- `path`: nonempty, at most 1024 bytes
+- `body`: nonempty, at most 1024 bytes
+- `request`: text at most 1024 bytes; required result fields:
+(none)
+Items: 1 to 8; allowed kinds and their required fields:
+`blocking`:
+- `path`: nonempty, at most 1024 bytes
+- `body`: nonempty, at most 1024 bytes
+`nit`:
+- `path`: nonempty, at most 1024 bytes
+- `body`: nonempty, at most 1024 bytes
+Extra fields are allowed within the aggregate result byte limit; no field name may repeat.
+
+## Budget
+
+At open, you have 10 turns and 600 seconds of wall time. Spend is bounded too.
+Keep 0 turns and 0 seconds to finish. When the ordinary budget is spent, live children close and you finish on that reserve.

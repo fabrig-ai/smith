@@ -3,11 +3,11 @@
 static HEAP: skein_heap::Counting = skein_heap::Counting;
 
 use skein_lib::{Duration, Reader, Writer};
-use smith_agent_process_world::{
-    charter,
-    program_world::{self, HostMessage, Run, When},
-};
+use smith_agent_process_world::program_world::{self, HostMessage, Run, When};
 use smith_fake_claude::{Seen, Step, Story, Turn};
+
+#[path = "support/opening.rs"]
+mod opening;
 
 // Three reserve completions cover the interrupted turn, a refused wait, and text.
 const RESERVE_TURNS: u32 = 3;
@@ -15,7 +15,7 @@ const ORDINARY_TURNS: u32 = 8;
 const WAITING: Duration = Duration::from_millis(10);
 
 fn open_charter() -> Box<[u8]> {
-    let mut parts = smith_charter::Charter::decode(&smith_charter::CEILINGS, &mut Reader::new(&charter()))
+    let mut parts = smith_charter::Charter::decode(&smith_charter::CEILINGS, &mut Reader::new(&opening::charter()))
         .expect("charter")
         .into_parts();
     parts.mode = smith_charter::Mode::Open;
@@ -127,6 +127,12 @@ fn an_open_reply_is_the_turns_text() {
     assert_eq!(*turns(&run)[0].last_read(), Some(0));
     assert_eq!(waitings(&run), [Some(0)]);
     let prints = prints(&run);
+    assert_eq!(
+        run.received[0]["message"]["content"],
+        serde_json::json!([
+            {"type":"text", "text":([opening::BRIEF, "host: Begin"].concat())}
+        ])
+    );
     assert_eq!(prints.len(), 1);
     assert!(!prints[0].arguments.iter().any(|argument| argument == "--json-schema"));
     assert!(run.seen.contains(&Seen::Tools { names: vec!["wait".into(), "permission_prompt".into()] }));

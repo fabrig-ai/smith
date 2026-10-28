@@ -1,0 +1,32 @@
+Host instructions.
+
+## Request
+
+Read café; ask before coding.
+
+## 
+
+
+
+## Request
+
+Preserve this final line.
+
+## Tools
+
+You have no tools that act on the checkout.
+
+## Checkout
+
+There is no checkout.
+
+Call `wait` when you need another message; its result is withheld until messages arrive and returns with them in one request.
+
+## Replying
+
+End your turn with text to reply; a reply does not end the conversation. The run then waits as for `wait`, but with no call to answer: the next messages come as a user message, at once if any came while you worked. To wait without replying, call `wait` with no text.
+
+## Budget
+
+At open, you have 10 turns and 600 seconds of wall time. Spend is bounded too.
+Keep 0 turns and 0 seconds for a last reply. When the ordinary budget is spent, live children close and you give it then.
