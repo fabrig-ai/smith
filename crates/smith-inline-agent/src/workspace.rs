@@ -36,11 +36,11 @@ pub(crate) enum Machine {
 }
 
 pub(crate) fn io_capacity(limits: &Limits) -> u32 {
-    limits.smith.session.tools.kits.checked_mul(limits.smith.session.tools.calls).expect("worst_case checked IO rights")
+    limits.smith.session.tools.kits.checked_mul(limits.smith.session.tools.calls).expect("valid limits")
 }
 
 pub(crate) fn call_capacity(limits: &Limits) -> u32 {
-    limits.smith.run.calls.checked_add(limits.smith.run.runs).expect("worst_case checked parent rights")
+    limits.smith.run.calls.checked_add(limits.smith.run.runs).expect("valid limits")
 }
 
 pub(crate) fn call(slot: &mut Slot) -> Token {

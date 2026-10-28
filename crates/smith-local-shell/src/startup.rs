@@ -49,7 +49,9 @@ pub(crate) fn service_limits(
     host: host::Limits,
     agent: &smith_agent_service::Config,
 ) -> Result<service::Limits, String> {
-    let queue = local::max_out(&local).max(host::max_out(&host)).max(256);
+    // Sizes local service edges and drains, preserving the default watermark.
+    const QUEUE: u32 = 9468;
+    let queue = QUEUE;
     let mut process = service::ProcessLimits {
         io: agent.limits.io,
         channel: protocol::Limits {

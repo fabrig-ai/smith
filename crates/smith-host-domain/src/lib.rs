@@ -65,7 +65,7 @@ pub use program::{FailureReason, ProgramCheck, ProgramFailure, ProgramMethod, Pr
 
 pub use inbox::Inbox;
 
-pub use limits::{Check, Limits, check, worst_case};
+pub use limits::{Check, Limits, check, valid, worst_case};
 
 pub use values::{Charter, Declared, Fields, Transcript, TurnValue};
 

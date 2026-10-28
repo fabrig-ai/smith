@@ -1,6 +1,7 @@
 //! Checked capacities and ownership (domain/host.md, sections 3, 4 and 6;
 //! programming-model.md, section 6). Parent owns forwarded turn payloads; kit
-//! owns metadata and queued responses through final Answer.
+//! owns metadata and queued responses through final Answer. No live ownership is known
+//! here; `valid` checks constructor capacities and `worst_case` retains the transitional sum.
 use crate::domain::{Account, Agent, Alarm, Call, Sent, TurnMeta};
 use crate::{AnsweredCall, Delivered, Directory, Down, Fact, Grant};
 use alloc::boxed::Box;
@@ -17,7 +18,7 @@ pub struct Limits {
     /// Conflict paths per mount.
     pub conflicts: u32,
     /// Relative conflict path bytes, at most 4096; larger configurations are
-    /// checked by admission and `worst_case`.
+    /// checked by admission and `valid`.
     pub path_bytes: u32,
     /// Mount and generic tool label bytes.
     pub name_bytes: u32,
@@ -95,6 +96,21 @@ pub fn check(limits: &Limits) -> Result<(), Check> {
     Ok(())
 }
 
+/// Whether a domain can be built under `limits`: compatible limits and
+/// representable constructor capacities (programming-model.md, section 6.3).
+/// The shell refuses limits for which this is false.
+#[must_use]
+pub fn valid(limits: &Limits) -> bool {
+    limits.path_bytes <= 4096
+        && limits.turns > 0
+        && limits.turn_bytes > 0
+        && limits.unacknowledged_bytes >= limits.turn_bytes
+        && limits.answer_bytes >= Delivered::worst_case()
+        && limits.calls.checked_add(9).is_some()
+        && outbox(limits).is_some()
+        && limits.agents.checked_mul(3).is_some()
+}
+
 /// Count domain containers, retained payloads, bounded scratch and each retained
 /// receipt copy. Start stays here only before Started, which emits its Send;
 /// Spawning rejects messages, so retained Start and queued messages are exclusive.
@@ -104,17 +120,9 @@ pub fn check(limits: &Limits) -> Result<(), Check> {
 /// invalid/unrepresentable limits.
 #[must_use]
 pub fn worst_case(limits: &Limits) -> Option<u64> {
-    if limits.path_bytes > 4096 {
+    if !valid(limits) {
         return None;
     }
-    if limits.turns == 0
-        || limits.turn_bytes == 0
-        || limits.unacknowledged_bytes < limits.turn_bytes
-        || limits.answer_bytes < Delivered::worst_case()
-    {
-        return None;
-    }
-    limits.calls.checked_add(9)?;
     let outbox = outbox(limits)?;
     let alarms = limits.agents.checked_mul(3)?;
     let directories = u64::from(limits.directories).checked_mul(

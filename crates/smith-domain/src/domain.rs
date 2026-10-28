@@ -225,7 +225,7 @@ impl Ready {
 }
 
 impl Domain {
-    /// A domain with room for `limits`, which [`crate::worst_case`] accepts,
+    /// A domain with room for `limits`, which [`crate::valid`] accepts,
     /// drawing randomness from `seed`: each child domain's seed is drawn from
     /// it.
     #[must_use]
@@ -235,8 +235,8 @@ impl Domain {
         let session_seed = rng.next_u64();
         let run_seed = rng.next_u64();
         let peers = limits.run.conversations;
-        let flights = limits::flights(limits).expect("worst_case accepted the limits");
-        let handoffs = limits::handoffs(limits).expect("worst_case accepted the limits");
+        let flights = limits::flights(limits).expect("valid limits");
+        let handoffs = limits::handoffs(limits).expect("valid limits");
         Domain {
             config,
             run: run::Domain::new(&limits.run, run_seed),
@@ -251,7 +251,7 @@ impl Domain {
             completions: Map::with_capacity(limits.run.conversations),
             pending: Map::with_capacity(limits.run.runs),
             notices: Queue::with_capacity(2),
-            commands: Map::with_capacity(limits::commands(limits).expect("validated command ownership bound")),
+            commands: Map::with_capacity(limits::commands(limits).expect("valid limits")),
             ready: Ready::with_capacity(handoffs),
             tickets: 0,
             run_out: Queue::with_capacity(limits::run_out(limits)),

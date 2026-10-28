@@ -1,5 +1,6 @@
 //! Ownership caps and checked worst-case arithmetic. This module retains no runtime state.
-//! `worst_case` projects immutable limits into container and payload bounds, returning `None` on overflow.
+//! `valid` checks compatibility and constructor capacities, without knowing live ownership.
+//! `worst_case` retains the transitional container and payload sum for callers.
 //!
 //! Contract: domain/run.md, section 13; programming-model.md, sections 4.4, 4.5 and 6.3.
 
@@ -40,6 +41,48 @@ pub struct Limits {
     pub session: session::Limits,
 }
 
+/// Whether a domain can be built under `limits`: compatible limits and
+/// representable constructor capacities (programming-model.md, section 6.3).
+/// The shell refuses limits for which this is false.
+#[must_use]
+pub fn valid(limits: &Limits) -> bool {
+    let run_limits = &limits.run;
+    let session_limits = &limits.session;
+    let budget = run_limits.budget;
+    let ceiling = session_limits.budget;
+    let fits = budget.turns <= ceiling.turns && budget.spend <= session_limits.spend && budget.time <= ceiling.time;
+    if !fits
+        || run_limits.conversations > session_limits.sessions
+        || run_limits.directories > session_limits.tools.repos
+        || run_limits.directory_name_bytes > session_limits.tools.path_bytes
+        || run_limits.host_path_bytes > session_limits.tools.host_path_bytes
+        || u64::from(run_limits.answered_bytes) > session_limits.history_bytes
+    {
+        return false;
+    }
+    let feedback = match crate::feedback_worst_case(run_limits) {
+        Some(bytes) => bytes,
+        None => return false,
+    };
+    if session_limits.spend == 0 || feedback > session_limits.delegated_result_bytes {
+        return false;
+    }
+    let decoded_cells = match u64::from(session_limits.completion_blocks)
+        .checked_mul(u64::try_from(size_of::<crate::llm::Decoded>()).expect("decoded cell size fits u64"))
+    {
+        Some(bytes) => bytes,
+        None => return false,
+    };
+    if decoded_cells > limits.decoded_call_bytes.min(session_limits.history_bytes) {
+        return false;
+    }
+    flights(limits).is_some()
+        && handoffs(limits).is_some()
+        && commands(limits).is_some()
+        && run::valid(run_limits)
+        && session::valid(session_limits)
+}
+
 /// The most memory the domain holds under `limits`, in bytes (programming-model.md, section 6.3), or `None`
 /// if it does not fit a `u64` or the limits cannot be honoured: the
 /// child domains' own, or limits under which a session would refuse what the
@@ -62,35 +105,11 @@ pub struct Limits {
 #[must_use]
 #[expect(clippy::too_many_lines, reason = "the worst-case sum keeps each owning container and payload visible")]
 pub fn worst_case(limits: &Limits) -> Option<u64> {
-    let Limits {
-        run: run_limits,
-        session: session_limits,
-        accounts: _,
-        endpoints: _,
-        configured_model_bytes: _,
-        skew: _,
-        decoded_call_bytes: _,
-    } = limits;
-    let budget = run_limits.budget;
-    let ceiling = session_limits.budget;
-    let fits = budget.turns <= ceiling.turns && budget.spend <= session_limits.spend && budget.time <= ceiling.time;
-    if !fits
-        || run_limits.conversations > session_limits.sessions
-        || run_limits.directories > session_limits.tools.repos
-        || run_limits.directory_name_bytes > session_limits.tools.path_bytes
-        || run_limits.host_path_bytes > session_limits.tools.host_path_bytes
-        || u64::from(run_limits.answered_bytes) > session_limits.history_bytes
-    {
+    if !valid(limits) {
         return None;
     }
-    if session_limits.spend == 0 || crate::feedback_worst_case(run_limits)? > session_limits.delegated_result_bytes {
-        return None;
-    }
-    let decoded_cells = u64::from(session_limits.completion_blocks)
-        .checked_mul(u64::try_from(size_of::<crate::llm::Decoded>()).ok()?)?;
-    if decoded_cells > limits.decoded_call_bytes.min(session_limits.history_bytes) {
-        return None;
-    }
+    let run_limits = &limits.run;
+    let session_limits = &limits.session;
     let children = run::worst_case(run_limits)?.checked_add(session::worst_case(session_limits)?)?;
     let peers = run_limits.conversations;
     let tickets = run_limits

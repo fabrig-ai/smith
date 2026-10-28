@@ -54,7 +54,7 @@ impl Domain {
     /// Allocate routing containers from checked limits and configured model names.
     #[must_use]
     pub fn new(limits: &Limits, configuration: smith::Config, seed: u64) -> Self {
-        assert!(crate::worst_case(limits).is_some(), "inline capacities are representable");
+        assert!(crate::valid(limits), "inline capacities are representable");
         assert!(configuration.valid(&limits.smith), "configured endpoints and models fit every root");
         Self {
             slots: Slab::with_capacity(limits.slots),

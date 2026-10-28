@@ -1,5 +1,6 @@
 //! Checked slot and routing bounds (domain/host.md, sections 9.1 and 9.4;
 //! programming-model.md, section 6.3). This module keeps no runtime state.
+//! `valid` checks compatibility and constructor capacities without knowing live ownership.
 //! `worst_case` prices each root and every retained routing container;
 //! caller-owned emitted payloads remain covered by the root's outgoing bound.
 //! Uncapped lower and lifecycle queues are estimated at their former capacities.
@@ -29,7 +30,7 @@ pub struct Limits {
 /// Maximum ordered outputs from one entry point, including cleanup fanout.
 #[must_use]
 pub fn max_out(limits: &Limits) -> u32 {
-    output_count(limits).expect("worst_case accepted the output count")
+    output_count(limits).expect("valid limits")
 }
 
 fn output_count(limits: &Limits) -> Option<u32> {
@@ -41,17 +42,30 @@ fn output_count(limits: &Limits) -> Option<u32> {
         .checked_add(4)
 }
 
+/// Whether a domain can be built under `limits`: compatible limits and
+/// representable constructor capacities (programming-model.md, section 6.3).
+/// The shell refuses limits for which this is false.
+#[must_use]
+pub fn valid(limits: &Limits) -> bool {
+    let turn_bytes = match smith::max_turn_bytes(&limits.smith) {
+        Some(bytes) => bytes,
+        None => return false,
+    };
+    limits.window.turns > 0
+        && limits.window.bytes >= turn_bytes
+        && limits.wall_time != Duration::ZERO
+        && limits.smith.session.tools.kits.checked_mul(limits.smith.session.tools.calls).is_some()
+        && limits.smith.run.calls.checked_add(limits.smith.run.runs).is_some()
+        && output_count(limits).is_some()
+        && smith::valid(&limits.smith)
+}
+
 /// Retained roots, configuration, routing, scratch and caller queue ownership.
 #[must_use]
 pub fn worst_case(limits: &Limits) -> Option<u64> {
-    if limits.window.turns == 0
-        || limits.window.bytes < smith::max_turn_bytes(&limits.smith)?
-        || limits.wall_time == Duration::ZERO
-    {
+    if !valid(limits) {
         return None;
     }
-    limits.smith.session.tools.kits.checked_mul(limits.smith.session.tools.calls)?;
-    limits.smith.run.calls.checked_add(limits.smith.run.runs)?;
     let outputs = output_count(limits)?;
     let per_slot = smith::worst_case(&limits.smith)?
         .checked_add(Map::<Token, Relay>::worst_case(crate::workspace::call_capacity(limits))?)?
