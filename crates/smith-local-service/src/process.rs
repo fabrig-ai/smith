@@ -5,6 +5,8 @@
 //! `capture_plain` retains no snapshot for trees it cannot inspect whole;
 //! `plain_status` counts them as changed (protocol/hosts.md, section 5.5).
 //! File demands settle serially before markers or a snapshot become a terminal.
+//! Internal handoffs are uncapped; shell and kernel edges retain credit
+//! (protocol/limits.md, section 3.8).
 //! It never knows local delivery
 //! policy, a credential's meaning, or the agent's private domain state.
 //! `up` converts kernel completions to host observations; `down` translates
@@ -43,12 +45,13 @@ impl Launch {
     }
 }
 
-/// Fixed lower capacities for one agent child and its channel.
+/// Lower limits for one agent child and its channel, supplied by the service.
 #[derive(Clone, Copy, Debug)]
 pub struct ProcessLimits {
     pub io: io::Limits,
     pub channel: protocol::Limits,
     pub detail_bytes: u32,
+    /// Kernel and shell edge capacity, and internal drain work per iteration.
     pub queue: u32,
 }
 
@@ -142,7 +145,7 @@ impl ProcessAdapter {
         endpoints: smith_protocol_channel::Endpoints,
         seed: u64,
     ) -> Option<Self> {
-        if !limits.io.is_usable() || limits.queue < io::MAX_OUT_UP.events.max(io::MAX_OUT_UP.submissions) {
+        if !limits.io.is_usable() {
             return None;
         }
         let mut files =
@@ -169,20 +172,20 @@ impl ProcessAdapter {
             files,
             store: None,
             cleanup_warning: None,
-            store_requests: Queue::with_capacity(limits.queue),
-            store_actions: Queue::with_capacity(3),
+            store_requests: Queue::uncapped(),
+            store_actions: Queue::uncapped(),
             file_roots: Box::new([]),
-            file_requests: Queue::with_capacity(limits.queue),
-            file_events: Queue::with_capacity(limits.queue),
-            io_submissions: Queue::with_capacity(limits.queue),
-            file_submissions: Queue::with_capacity(limits.queue),
+            file_requests: Queue::uncapped(),
+            file_events: Queue::uncapped(),
+            io_submissions: Queue::uncapped(),
+            file_submissions: Queue::uncapped(),
             operations: Map::with_capacity(limits.queue),
             next_operation: 1,
             delivery_roots: Box::new([]),
             git_environment: Box::new([]),
-            io_events: Queue::with_capacity(limits.queue),
+            io_events: Queue::uncapped(),
             io_requests: Queue::with_capacity(limits.queue),
-            process_events: Queue::with_capacity(limits.queue),
+            process_events: Queue::uncapped(),
             submissions: Queue::with_capacity(limits.queue),
             completions: Queue::with_capacity(limits.queue),
             send: 1,
@@ -198,6 +201,7 @@ impl ProcessAdapter {
         })
     }
 
+    // Internal queues retain their former pricing as an estimate (limits.queue entries, store actions three).
     pub(crate) fn memory_parts(limits: &ProcessLimits, framed: bool) -> Option<[u64; 3]> {
         let child = if framed {
             io::worst_case(&limits.io)?
@@ -238,6 +242,25 @@ impl ProcessAdapter {
             .checked_add(Queue::<kernel::Submit>::worst_case(limits.queue)?)?
             .checked_add(Queue::<kernel::Complete>::worst_case(limits.queue)?)?;
         Some([store, delivery, routing])
+    }
+
+    // Part 2 consumes this count for admission; edges never contribute.
+    #[cfg_attr(not(test), expect(dead_code, reason = "prepared for the service watermark in part 2"))]
+    pub(crate) fn backlog(&self) -> u32 {
+        let mut total = 0_u32;
+        for entries in [
+            self.io_events.len(),
+            self.io_submissions.len(),
+            self.file_requests.len(),
+            self.file_events.len(),
+            self.file_submissions.len(),
+            self.store_requests.len(),
+            self.store_actions.len(),
+            self.process_events.len(),
+        ] {
+            total = total.checked_add(entries).expect("process backlog entries fit u32");
+        }
+        total
     }
 
     pub(crate) fn completions(&mut self) -> &mut Queue<kernel::Complete> {
@@ -378,7 +401,7 @@ impl ProcessAdapter {
 
     fn store_pass(&mut self, now: Time, local_events: &mut Queue<local::Event>) {
         for _ in 0_u8..3_u8 {
-            if local_events.room() == 0 || self.file_requests.room() == 0 {
+            if local_events.room() == 0 {
                 break;
             }
             let Some(action) = self.store_actions.pop() else { break };
@@ -738,18 +761,11 @@ impl ProcessAdapter {
     }
 
     pub(crate) fn output_room(&self) -> bool {
-        self.io_requests.room() >= 64 && self.process_events.room() >= 64
+        self.io_requests.room() >= 64
     }
 
     fn reap(&mut self, env: &Env<io::Limits>) {
         for _ in 0..self.completions.capacity() {
-            if self.io_events.room() < io::MAX_OUT_UP.events
-                || self.io_submissions.room() < io::MAX_OUT_UP.submissions
-                || self.file_events.room() == 0
-                || self.file_submissions.room() < 2
-            {
-                break;
-            }
             let Some(complete) = self.completions.pop() else { break };
             if self.signal_operation == Some(complete.op) {
                 self.signal_operation = None;
@@ -775,12 +791,12 @@ impl ProcessAdapter {
     }
 
     fn markers_up(&mut self, now: Time, local_events: &mut Queue<local::Event>) {
-        if self.files.is_due(now) && self.file_submissions.room() >= 2 {
+        if self.files.is_due(now) {
             file_layer::expire(&mut self.files, now, &mut self.file_submissions);
         }
         self.store_pass(now, local_events);
-        for _ in 0..self.file_events.capacity() {
-            if local_events.room() == 0 || self.file_requests.room() == 0 || self.store_actions.room() < 3 {
+        for _ in 0..self.limits.queue {
+            if local_events.room() == 0 {
                 break;
             }
             let Some(event) = self.file_events.pop() else { break };
@@ -818,27 +834,17 @@ impl ProcessAdapter {
     pub(crate) fn io_up(&mut self, env: &Env<io::Limits>) {
         let now = env.now;
         for _ in 0..self.limits.io.sockets {
-            if !self.io.is_ready()
-                || self.io_events.room() < io::MAX_OUT_RESUME.events
-                || self.io_submissions.room() < io::MAX_OUT_RESUME.submissions
-            {
+            if !self.io.is_ready() {
                 break;
             }
             io::resume(&mut self.io, env, &mut self.io_events, &mut self.io_submissions);
         }
         self.reap(env);
         for _ in 0..self.limits.io.sockets {
-            if self.io_events.room() < io::MAX_OUT_UP.events || self.io_submissions.room() < io::MAX_OUT_UP.submissions
-            {
-                break;
-            }
             if self.io.is_ready() {
                 io::resume(&mut self.io, env, &mut self.io_events, &mut self.io_submissions);
             }
-            if self.io.is_due(now)
-                && self.io_events.room() >= io::MAX_OUT_UP.events
-                && self.io_submissions.room() >= io::MAX_OUT_UP.submissions
-            {
+            if self.io.is_due(now) {
                 io::fire(&mut self.io, env, &mut self.io_events, &mut self.io_submissions);
             }
         }
@@ -873,7 +879,7 @@ impl ProcessAdapter {
     ) {
         let now = env.now;
         self.markers_up(now, local_events);
-        for _ in 0..self.io_events.capacity() {
+        for _ in 0..self.limits.queue {
             if !self.output_room()
                 || terminal_events.room() < local_protocol::terminal_max_out()
                 || local_events.room() == 0
@@ -1089,15 +1095,13 @@ impl ProcessAdapter {
             }
         }
         for _ in 0..self.io_requests.capacity() {
-            if self.io_submissions.room() < io::MAX_OUT_DOWN.submissions || !self.io.takes() {
+            if !self.io.takes() {
                 break;
             }
             let Some(request) = self.io_requests.pop() else { break };
             io::down(&mut self.io, env, request, &mut self.io_submissions);
         }
         if self.files.takes()
-            && self.file_submissions.room() >= 2
-            && self.file_events.room() > 0
             && let Some((request, deadline)) = self.file_requests.pop()
         {
             file_layer::down_until(
@@ -1108,12 +1112,7 @@ impl ProcessAdapter {
                 &mut self.file_submissions,
             );
         }
-        if self.closing_roots() > 0
-            && !self.close_root_pending
-            && self.files.takes()
-            && self.file_submissions.room() >= 2
-            && self.file_events.room() > 0
-        {
+        if self.closing_roots() > 0 && !self.close_root_pending && self.files.takes() {
             let position = self.closing_roots().checked_sub(1).expect("positive roots to close");
             self.closing.as_mut().expect("closing roots").roots = position;
             let root =
@@ -1144,14 +1143,14 @@ impl ProcessAdapter {
     }
 
     fn flush_submissions(&mut self) {
-        for _ in 0..self.io_submissions.capacity() {
+        for _ in 0..self.limits.queue {
             if self.submissions.room() == 0 || self.operations.len() == self.operations.capacity() {
                 break;
             }
             let Some(submit) = self.io_submissions.pop() else { break };
             self.route_submission(submit, false);
         }
-        for _ in 0..self.file_submissions.capacity() {
+        for _ in 0..self.limits.queue {
             if self.submissions.room() == 0 || self.operations.len() == self.operations.capacity() {
                 break;
             }
@@ -1455,6 +1454,134 @@ fn store_limits() -> local_protocol::StoreLimits {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // output_room reserves 64 shell requests; one more ready pipe crosses
+    // the old internal capacity in a single io_up call.
+    const ROUTING_QUEUE: u32 = 64;
+    const BURST: u32 = 65;
+    const KERNEL_QUEUE: u32 = 1;
+
+    fn adapter(queue: u32, sockets: u32) -> ProcessAdapter {
+        let mut config = crate::tests::config();
+        config.limits.process.queue = queue;
+        config.limits.process.io.sockets = sockets;
+        ProcessAdapter::new(&config.limits.process, config.launch, config.endpoints, 1).expect("adapter")
+    }
+
+    fn close_submission(number: u64) -> kernel::Submit {
+        kernel::Submit { op: Token::new(number), kind: kernel::Op::Close { fd: kernel::Fd::new(90) } }
+    }
+
+    #[test]
+    fn a_process_adapter_drains_more_io_terminals_than_its_queue_in_one_burst() {
+        let mut adapter = adapter(ROUTING_QUEUE, BURST);
+        let env = adapter.at(Time::ZERO, Wall::EPOCH);
+        let mut expected = Queue::with_capacity(BURST);
+        for number in 0..BURST {
+            let owner = adapter
+                .io
+                .adopt_write_pipe(kernel::Fd::new(i32::try_from(number).expect("fixture descriptor")), None)
+                .expect("one socket per pipe");
+            io::down(
+                &mut adapter.io,
+                &env,
+                io::Request::Stream {
+                    stream: owner,
+                    down: stream::Down::Demand { read: stream::Read::Nothing, room: 1 },
+                },
+                &mut adapter.io_submissions,
+            );
+            expected.push(io::Event::Stream { owner, up: stream::Up::Room });
+        }
+        adapter.io.reclaim();
+        adapter.io_up(&env);
+        assert_eq!(adapter.io_events.len(), BURST, "one metered IO pass exceeds the internal queue estimate");
+        let config = crate::tests::config();
+        let mut terminal = local_protocol::Terminal::new(local_protocol::TerminalLimits {
+            line_bytes: config.limits.local.line_bytes,
+            show_bytes: config.limits.local.show_bytes,
+        })
+        .expect("fixture terminal");
+        let mut host_events = Queue::with_capacity(ROUTING_QUEUE);
+        let mut terminal_events = Queue::with_capacity(ROUTING_QUEUE);
+        let mut local_events = Queue::with_capacity(ROUTING_QUEUE);
+        for remaining in [1, 0] {
+            adapter.up(&env, &mut host_events, &mut terminal, &mut terminal_events, &mut local_events, &mut None);
+            assert_eq!(adapter.io_events.len(), remaining, "each drain keeps its queue work bound");
+            for _ in 0..ROUTING_QUEUE {
+                let Some(event) = adapter.shell_events.pop() else { break };
+                assert_eq!(Some(event), expected.pop(), "every IO terminal reaches the shell in order");
+            }
+        }
+        assert!(expected.is_empty(), "no terminal lost within the bounded iterations");
+        assert!(adapter.io_events.is_empty());
+        assert!(adapter.shell_events.is_empty());
+    }
+
+    #[test]
+    fn the_kernel_edge_stays_capped_at_its_queue() {
+        let mut adapter = adapter(KERNEL_QUEUE, KERNEL_QUEUE);
+        adapter.submissions.push(close_submission(10));
+        adapter.io_submissions.push(close_submission(11));
+        adapter.io_submissions.push(close_submission(12));
+        adapter.file_submissions.push(close_submission(13));
+        adapter.flush_submissions();
+        assert_eq!(adapter.submissions.capacity(), KERNEL_QUEUE);
+        assert_eq!(adapter.completions.capacity(), KERNEL_QUEUE);
+        assert_eq!(adapter.submissions.len(), KERNEL_QUEUE);
+        assert_eq!(adapter.io_submissions.len(), 2, "full edge holds IO");
+        assert_eq!(adapter.file_submissions.len(), 1, "full edge holds files");
+        assert!(adapter.operations.is_empty(), "no route crosses the full kernel edge");
+        adapter.submissions.pop().expect("shell drains the occupied edge");
+        for original in [11, 12, 13] {
+            adapter.flush_submissions();
+            assert_eq!(adapter.submissions.len(), KERNEL_QUEUE, "only one submission crosses returned credit");
+            let submit = adapter.submissions.pop().expect("shell takes the routed submission");
+            adapter.flush_submissions();
+            assert!(adapter.submissions.is_empty(), "the operation table also waits for completion credit");
+            // Model the route retirement performed by reap, without sending
+            // these synthetic operations into the real IO/file machines.
+            match adapter.operations.remove(&submit.op).expect("one route per kernel operation") {
+                Operation::Io(token) => {
+                    assert!(original == 11 || original == 12, "IO retains priority over files");
+                    assert_eq!(token, Token::new(original));
+                }
+                Operation::File(token) => {
+                    assert_eq!(original, 13, "files follow both IO submissions");
+                    assert_eq!(token, Token::new(original));
+                }
+                Operation::ProgramRoot => panic!("fixture has no program root"),
+            }
+        }
+        assert!(adapter.io_submissions.is_empty());
+        assert!(adapter.file_submissions.is_empty());
+        assert!(adapter.operations.is_empty());
+    }
+
+    #[test]
+    fn the_process_backlog_counts_only_internal_handoffs() {
+        let mut adapter = adapter(KERNEL_QUEUE, KERNEL_QUEUE);
+        adapter.submissions.push(close_submission(1));
+        adapter.completions.push(kernel::Complete {
+            op: Token::new(1),
+            kind: kernel::Op::Close { fd: kernel::Fd::new(90) },
+            result: Ok(kernel::Done::Nothing),
+        });
+        adapter.io_requests.push(io::Request::Close { entity: Token::new(1) });
+        adapter.shell_events.push(io::Event::Resized);
+        adapter.operations.insert(Token::new(1), Operation::Io(Token::new(1))).expect("one edge route");
+        assert_eq!(adapter.backlog(), 0, "kernel and shell edges are outside the backlog");
+        adapter.io_events.push(io::Event::Resized);
+        adapter.io_submissions.push(close_submission(2));
+        adapter.file_requests.push((file::Request::Close { owner: Token::new(1), file: Token::new(2) }, Time::ZERO));
+        adapter.file_events.push(file::Event::Closed { owner: Token::new(1) });
+        adapter.file_submissions.push(close_submission(3));
+        adapter.store_requests.push(local_protocol::StoreRequest::Load);
+        adapter.store_actions.push(local_protocol::Action::Closed);
+        adapter.process_events.push(protocol::ProcessEvent::Exited { agent: Token::new(1), exit: None });
+        // The task's eight internal handoffs each hold one entry.
+        assert_eq!(adapter.backlog(), 8);
+    }
 
     fn prefetched_adapter(owner: Token) -> ProcessAdapter {
         let config = crate::tests::config();
