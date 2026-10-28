@@ -285,8 +285,8 @@ fn object(document: &[u8]) -> Option<()> {
     let limits = json::Limits { depth: 32, string: length, number: length, chunk: 1024, length };
     let env = Env { now: Time::ZERO, wall: Wall::EPOCH, limits };
     let mut tokenizer = json::Tokenizer::new(&limits);
-    let mut above = Queue::with_capacity(json::UP_MAX_OUT.above.max(json::DOWN_MAX_OUT.above));
-    let mut below = Queue::with_capacity(json::UP_MAX_OUT.below.max(json::DOWN_MAX_OUT.below));
+    let mut above = Queue::uncapped();
+    let mut below = Queue::uncapped();
     let mut intake = Intake::with_capacity(length.max(json::largest_demand(&limits)));
     intake.append(document).ok()?;
     let mut demand = None;

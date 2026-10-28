@@ -70,11 +70,14 @@ fn configuration_bytes(configuration: &Configuration) -> u64 {
     ])
 }
 
+// Four event slots cover this fixture's observed client burst, independently of machine output bounds.
+const OBSERVATION_EVENTS: u32 = 4;
+
 fn observation_limits(limits: &adapter::Limits) -> ObservationLimits {
     ObservationLimits {
         heads: 1,
         head_bytes: 4096,
-        events: skein_llm::client::MAX_OUT.above,
+        events: OBSERVATION_EVENTS,
         event_bytes: 32768,
         queries: 1,
         query_bytes: u64::from(limits.client.request),

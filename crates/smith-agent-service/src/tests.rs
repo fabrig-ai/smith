@@ -672,8 +672,8 @@ fn standard_profile_accepts_provider_events_that_echo_tool_schemas() {
 
     let env = Env { now: Time::ZERO, wall: Wall::EPOCH, limits: limits.sse };
     let mut reader = http::sse::Reader::new(&limits.sse);
-    let mut above = Queue::with_capacity(http::sse::UP_MAX_OUT.above);
-    let mut below = Queue::with_capacity(http::sse::UP_MAX_OUT.below);
+    let mut above = Queue::uncapped();
+    let mut below = Queue::uncapped();
     let mut received = Vec::new();
     let mut dispatched = false;
     http::sse::down(&mut reader, &env, http::sse::Request::Next, &mut above, &mut below);
