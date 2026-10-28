@@ -51,7 +51,7 @@ pub struct Declared {
     pub guide: u32,
     /// Shared LLM admission memory, in bytes.
     pub llm_pool: u64,
-    /// The process's real memory, in bytes: `standard()` declares 2,176 MiB.
+    /// The process's real memory, in bytes: `standard()` declares 2,181 MiB.
     pub memory: u64,
 }
 
@@ -182,7 +182,7 @@ pub const fn standard() -> Profile {
             list_entries: 512,
             guide: 16_384,
             llm_pool: 134_217_728,
-            memory: 2_281_701_376,
+            memory: 2_286_944_256,
         },
         policy: Policy {
             max_turns: 4096,
