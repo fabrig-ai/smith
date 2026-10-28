@@ -25,10 +25,14 @@ impl Backend {
             );
             return;
         }
-        if !self.permission_ready(&tool_name, &input, tool_use_id.as_deref()) {
+        if self.native.is_some() {
             self.calls.push(mcp::Up::Prompt { call, tool_name, input, tool_use_id }).expect("bounded held prompts");
             return;
         }
+        let Some(slot) = self.permission_index(&tool_name, &input, tool_use_id.as_deref()) else {
+            self.calls.push(mcp::Up::Prompt { call, tool_name, input, tool_use_id }).expect("bounded held prompts");
+            return;
+        };
         let verdict = match &self.request {
             Some(FromDomain::Complete { prompt, .. }) => match &prompt.choice {
                 llm::ToolChoice::Auto => {
@@ -41,10 +45,30 @@ impl Backend {
             },
             Some(FromDomain::Cancel { .. } | FromDomain::Yield { .. }) | None => return,
         };
+        if let mcp::Verdict::Allow { .. } = &verdict {
+            let held = self.ledger.get_mut(slot).expect("permission ledger");
+            held.native_write = tool_name.as_ref() == b"Write" || tool_name.as_ref() == b"Edit";
+            if tool_name.as_ref() == b"Read"
+                && super::native::whole(&input)
+                && let Some(at) = super::native::target(&self.mounts, &input, self.settings.path_bytes)
+            {
+                self.native = Some(super::native::Snapshot::new(
+                    held.owner.expect("permission follows completed call"),
+                    at,
+                    super::native::After::Allow { call, input },
+                ));
+                return;
+            }
+        }
         self.server.as_mut().expect("permission server").verdict(call, verdict, &mut self.io);
     }
 
+    #[cfg(test)]
     pub(super) fn permission_ready(&mut self, tool_name: &[u8], input: &[u8], tool_use_id: Option<&[u8]>) -> bool {
+        self.permission_index(tool_name, input, tool_use_id).is_some()
+    }
+
+    fn permission_index(&mut self, tool_name: &[u8], input: &[u8], tool_use_id: Option<&[u8]>) -> Option<u32> {
         for index in 0..self.ledger.len() {
             let held = self.ledger.get_mut(index).expect("ledger entry");
             let same = match tool_use_id {
@@ -61,10 +85,10 @@ impl Backend {
             };
             if held.builtin && !held.answered && !held.prompted && same && held.message < self.permitted {
                 held.prompted = true;
-                return true;
+                return Some(index);
             }
         }
-        false
+        None
     }
 }
 

@@ -60,7 +60,9 @@ pub(crate) fn done_bytes(done: &crate::tools::Done) -> u64 {
             }
             held
         }
-        Done::Stored { .. }
+        Done::Removed
+        | Done::NotEmpty
+        | Done::Stored { .. }
         | Done::Conflict { .. }
         | Done::Missing
         | Done::NotFile

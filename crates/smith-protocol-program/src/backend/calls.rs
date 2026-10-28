@@ -22,6 +22,7 @@ pub(super) struct Call {
     pub eligible: bool,
     pub message: u64,
     pub builtin: bool,
+    pub native_write: bool,
     pub owner: Option<skein_lib::Token>,
 }
 
@@ -284,6 +285,7 @@ mod tests {
                         eligible: true,
                         message: 1,
                         builtin: false,
+                        native_write: false,
                         owner: None,
                     })
                     .is_ok()

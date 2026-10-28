@@ -205,6 +205,10 @@ impl Backend {
         );
     }
 
+    #[expect(
+        clippy::match_same_arms,
+        reason = "remove has its own workspace exception arm under protocol/programs.md 5.3"
+    )]
     pub(super) fn tools(&self) -> Box<[mcp::Tool]> {
         let (prompt, outcome, deliver) = match &self.request {
             Some(FromDomain::Complete { prompt, outcome, deliver, .. }) => (prompt, outcome, deliver),
@@ -223,7 +227,25 @@ impl Backend {
         let mut tools = List::with_capacity(u32::try_from(count).expect("admitted tool count"));
         for schema in schemas {
             match schema.kind {
-                protocol::ToolKind::SubAgent | protocol::ToolKind::Owned(_) => {}
+                protocol::ToolKind::Owned(smith_domain::tools::Tool::Remove) => {
+                    tools
+                        .push(mcp::Tool {
+                            name: schema.name,
+                            description: schema.description,
+                            input_schema: schema.schema,
+                        })
+                        .expect("inventory capacity");
+                }
+                protocol::ToolKind::SubAgent
+                | protocol::ToolKind::Owned(
+                    smith_domain::tools::Tool::Read
+                    | smith_domain::tools::Tool::List
+                    | smith_domain::tools::Tool::Search
+                    | smith_domain::tools::Tool::Write
+                    | smith_domain::tools::Tool::Edit
+                    | smith_domain::tools::Tool::Shell
+                    | smith_domain::tools::Tool::Job,
+                ) => {}
                 protocol::ToolKind::Wait | protocol::ToolKind::Deliver | protocol::ToolKind::Finish => {
                     tools
                         .push(mcp::Tool {
@@ -370,7 +392,7 @@ impl Backend {
     }
 
     pub(super) fn cleanup(&mut self, now: Time, below: &mut Queue<Below>) {
-        if self.files.pending.is_some() {
+        if self.native.is_some() || self.files.pending.is_some() {
             return;
         }
         let Some(root) = self.settings.directory else {

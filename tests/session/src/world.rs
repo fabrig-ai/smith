@@ -1528,7 +1528,11 @@ impl World {
         // A call's operations, one after another, carry its token.
         self.owners.insert(owner);
         let at = match &op {
-            Op::Load { at, .. } | Op::List { at, .. } | Op::Store { at, .. } | Op::Search { at, .. } => at.root,
+            Op::Remove { at, .. }
+            | Op::Load { at, .. }
+            | Op::List { at, .. }
+            | Op::Store { at, .. }
+            | Op::Search { at, .. } => at.root,
             Op::Spawn { cwd, .. } => cwd.root,
         };
         let opener = *self.roots.get(&at.raw()).expect("an operation is in a session's repository");
@@ -1553,7 +1557,9 @@ impl World {
                         Err(done) => Work::Ending(done),
                     }
                 }
-                op @ (Op::Load { .. } | Op::List { .. } | Op::Store { .. } | Op::Search { .. }) => Work::File(op),
+                op @ (Op::Load { .. } | Op::List { .. } | Op::Remove { .. } | Op::Store { .. } | Op::Search { .. }) => {
+                    Work::File(op)
+                }
             }
         };
         // io runs the race with the deadline, and says it lost a moment
@@ -1668,7 +1674,7 @@ impl World {
     ///
     /// World contract: domain/session.md, sections 10 and 12; testing-strategy.md, section 2.2.
     fn writes(&mut self, owner: Token, session: Token, op: &Op) -> bool {
-        let stores = matches!(op, Op::Store { .. } | Op::Spawn { .. });
+        let stores = matches!(op, Op::Remove { .. } | Op::Store { .. } | Op::Spawn { .. });
         if let Some(&writes) = self.writing.get(&owner) {
             assert!(writes || !stores, "only a call that writes stores or runs a command");
             return writes;
@@ -1676,7 +1682,7 @@ impl World {
         let told = self.starting.get_mut(&session).and_then(VecDeque::pop_front);
         let writes = match told {
             Some(tool) => match tool {
-                tools::Tool::Write | tools::Tool::Edit | tools::Tool::Shell => true,
+                tools::Tool::Remove | tools::Tool::Write | tools::Tool::Edit | tools::Tool::Shell => true,
                 tools::Tool::Read | tools::Tool::List | tools::Tool::Search | tools::Tool::Job => false,
             },
             None => panic!("a call's first operation follows its native start observation"),
@@ -2075,7 +2081,8 @@ fn ended_run(event: &agent::Event) -> Option<Token> {
         | agent::Event::AnsweredAndYield { owner, .. }
         | agent::Event::AnswerWithheld { owner }
         | agent::Event::AnswerCancelled { owner, .. } => Some(*owner),
-        agent::Event::BuiltinResult { .. }
+        agent::Event::NativeVersion { .. }
+        | agent::Event::BuiltinResult { .. }
         | agent::Event::Open { .. }
         | agent::Event::Continue { .. }
         | agent::Event::CancelJobs { .. }
@@ -2094,6 +2101,9 @@ fn ended_run(event: &agent::Event) -> Option<Token> {
 
 fn describe_agent_event(event: &agent::Event) -> String {
     match event {
+        agent::Event::NativeVersion { session, at, version } => {
+            format!("native version {} {at:?} {version:?}", session.raw())
+        }
         agent::Event::BuiltinResult { session, id, text, error } => {
             format!("builtin result {} {id:?} {text:?} {error}", session.raw())
         }

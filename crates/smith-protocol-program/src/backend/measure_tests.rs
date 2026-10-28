@@ -192,8 +192,8 @@ fn the_first_prompt_prices_every_program_tool() {
     assert_eq!(backend.measures.room(), measures::capacity(&backend.settings).unwrap() - 1);
     let Some(Measure::Prompt { prompt, .. }) = backend.pop_measure() else { panic!("prompt") };
     let tools = prompt.tools.unwrap();
-    assert_eq!(tools.len(), 7);
-    for name in [b"Read".as_slice(), b"Glob", b"Grep", b"Write", b"Edit", b"Bash", b"permission_prompt"] {
+    assert_eq!(tools.len(), 8);
+    for name in [b"Read".as_slice(), b"Glob", b"Grep", b"Write", b"Edit", b"Bash", b"permission_prompt", b"remove"] {
         assert!(tools.iter().any(|tool| tool.as_ref() == name));
     }
     assert!(
@@ -322,7 +322,10 @@ fn a_retry_discards_the_unfinished_message() {
                 assert_eq!(text.as_ref(), b"second");
             }
             ToDomain::Text { .. } => {}
-            event @ (ToDomain::BuiltinResult { .. } | ToDomain::Failed { .. } | ToDomain::Cancelled { .. }) => {
+            event @ (ToDomain::NativeVersion { .. }
+            | ToDomain::BuiltinResult { .. }
+            | ToDomain::Failed { .. }
+            | ToDomain::Cancelled { .. }) => {
                 panic!("unexpected {event:?}");
             }
         }

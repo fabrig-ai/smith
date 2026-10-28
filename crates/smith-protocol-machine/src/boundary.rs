@@ -53,7 +53,9 @@ pub enum Below {
     /// with `FileIo::descriptor` before calling `file_layer::down_until`.
     OpenRead { owner: Token, root: Token, path: Box<[u8]>, deadline: Time },
     /// Open a listing directory through the installed root, closed before rg starts.
-    OpenDirectory { owner: Token, root: Token, path: Box<[u8]>, deadline: Time },
+    OpenDirectory { owner: Token, root: Token, path: Box<[u8]>, no_follow: bool, deadline: Time },
+    /// Remove one name beneath an open parent; the service resolves its descriptor.
+    Remove { owner: Token, parent: Token, name: Box<[u8]>, directory: bool, deadline: Time },
     /// Spawn below io with its root resolved by the service.
     Spawn { owner: Token, root: Token, spawn: Spawn },
     /// One request to the child or its pipes.

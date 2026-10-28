@@ -8,8 +8,8 @@ const ALL: Grants = Grants { inspect: true, modify: true, shell: true };
 
 fn mounts() -> [Mount; 2] {
     [
-        Mount { host: b"/work/repo".as_slice().into(), writable: true },
-        Mount { host: b"/library".as_slice().into(), writable: false },
+        Mount { root: skein_lib::Token::new(1), host: b"/work/repo".as_slice().into(), writable: true },
+        Mount { root: skein_lib::Token::new(1), host: b"/library".as_slice().into(), writable: false },
     ]
 }
 
@@ -29,7 +29,7 @@ fn a_read_inside_a_directory_is_allowed() {
 #[test]
 fn a_relative_path_resolves_against_the_working_directory() {
     allowed(b"Read", br#"{"file_path":"./a/../b//c"}"#);
-    let cwd = [Mount { host: b"/abc".as_slice().into(), writable: true }];
+    let cwd = [Mount { root: skein_lib::Token::new(1), host: b"/abc".as_slice().into(), writable: true }];
     same(
         judge(b"Read", br#"{"file_path":"defg"}"#, ALL, &cwd, 4),
         mcp::Verdict::Allow { updated_input: br#"{"file_path":"defg"}"#.as_slice().into() },
@@ -72,8 +72,8 @@ fn a_write_to_a_read_only_directory_is_denied() {
     }
     allowed(b"Read", br#"{"file_path":"/library/a"}"#);
     let nested = [
-        Mount { host: b"/work/repo".as_slice().into(), writable: true },
-        Mount { host: b"/work/repo/locked".as_slice().into(), writable: false },
+        Mount { root: skein_lib::Token::new(1), host: b"/work/repo".as_slice().into(), writable: true },
+        Mount { root: skein_lib::Token::new(1), host: b"/work/repo/locked".as_slice().into(), writable: false },
     ];
     same(judge(b"Edit", br#"{"file_path":"locked/a"}"#, ALL, &nested, 128), deny(b"path is read-only: locked/a"));
 }

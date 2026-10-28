@@ -475,6 +475,7 @@ fn fixture(story: &Story, login: Option<&[u8]>, case: Case) -> (Files, Opened) {
     if case == Case::Tools {
         items.extend([
             Item::file(b"work/repo/a", b"before\n"),
+            Item::directory(b"work/repo/empty"),
             Item::file(b"library/a", b"library text"),
             Item::directory(b"outside"),
             Item::file(b"outside/a", b"outside text"),

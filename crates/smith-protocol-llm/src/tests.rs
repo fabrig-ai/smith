@@ -362,6 +362,10 @@ fn golden_descriptions_state_batching_and_every_effective_parameter() {
             5,
         ),
         (
+            "Remove a file you have read at its current version, or an empty directory; never a directory with files in it.",
+            1,
+        ),
+        (
             "Run a command; files may change. Max 151 output bytes; cuts are marked. Without yield_seconds, wait for command end. At yield, an unfinished command answers running with job number; timeout counts from command start. Batch a change's edits across its files, then the command that checks them; they run one at a time in call order, and a write that fails, or any call answered invalid, leaves the writes and commands after it not run.",
             4,
         ),
@@ -392,6 +396,7 @@ fn golden_descriptions_state_batching_and_every_effective_parameter() {
             b"search" => assert!(text.contains("max 37 bytes") && text.matches("max 401 bytes").count() == 2),
             b"write" => assert!(text.contains("max 257 bytes") && text.contains("max 401 bytes")),
             b"edit" => assert_eq!(text.matches("max 257 bytes").count(), 2),
+            b"remove" => assert!(text.contains("The path, inside the workspace, as write takes it.")),
             b"shell" => assert!(
                 text.contains("Seconds")
                     && text.contains("12 seconds")
@@ -400,7 +405,7 @@ fn golden_descriptions_state_batching_and_every_effective_parameter() {
                     && text.contains("max 401 bytes")
             ),
             b"job" => assert!(text.contains("Wait; default 2 seconds; max 7 seconds; clamped.")),
-            _ => panic!("only the seven workspace tools"),
+            _ => panic!("only the eight workspace tools"),
         }
     }
     assert_eq!(schemas, crate::schemas(&described_prompt(), &stated));
@@ -462,7 +467,7 @@ fn path_descriptions_follow_the_actual_conversation_namespace() {
                 output_ceiling: 192,
             },
         ) {
-            if ![b"shell".as_slice(), b"job"].contains(&schema.name.as_ref()) {
+            if ![b"shell".as_slice(), b"job", b"remove"].contains(&schema.name.as_ref()) {
                 let text = core::str::from_utf8(&schema.schema).expect("valid namespace fixture");
                 assert!(
                     text.contains(wanted),
@@ -544,7 +549,7 @@ fn fixed_own_schema_measurement_matches_the_complete_fixed_inventory() {
         let rendered =
             inventory.iter().map(|tool| tool.name.len() + tool.description.len() + tool.schema.len()).sum::<usize>();
         largest = largest.max(rendered);
-        assert_eq!(inventory.len(), 9);
+        assert_eq!(inventory.len(), 10);
     }
     assert_eq!(crate::fixed_schema_bytes(&stated), u64::try_from(largest).ok());
 }

@@ -120,6 +120,10 @@ pub enum Verdict {
     NotFound,
     /// The entry is not a regular file.
     NotFile,
+    /// A current file or empty directory was removed.
+    Removed,
+    /// A removal refused a directory with entries.
+    NotEmpty,
     /// A write path traverses a symbolic link and is refused.
     Linked,
     /// A write would touch protected git metadata.
@@ -229,6 +233,8 @@ pub(crate) fn answered(session: Token, tool: Tool, outcome: &Outcome, observatio
         Outcome::ReadOnly { .. } => (Verdict::ReadOnly, 0),
         Outcome::TooLong => (Verdict::TooLong, 0),
         Outcome::NotFound { .. } => (Verdict::NotFound, 0),
+        Outcome::Removed => (Verdict::Removed, 0),
+        Outcome::NotEmpty => (Verdict::NotEmpty, 0),
         Outcome::NotFile => (Verdict::NotFile, 0),
         Outcome::Linked => (Verdict::Linked, 0),
         Outcome::Protected => (Verdict::Protected, 0),
@@ -250,12 +256,28 @@ pub(crate) fn answered(session: Token, tool: Tool, outcome: &Outcome, observatio
         Outcome::Busy => (Verdict::Busy, 0),
         Outcome::NulByte => (Verdict::NulByte, 0),
     };
-    let job = match outcome {
+    let job = outcome_job(outcome);
+    let observed = observed(outcome, observation);
+    FactKind::Answered {
+        session,
+        tool,
+        verdict,
+        bytes,
+        job,
+        omitted_bytes: observed.omitted_bytes,
+        clamped: observed.clamped,
+    }
+}
+
+fn outcome_job(outcome: &Outcome) -> Option<crate::JobNumber> {
+    match outcome {
         Outcome::Running { job, .. } | Outcome::Job { job, .. } => Some(*job),
         Outcome::Exited { .. }
         | Outcome::Read { .. }
         | Outcome::Listed { .. }
         | Outcome::Found { .. }
+        | Outcome::Removed
+        | Outcome::NotEmpty
         | Outcome::Written { .. }
         | Outcome::Edited { .. }
         | Outcome::NotGranted
@@ -276,16 +298,6 @@ pub(crate) fn answered(session: Token, tool: Tool, outcome: &Outcome, observatio
         | Outcome::Cancelled
         | Outcome::Busy
         | Outcome::NulByte => None,
-    };
-    let observed = observed(outcome, observation);
-    FactKind::Answered {
-        session,
-        tool,
-        verdict,
-        bytes,
-        job,
-        omitted_bytes: observed.omitted_bytes,
-        clamped: observed.clamped,
     }
 }
 
@@ -312,6 +324,8 @@ fn observed(outcome: &Outcome, observation: Observation) -> Observation {
         },
         Outcome::Listed { .. }
         | Outcome::Found { .. }
+        | Outcome::Removed
+        | Outcome::NotEmpty
         | Outcome::Written { .. }
         | Outcome::Edited { .. }
         | Outcome::NotGranted

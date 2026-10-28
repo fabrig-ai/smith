@@ -1676,7 +1676,7 @@ impl World {
             }
             Lower::Io { owner, op, deadline: _ } => {
                 let store_root = match &op {
-                    tools::Op::Store { at, .. } => Some(at.root.raw()),
+                    tools::Op::Remove { at, .. } | tools::Op::Store { at, .. } => Some(at.root.raw()),
                     tools::Op::Load { .. }
                     | tools::Op::List { .. }
                     | tools::Op::Spawn { .. }

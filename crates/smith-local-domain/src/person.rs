@@ -250,6 +250,7 @@ pub(crate) fn tool_end(result: &session::llm::Returned) -> &'static [u8] {
             | tools::Outcome::Read { .. }
             | tools::Outcome::Listed { .. }
             | tools::Outcome::Found { timed_out: false, .. }
+            | tools::Outcome::Removed
             | tools::Outcome::Written { .. }
             | tools::Outcome::Edited { .. }
             | tools::Outcome::Exited { exit: tools::Exit::Code { code: 0 }, .. } => b"Tool finished\n",
@@ -261,6 +262,7 @@ pub(crate) fn tool_end(result: &session::llm::Returned) -> &'static [u8] {
             | tools::Outcome::ReadOnly { .. }
             | tools::Outcome::TooLong
             | tools::Outcome::NotFound { .. }
+            | tools::Outcome::NotEmpty
             | tools::Outcome::NotFile
             | tools::Outcome::Linked
             | tools::Outcome::Protected

@@ -109,6 +109,7 @@ fn cancelling_an_unjudged_finish_never_accepts_it() {
             eligible: true,
             message: 1,
             builtin: false,
+            native_write: false,
             owner: None,
         })
         .ok()
@@ -297,6 +298,7 @@ fn an_accepted_finish_receives_its_acceptance_reply() {
             eligible: true,
             message: 1,
             builtin: false,
+            native_write: false,
             owner: None,
         })
         .ok()
@@ -367,6 +369,7 @@ fn failure_never_accepts_an_unjudged_finish() {
             eligible: true,
             message: 1,
             builtin: false,
+            native_write: false,
             owner: None,
         })
         .ok()

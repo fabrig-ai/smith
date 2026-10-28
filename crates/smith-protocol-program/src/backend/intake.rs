@@ -19,7 +19,7 @@ impl Backend {
         }
         let before = self.intake_at;
         for _ in 0..self.intake.len() {
-            if !self.measures.is_empty() {
+            if self.native.is_some() || !self.measures.is_empty() {
                 break;
             }
             if self.phase == Phase::Running && self.owner.is_none() && self.stop == stop::Stop::None {
@@ -58,10 +58,12 @@ impl Backend {
         if self.intake_at == self.intake.len() {
             self.intake = List::with_capacity(4096);
             self.intake_at = 0;
-        } else if self.owner.is_some() || self.stop != stop::Stop::None || self.phase == Phase::Ending {
+        } else if self.native.is_none()
+            && (self.owner.is_some() || self.stop != stop::Stop::None || self.phase == Phase::Ending)
+        {
             self.intake_due = Some(env.now);
         }
-        if self.owner.is_some() && !self.turns.ready.is_empty() {
+        if self.native.is_none() && self.owner.is_some() && !self.turns.ready.is_empty() {
             self.intake_due = Some(env.now);
         }
         self.read_stdout();

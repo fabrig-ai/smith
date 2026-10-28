@@ -36,6 +36,7 @@ impl Jobs {
                 Outcome::Read { .. }
                 | Outcome::Listed { .. }
                 | Outcome::Found { .. }
+                | Outcome::Removed
                 | Outcome::Written { .. }
                 | Outcome::Edited { .. }
                 | Outcome::Exited { .. }
@@ -45,6 +46,7 @@ impl Jobs {
                 | Outcome::ReadOnly { .. }
                 | Outcome::NotFound { .. }
                 | Outcome::NotDirectory { .. }
+                | Outcome::NotEmpty
                 | Outcome::NotFile
                 | Outcome::Linked
                 | Outcome::Protected

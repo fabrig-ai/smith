@@ -142,7 +142,7 @@ pub fn result_worst_case(call: &Call, limits: &Limits) -> Option<u64> {
             let cells = u64::try_from(size_of::<Hit>()).ok()?;
             cells.checked_mul(u64::from(limits.search_hits))?.checked_add(u64::from(limits.search_bytes))
         }
-        Call::Write { .. } => Some(0),
+        Call::Write { .. } | Call::Remove { .. } => Some(0),
         Call::Edit { .. } => {
             let ambiguity_slot_bytes = u64::try_from(size_of::<u32>()).ok()?;
             ambiguity_slot_bytes.checked_mul(u64::from(limits.match_lines))

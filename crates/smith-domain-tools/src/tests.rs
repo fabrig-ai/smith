@@ -1155,7 +1155,7 @@ fn an_edit_that_matches_nothing_or_too_much_stores_nothing() {
     let loaded = Done::Loaded { content: bytes(b"a\nb\na\n"), version: version(3) };
     match h.next(owner, loaded) {
         Op::Store { content, .. } => assert_eq!(&*content, b"y\nb\ny\n"),
-        op @ (Op::Load { .. } | Op::List { .. } | Op::Spawn { .. } | Op::Search { .. }) => {
+        op @ (Op::Remove { .. } | Op::Load { .. } | Op::List { .. } | Op::Spawn { .. } | Op::Search { .. }) => {
             panic!("expected the store, not {op:?}")
         }
     }
@@ -1574,7 +1574,7 @@ fn a_command_grant_does_not_depend_on_a_file_modify_grant() {
             assert_eq!(command, bytes(b"cargo test"));
             assert_eq!((head, tail), (LIMITS.shell_head, LIMITS.shell_tail));
         }
-        op @ (Op::Load { .. } | Op::List { .. } | Op::Store { .. } | Op::Search { .. }) => {
+        op @ (Op::Load { .. } | Op::List { .. } | Op::Remove { .. } | Op::Store { .. } | Op::Search { .. }) => {
             panic!("expected a spawn, not {op:?}")
         }
     }
@@ -1804,7 +1804,9 @@ fn host_aliases_choose_whole_names_and_keep_the_namespace_root_pure() {
         let (owner, op) = h.start(kit, 20, read(spelling));
         match op {
             Op::Load { at, .. } => assert_eq!(at, Place { root, path: bytes(tail) }),
-            Op::List { .. } | Op::Search { .. } | Op::Store { .. } | Op::Spawn { .. } => panic!("read loads"),
+            Op::List { .. } | Op::Search { .. } | Op::Remove { .. } | Op::Store { .. } | Op::Spawn { .. } => {
+                panic!("read loads")
+            }
         }
         let (_, outcome) = h.end(owner, Done::Missing);
         let path = if root == Token::new(1) {
@@ -2219,4 +2221,20 @@ fn a_no_op_item_counts_each_match_without_changing_bytes() {
     for (content, all, matches) in [(b"a".as_slice(), false, 1), (b"a a", true, 2)] {
         assert_eq!(edit::apply(content, &snippet(b"a", b"a", all), 1, &LIMITS), Ok(edited(content, matches)));
     }
+}
+
+#[test]
+fn native_versions_guard_removal_and_are_forgotten_after_it() {
+    let mut h = Harness::new(LIMITS);
+    let kit = h.open(1, authority(ALL));
+    let at = place(1, b"src/lib.rs");
+    assert!(h.step(Event::NativeVersion { kit, at: at.clone(), version: Some(version(1)) }).is_none());
+    let (owner, op) = h.start(kit, 2, Call::Remove { path: path(b"src/lib.rs") });
+    assert_eq!(op, Op::Remove { at: at.clone(), expect: Expect::Is { version: version(1) } });
+    assert_eq!(h.end(owner, Done::Conflict { now: Some(version(2)) }).1, Outcome::Stale);
+    assert!(h.step(Event::NativeVersion { kit, at: at.clone(), version: Some(version(2)) }).is_none());
+    let (owner, op) = h.start(kit, 3, Call::Remove { path: path(b"src/lib.rs") });
+    assert_eq!(op, Op::Remove { at: at.clone(), expect: Expect::Is { version: version(2) } });
+    assert_eq!(h.end(owner, Done::Removed).1, Outcome::Removed);
+    assert_eq!(h.knowledge(kit).version(&at), None);
 }

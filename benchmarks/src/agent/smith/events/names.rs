@@ -71,6 +71,8 @@ pub(super) fn verdict(value: &Verdict) -> &[u8] {
         Verdict::Read => b"read",
         Verdict::Listed => b"listed",
         Verdict::Found => b"found",
+        Verdict::Removed => b"removed",
+        Verdict::NotEmpty => b"not_empty",
         Verdict::Written => b"written",
         Verdict::Edited => b"edited",
         Verdict::Exited => b"exited",

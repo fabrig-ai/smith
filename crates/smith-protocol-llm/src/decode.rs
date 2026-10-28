@@ -35,6 +35,7 @@ pub fn decode(
         b"search" if grants.inspect => Kind::Search,
         b"write" if grants.modify => Kind::Write,
         b"edit" if grants.modify => Kind::Edit,
+        b"remove" if grants.modify => Kind::Remove,
         b"shell" if grants.shell => Kind::Shell,
         b"job" if grants.shell => Kind::Job,
         b"wait" if offered(served, Kind::Wait) => Kind::Wait,
@@ -68,6 +69,7 @@ pub fn decode(
         | Kind::List
         | Kind::Search
         | Kind::Write
+        | Kind::Remove
         | Kind::Edit
         | Kind::Shell
         | Kind::Job
@@ -86,6 +88,7 @@ enum Kind {
     Search,
     Write,
     Edit,
+    Remove,
     Shell,
     Job,
     Wait,
@@ -157,6 +160,9 @@ fn call(kind: Kind, tokens: &Document) -> Result<llm::Decoded, llm::Problem> {
                 content: required_string(tokens, b"content")?,
             },
         },
+        Kind::Remove => {
+            llm::Decoded::Owned { call: tools::Call::Remove { path: path(&required_string(tokens, b"path")?)? } }
+        }
         Kind::Edit => llm::Decoded::Owned {
             call: tools::Call::Edit { path: path(&required_string(tokens, b"path")?)?, edits: replacements(tokens)? },
         },

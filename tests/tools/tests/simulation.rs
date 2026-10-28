@@ -5,7 +5,7 @@
 use skein_fake_checkout::Checkout;
 use skein_lib::{Duration, Time};
 use smith_domain_tools::{self as tools, Entry, Fault, Grants, Hit, Kind, Limits, Name, Outcome, Refusal};
-use smith_tools_world::calls::{edit, list, read, read_window, search, shell, write};
+use smith_tools_world::calls::{edit, list, read, read_window, remove, search, shell, write};
 use smith_tools_world::fixture::{FORMATTED, Fixture, LIB, long, test_log};
 use smith_tools_world::{Settings, Span, Step, World, kind, noisy_world};
 
@@ -1492,4 +1492,54 @@ fn a_kept_output_asked_for_is_split_between_head_and_tail_and_its_clamp_is_said(
         );
     }
     assert_eq!(world.stats().ops, 3);
+}
+
+#[test]
+fn removal_requires_a_current_read_and_removes_only_one_thing() {
+    let script = vec![
+        Step::Calls(vec![remove(b"src/lib.rs")]),
+        Step::Calls(vec![read(b"src/lib.rs")]),
+        Step::Change(Box::new(|checkout| {
+            checkout.write(b"work/temper/src/lib.rs", b"changed");
+        })),
+        Step::Calls(vec![remove(b"src/lib.rs")]),
+        Step::Calls(vec![read(b"src/lib.rs")]),
+        Step::Calls(vec![remove(b"src/lib.rs")]),
+        Step::Calls(vec![remove(b"src")]),
+        Step::Change(Box::new(|checkout| {
+            checkout.mkdir(b"work/temper/empty");
+        })),
+        Step::Calls(vec![remove(b"empty")]),
+    ];
+    let (answers, world) = run(Settings::calm(171), MODIFY, script);
+    assert_eq!(
+        answers,
+        vec![
+            Outcome::NotRead,
+            read_of(LIB, 0, 3, 3),
+            Outcome::Stale,
+            read_of(b"changed", 0, 1, 1),
+            Outcome::Removed,
+            Outcome::NotEmpty,
+            Outcome::Removed,
+        ]
+    );
+    assert!(!world.checkout().exists(b"work/temper/src/lib.rs"));
+    assert!(!world.checkout().exists(b"work/temper/empty"));
+    assert!(world.checkout().exists(b"work/temper/src/main.rs"));
+}
+
+#[test]
+fn removal_obeys_modify_grants_and_write_confinement() {
+    let (answers, world) = run(Settings::calm(172), INSPECT, vec![Step::Calls(vec![remove(b"src/lib.rs")])]);
+    assert_eq!(answers, [Outcome::NotGranted]);
+    assert!(world.checkout().exists(b"work/temper/src/lib.rs"));
+    let (answers, world) = run(
+        Settings::calm(173),
+        MODIFY,
+        vec![Step::Calls(vec![remove(b"../../outside"), remove(b"link"), remove(b".git/HEAD")])],
+    );
+    assert!(matches!(answers[0], Outcome::Outside { .. }));
+    assert_eq!(answers[1..], [Outcome::Linked, Outcome::Protected]);
+    assert!(world.checkout().exists(b"work/temper/src/lib.rs"));
 }

@@ -231,6 +231,8 @@ fn returned_verdict(result: &Returned) -> &'static str {
             Outcome::Read { .. } => "read",
             Outcome::Listed { .. } => "listed",
             Outcome::Found { .. } => "found",
+            Outcome::Removed => "removed",
+            Outcome::NotEmpty => "directory is not empty",
             Outcome::Written { .. } => "written",
             Outcome::Edited { .. } => "edited",
             Outcome::Exited { exit: Exit::TimedOut, .. } | Outcome::TimedOut => "timed out",

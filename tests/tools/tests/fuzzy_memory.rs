@@ -96,6 +96,7 @@ fn drain(out: &mut Queue<Request>, kits: &mut Vec<Token>, ops: &mut Vec<(Token, 
             Request::Opened { kit, .. } => kits.push(kit),
             Request::Io { owner, op, .. } => {
                 let (asked, kind) = match op {
+                    Op::Remove { .. } => panic!("this memory schedule issues no removals"),
                     Op::Load { .. } => (Asked::Load, 0),
                     Op::List { .. } => (Asked::Scan, 1),
                     Op::Store { expect: Expect::Absent, .. } => (Asked::Store { creating: true }, 2),

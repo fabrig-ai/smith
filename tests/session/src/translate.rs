@@ -283,6 +283,7 @@ fn render_with_namespace(result: &agent::Returned, namespace: &Namespace) -> (Bo
                 Outcome::Read { .. }
                     | Outcome::Listed { .. }
                     | Outcome::Found { .. }
+                    | Outcome::Removed
                     | Outcome::Written { .. }
                     | Outcome::Edited { .. }
                     | Outcome::Exited { exit: Exit::Code { code: 0 }, .. }

@@ -101,6 +101,8 @@ pub struct Grant {
 /// one host answer; each lower terminal echoes the owner of its pending request.
 #[derive(PartialEq, Eq, Debug)]
 pub enum Event {
+    /// The program bridge supplies the file version at a native allowance or write result.
+    NativeVersion { owner: Token, at: tools::Place, version: Option<tools::Version> },
     /// Actual terminal for one host relay attempt; old callbacks are inert.
     HostReturned {
         /// Live attempt identity, distinct from durable operation scope.

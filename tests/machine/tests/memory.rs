@@ -221,6 +221,7 @@ fn saturated_configured_environments_and_command_check_copies_fit_the_machine_bo
                 }
                 other @ (Below::File { .. }
                 | Below::CancelFile { .. }
+                | Below::Remove { .. }
                 | Below::OpenRead { .. }
                 | Below::OpenDirectory { .. }
                 | Below::Process(_)) => {

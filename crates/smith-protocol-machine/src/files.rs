@@ -51,7 +51,9 @@ pub(crate) fn request(
             };
             Ok((Pending::One { kind: Kind::Store }, store(owner, at.root, io_path(at.path), content, expected)))
         }
-        tools::Op::Spawn { .. } | tools::Op::Search { .. } | tools::Op::List { .. } => Err(other()),
+        tools::Op::Remove { .. } | tools::Op::Spawn { .. } | tools::Op::Search { .. } | tools::Op::List { .. } => {
+            Err(other())
+        }
     }
 }
 

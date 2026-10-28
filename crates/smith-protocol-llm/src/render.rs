@@ -205,6 +205,14 @@ fn render(outcome: &Outcome, namespace: &tools::Namespace, output: &mut Sink) ->
             }
             false
         }
+        Outcome::Removed => {
+            output.put(b"removed")?;
+            false
+        }
+        Outcome::NotEmpty => {
+            output.put(b"directory is not empty")?;
+            true
+        }
         Outcome::Edited { replaced } => {
             output.put(b"replaced ")?;
             output.number(u64::from(*replaced))?;
@@ -293,7 +301,7 @@ fn render(outcome: &Outcome, namespace: &tools::Namespace, output: &mut Sink) ->
             true
         }
         Outcome::NotRead => {
-            output.put(b"read the file before changing it")?;
+            output.put(b"read the whole file without offset or limit before changing it")?;
             true
         }
         Outcome::Stale => {

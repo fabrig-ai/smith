@@ -232,6 +232,8 @@ pub(crate) fn done(
         Done::Job { head, tail, dropped, end } => (head, tail, dropped, end),
         Done::Loaded { .. }
         | Done::Listed { .. }
+        | Done::Removed
+        | Done::NotEmpty
         | Done::Stored { .. }
         | Done::Conflict { .. }
         | Done::Exited { .. }
@@ -385,6 +387,8 @@ fn answer(session: Token, read: Read, done: Done, facts: &mut facts::Facts, out:
         Done::Job { head, tail, dropped, end } => (head, tail, dropped, end),
         Done::Loaded { .. }
         | Done::Listed { .. }
+        | Done::Removed
+        | Done::NotEmpty
         | Done::Stored { .. }
         | Done::Conflict { .. }
         | Done::Exited { .. }

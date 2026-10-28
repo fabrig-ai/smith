@@ -99,6 +99,10 @@ pub fn backend_worst_case(settings: &Settings) -> Option<u64> {
         // its byte-derived depth and scratch are already in mcp_worst_case.
         // Verdict validation runs only after judge has dropped its document.
         .checked_add(workspace)?
+        // One native permission/result snapshot: retained input, path copies and loaded bytes.
+        .checked_add(u64::from(settings.mcp.message_bytes))?
+        .checked_add(u64::from(settings.path_bytes).checked_mul(3)?)?
+        .checked_add(u64::from(settings.adapter.stated.file_bytes))?
         // Relative resolution retains cwd, its joining slash and the original path.
         .checked_add(u64::from(settings.path_bytes.checked_mul(2)?.checked_add(1)?))?
         // The old stdout accumulator and its replacement coexist at a line

@@ -67,6 +67,7 @@ fn part(block: agent::Block) -> provider::Part {
                     tools::Outcome::Read { .. }
                         | tools::Outcome::Listed { .. }
                         | tools::Outcome::Found { .. }
+                        | tools::Outcome::Removed
                         | tools::Outcome::Written { .. }
                         | tools::Outcome::Edited { .. }
                         | tools::Outcome::Exited { exit: tools::Exit::Code { code: 0 }, .. }

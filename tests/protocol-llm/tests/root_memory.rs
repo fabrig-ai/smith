@@ -1124,12 +1124,12 @@ impl Counted {
     }
 
     fn schema_constructor(&self, prompt: &llm::Prompt) -> u64 {
-        const OWN_DECLARATION_SLOTS: usize = 11;
+        const OWN_DECLARATION_SLOTS: usize = 12;
         let before = self.meter.held();
         self.meter.start();
         let schemas = wire::schemas(prompt, &self.native_limits.stated);
         let owned = schemas_bytes(&schemas);
-        // The production inventory uses an eleven-cell bounded List before the
+        // The production inventory uses a twelve-cell bounded List before the
         // final boxed slice. Price both arrays if reboxing overlaps them.
         let constructor = sum([owned, cells::<ToolSchema>(OWN_DECLARATION_SLOTS)]);
         let built = self.meter.end();

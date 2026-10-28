@@ -358,6 +358,7 @@ fn required(input: &llm::Prompt, application: &[ToolSchema]) -> Result<(), Error
         tools::Tool::Search,
         tools::Tool::Write,
         tools::Tool::Edit,
+        tools::Tool::Remove,
         tools::Tool::Shell,
         tools::Tool::Job,
     ] {
@@ -398,6 +399,7 @@ fn fixed_name(descriptor: &ToolSchema) -> bool {
             tools::Tool::Search => descriptor.name.as_ref() == b"search",
             tools::Tool::Write => descriptor.name.as_ref() == b"write",
             tools::Tool::Edit => descriptor.name.as_ref() == b"edit",
+            tools::Tool::Remove => descriptor.name.as_ref() == b"remove",
             tools::Tool::Shell => descriptor.name.as_ref() == b"shell",
             tools::Tool::Job => descriptor.name.as_ref() == b"job",
         },
@@ -412,7 +414,7 @@ fn offered(kind: ToolKind, input: &llm::Prompt) -> bool {
     match kind {
         ToolKind::Owned(tool) => match tool {
             tools::Tool::Read | tools::Tool::List | tools::Tool::Search => input.tools.inspect,
-            tools::Tool::Write | tools::Tool::Edit => input.tools.modify,
+            tools::Tool::Write | tools::Tool::Edit | tools::Tool::Remove => input.tools.modify,
             tools::Tool::Shell | tools::Tool::Job => input.tools.shell,
         },
         ToolKind::Finish | ToolKind::Deliver | ToolKind::SubAgent | ToolKind::Wait => {

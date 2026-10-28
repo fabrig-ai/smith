@@ -15,7 +15,7 @@ use crate::{Error, ToolKind, ToolSchema};
 /// Host tools are supplied separately by the charter and retain their bytes.
 #[must_use]
 pub fn schemas(prompt: &llm::Prompt, stated: &crate::Stated) -> Box<[ToolSchema]> {
-    let mut descriptors = List::with_capacity(11);
+    let mut descriptors = List::with_capacity(12);
     if prompt.tools.inspect {
         add(&mut descriptors, owned(tools::Tool::Read, b"read", stated, &prompt.namespace));
         add(&mut descriptors, owned(tools::Tool::List, b"list", stated, &prompt.namespace));
@@ -24,6 +24,7 @@ pub fn schemas(prompt: &llm::Prompt, stated: &crate::Stated) -> Box<[ToolSchema]
     if prompt.tools.modify {
         add(&mut descriptors, owned(tools::Tool::Write, b"write", stated, &prompt.namespace));
         add(&mut descriptors, owned(tools::Tool::Edit, b"edit", stated, &prompt.namespace));
+        add(&mut descriptors, owned(tools::Tool::Remove, b"remove", stated, &prompt.namespace));
     }
     if prompt.tools.shell {
         add(&mut descriptors, owned(tools::Tool::Shell, b"shell", stated, &prompt.namespace));
@@ -51,7 +52,7 @@ pub fn schemas_for_contract(
     deliver: Option<&run::outcome::ChangeSpec>,
     maximum: u32,
 ) -> Result<Box<[ToolSchema]>, Error> {
-    let mut inventory = List::with_capacity(11);
+    let mut inventory = List::with_capacity(12);
     for mut descriptor in schemas(prompt, stated) {
         match descriptor.kind {
             ToolKind::Finish => descriptor.schema = crate::contract::finish_schema(outcome, maximum)?,
@@ -84,6 +85,7 @@ fn fixed_namespace_bytes(stated: &crate::Stated, namespace: &tools::Namespace) -
         owned(tools::Tool::Search, b"search", stated, namespace),
         owned(tools::Tool::Write, b"write", stated, namespace),
         owned(tools::Tool::Edit, b"edit", stated, namespace),
+        owned(tools::Tool::Remove, b"remove", stated, namespace),
         owned(tools::Tool::Shell, b"shell", stated, namespace),
         owned(tools::Tool::Job, b"job", stated, namespace),
         waiting(),

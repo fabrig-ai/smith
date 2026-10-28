@@ -163,7 +163,10 @@ pub(super) fn component_down(service: &mut Service) {
     for _ in 0..service.limits.queue {
         let waits_for_file = match service.machine_below.iter().next() {
             Some(
-                machine::Below::File { .. } | machine::Below::OpenRead { .. } | machine::Below::OpenDirectory { .. },
+                machine::Below::Remove { .. }
+                | machine::Below::File { .. }
+                | machine::Below::OpenRead { .. }
+                | machine::Below::OpenDirectory { .. },
             ) => !service.files.takes(),
             Some(machine::Below::CancelFile { .. } | machine::Below::Spawn { .. } | machine::Below::Process(_))
             | None => false,
@@ -199,12 +202,22 @@ pub(super) fn component_down(service: &mut Service) {
                     &mut service.file_submissions,
                 );
             }
-            machine::Below::OpenDirectory { owner, root, path, deadline } => {
+            machine::Below::Remove { owner, parent, name, directory, deadline } => {
+                let descriptor = service.files.descriptor(parent).expect("removal owns its parent");
+                file_layer::down_until(
+                    &mut service.files,
+                    deadline,
+                    file::Request::Remove { owner, root: descriptor, name, directory },
+                    &mut service.file_events,
+                    &mut service.file_submissions,
+                );
+            }
+            machine::Below::OpenDirectory { owner, root, path, no_follow, deadline } => {
                 let descriptor = service.files.descriptor(root).expect("machine admitted an installed root");
                 file_layer::down_until(
                     &mut service.files,
                     deadline,
-                    file::Request::OpenDirectory { owner, root: descriptor, name: path, no_follow: false },
+                    file::Request::OpenDirectory { owner, root: descriptor, name: path, no_follow },
                     &mut service.file_events,
                     &mut service.file_submissions,
                 );

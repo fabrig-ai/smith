@@ -207,7 +207,7 @@ impl Process {
         self.directory_owner = Some(owner);
         let path = spawn.dir.clone();
         self.directory = Directory::Opening { root, spawn };
-        Below::OpenDirectory { owner, root, path, deadline: self.deadline }
+        Below::OpenDirectory { owner, root, path, no_follow: false, deadline: self.deadline }
     }
 
     #[expect(clippy::wildcard_enum_match_arm, reason = "file events and kernel errors are foreign vocabularies")]

@@ -57,7 +57,7 @@ enum Outcome {
     too_long, not_found: ResolvedFailure, not_file, linked, protected, not_directory: ResolvedFailure,
     too_large: TooLarge, not_read, stale, edit_failed: EditFailed,
     failed: Failed, timed_out,
-    cancelled, busy, nul_byte, running: CommandRunning, job: JobRead
+    cancelled, busy, nul_byte, running: CommandRunning, job: JobRead, removed, not_empty
 }
 
 # The problem variants mirror smith-domain-session::llm::Problem.

@@ -46,6 +46,10 @@ pub(crate) fn schema(tool: Tool, stated: &Stated, namespace: &Namespace) -> Box<
 }
 
 fn words(tool: Tool, stated: &Stated, namespace: &Namespace, output: &mut Text) {
+    if tool == Tool::Remove {
+        output.put(b"Remove a file you have read at its current version, or an empty directory; never a directory with files in it.");
+        return;
+    }
     match tool {
         Tool::Read => {
             output.put(b"Read whole lines in byte windows; default ");
@@ -71,6 +75,7 @@ fn words(tool: Tool, stated: &Stated, namespace: &Namespace, output: &mut Text) 
             output.number(u64::from(stated.search_bytes));
             output.put(b" bytes; cuts are marked. ");
         }
+        Tool::Remove => unreachable!("remove has its own description"),
         Tool::Write => output.put(b"Write a file; read its current version first. "),
         Tool::Edit => output.put(
             b"Apply ordered edits atomically; no earlier read. Each old must match once, or at least once with all. ",
@@ -92,17 +97,17 @@ fn words(tool: Tool, stated: &Stated, namespace: &Namespace, output: &mut Text) 
             output.number(u64::from(stated.file_bytes));
             output.put(b" bytes. ");
         }
-        Tool::List | Tool::Search | Tool::Shell | Tool::Job => {}
+        Tool::Remove | Tool::List | Tool::Search | Tool::Shell | Tool::Job => {}
     }
     match tool {
         Tool::Write | Tool::Edit => output.put(b"For a larger file, write its first part within the byte bound, then extend it with edits; put as many edits in one call as fit the bound. "),
-        Tool::Read | Tool::List | Tool::Search | Tool::Shell | Tool::Job => {}
+        Tool::Read | Tool::Remove | Tool::List | Tool::Search | Tool::Shell | Tool::Job => {}
     }
     match tool {
         Tool::Read | Tool::List | Tool::Search => {
             output.put(b"Batch independent reads, lists and searches side by side.");
         }
-        Tool::Job => {}
+        Tool::Remove | Tool::Job => {}
         Tool::Write | Tool::Edit | Tool::Shell => {
             output.put(b"Batch a change's edits across its files, then the command that checks them; they run one at a time in call order, and a write that fails, or any call answered invalid, leaves the writes and commands after it not run.");
         }
@@ -156,6 +161,9 @@ fn properties(tool: Tool, stated: &Stated, namespace: &Namespace, output: &mut T
             output.put(br#""},"glob":{"type":"string","description":"Optional file glob."#);
             input(stated, output);
             output.put(br#""}},"required":["pattern"]}"#);
+        }
+        Tool::Remove => {
+            output.put(br#""path":{"type":"string","description":"The path, inside the workspace, as write takes it."}},"required":["path"]}"#);
         }
         Tool::Write => {
             path(stated, namespace, output);

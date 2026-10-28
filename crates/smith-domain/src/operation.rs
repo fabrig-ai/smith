@@ -9,7 +9,11 @@ use skein_lib::{Queue, Time, Token};
 pub(crate) fn command(domain: &mut Domain, owner: Token, op: &tools::Op, deadline: Time, out: &mut Queue<Request>) {
     let spawn = match op {
         tools::Op::Spawn { .. } => true,
-        tools::Op::Load { .. } | tools::Op::List { .. } | tools::Op::Store { .. } | tools::Op::Search { .. } => false,
+        tools::Op::Remove { .. }
+        | tools::Op::Load { .. }
+        | tools::Op::List { .. }
+        | tools::Op::Store { .. }
+        | tools::Op::Search { .. } => false,
     };
     if spawn {
         let conversation = domain.session.io_opener(owner).expect("issued command retains its session");

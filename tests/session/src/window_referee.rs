@@ -198,6 +198,8 @@ fn outcome_bytes(outcome: &smith_domain_tools::Outcome) -> usize {
         }
         Outcome::EditFailed { why: Mismatch::Ambiguous { lines, .. }, .. } => lines.len() * std::mem::size_of::<u32>(),
         Outcome::EditFailed { why: Mismatch::NoMatch | Mismatch::Unchanged, .. }
+        | Outcome::Removed
+        | Outcome::NotEmpty
         | Outcome::Written { .. }
         | Outcome::Edited { .. }
         | Outcome::NotGranted

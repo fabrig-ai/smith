@@ -30,7 +30,7 @@ mod tests {
 
     #[test]
     fn each_tool_the_task_role_names_is_one_of_smiths_own() {
-        let own_tools = ["read", "list", "search", "write", "edit", "shell", "job", "finish"];
+        let own_tools = ["read", "list", "search", "write", "edit", "remove", "shell", "job", "finish"];
         for tool in TASK_ROLE.split('`').skip(1).step_by(2) {
             assert!(own_tools.contains(&tool), "{tool}");
         }

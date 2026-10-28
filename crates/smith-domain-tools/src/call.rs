@@ -40,6 +40,8 @@ pub enum Call {
     /// Apply replacements in order, store once over the loaded version, or apply none.
     /// No earlier read is required; ends in `Edited`, `EditFailed` or a file terminal.
     Edit { path: Path, edits: Box<[Replacement]> },
+    /// Remove a current file or empty directory for the LLM; ends in Removed or a file refusal.
+    Remove { path: Path },
     /// Run the session's command with selected time and output budgets; ends in Exited or a process terminal.
     Shell {
         /// Owned shell command interpreted only by the process-group layer.
@@ -176,6 +178,8 @@ pub enum Tool {
     Write,
     /// Version-aware file-edit tool.
     Edit,
+    /// Version-aware file or empty-directory removal tool.
+    Remove,
     /// Contained shell-command tool.
     Shell,
     /// Read or stop a command the session left running.
@@ -191,6 +195,7 @@ pub const fn tool(call: &Call) -> Tool {
         Call::Search { .. } => Tool::Search,
         Call::Write { .. } => Tool::Write,
         Call::Edit { .. } => Tool::Edit,
+        Call::Remove { .. } => Tool::Remove,
         Call::Shell { .. } => Tool::Shell,
         Call::Job { .. } => Tool::Job,
     }
@@ -233,7 +238,11 @@ pub enum SizePart {
 pub const fn effect(call: &Call) -> Effect {
     match call {
         Call::Read { .. } | Call::List { .. } | Call::Search { .. } | Call::Job { stop: false, .. } => Effect::Read,
-        Call::Write { .. } | Call::Edit { .. } | Call::Shell { .. } | Call::Job { stop: true, .. } => Effect::Write,
+        Call::Write { .. }
+        | Call::Edit { .. }
+        | Call::Remove { .. }
+        | Call::Shell { .. }
+        | Call::Job { stop: true, .. } => Effect::Write,
     }
 }
 
@@ -280,6 +289,10 @@ pub enum Outcome {
         /// Number of edit occurrences successfully replaced.
         replaced: u32,
     },
+    /// The requested file or empty directory was removed for the session.
+    Removed,
+    /// The removal target contains entries; nothing was removed.
+    NotEmpty,
     /// The machine's command terminal, its retained output, omitted bytes and applied clamps, returned to the session.
     Exited {
         /// Terminal process classification; only a zero exit code passes checks.
@@ -456,7 +469,7 @@ impl Call {
     #[must_use]
     pub fn owned_bytes(&self) -> Option<u64> {
         let payload = match self {
-            Call::Read { path, offset: _, window: _ } => owned_path(path),
+            Call::Read { path, offset: _, window: _ } | Call::Remove { path } => owned_path(path),
             Call::List { path, depth: _, glob } => {
                 let filter = match glob {
                     Some(filter) => owned_len(filter)?,

@@ -48,6 +48,8 @@ pub enum FromDomain {
 /// One typed answer or text fact returned to the root domain.
 #[derive(Debug)]
 pub enum ToDomain {
+    /// A program permission/result snapshot updates its session's known file version (tools.md 10).
+    NativeVersion { owner: Token, at: smith_domain::tools::Place, version: Option<smith_domain::tools::Version> },
     /// The program reports a built-in call's result after its completion (protocol/programs.md, 5.5).
     BuiltinResult { owner: Token, id: Box<[u8]>, text: Box<[u8]>, error: bool },
     /// The completion and its decoded calls.

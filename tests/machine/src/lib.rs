@@ -629,6 +629,7 @@ impl Application {
                 }
                 other @ (Below::File { .. }
                 | Below::CancelFile { .. }
+                | Below::Remove { .. }
                 | Below::OpenRead { .. }
                 | Below::OpenDirectory { .. }
                 | Below::Spawn { .. }
@@ -710,12 +711,22 @@ impl Application {
                         &mut self.file_subs,
                     );
                 }
-                Below::OpenDirectory { owner, root, path, deadline } => {
+                Below::Remove { owner, parent, name, directory, deadline } => {
+                    let descriptor = self.file_io.descriptor(parent).expect("removal parent");
+                    file_layer::down_until(
+                        &mut self.file_io,
+                        deadline,
+                        file::Request::Remove { owner, root: descriptor, name, directory },
+                        &mut self.file_events,
+                        &mut self.file_subs,
+                    );
+                }
+                Below::OpenDirectory { owner, root, path, no_follow, deadline } => {
                     let descriptor = self.file_io.descriptor(root).expect("adopted root");
                     file_layer::down_until(
                         &mut self.file_io,
                         deadline,
-                        file::Request::OpenDirectory { owner, root: descriptor, name: path, no_follow: false },
+                        file::Request::OpenDirectory { owner, root: descriptor, name: path, no_follow },
                         &mut self.file_events,
                         &mut self.file_subs,
                     );

@@ -2817,10 +2817,12 @@ fn outcome_cost(outcome: &Outcome) -> Option<u64> {
             }
             tools::Mismatch::NoMatch | tools::Mismatch::Unchanged => Some(0),
         },
-        Outcome::Written { .. }
+        Outcome::Removed
+        | Outcome::Written { .. }
         | Outcome::Edited { .. }
         | Outcome::NotGranted
         | Outcome::TooLong
+        | Outcome::NotEmpty
         | Outcome::NotFile
         | Outcome::Linked
         | Outcome::Protected
@@ -3779,4 +3781,26 @@ fn end_fact(end: &End) -> End {
         | End::PriceOverflow
         | End::UsageOverflow => end.clone(),
     }
+}
+
+/// Program observations update only a live session's own kit (domain/tools.md, section 10).
+pub(crate) fn native_version(
+    domain: &mut Domain,
+    env: &Env<Limits>,
+    session: Token,
+    at: tools::Place,
+    version: Option<tools::Version>,
+    out: &mut Queue<Request>,
+) {
+    let Some(current) = domain.sessions.get(Id::from_token(session)) else { return };
+    match current.state {
+        State::Closing { .. } | State::Closed => return,
+        State::Calling { .. }
+        | State::Backoff { .. }
+        | State::Tooling { .. }
+        | State::Resting { .. }
+        | State::Yielded => {}
+    }
+    let kit = current.conversation.kit;
+    tools_step(&mut domain.calls, env, tools::Event::NativeVersion { kit, at, version }, out);
 }

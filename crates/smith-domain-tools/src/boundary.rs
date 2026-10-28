@@ -37,6 +37,8 @@ use crate::path::Place;
 /// session -> tools
 #[derive(PartialEq, Eq, Debug)]
 pub enum Event {
+    /// The program bridge supplies a read/own-write version; absence forgets that path.
+    NativeVersion { kit: Token, at: Place, version: Option<Version> },
     /// Open a kit for the session `session`, with `authority`.
     Open {
         session: Token,
@@ -199,6 +201,9 @@ pub enum Op {
         /// Expected file version or absence checked before the atomic replacement.
         expect: Expect,
     },
+    /// Remove one current regular file or empty directory, following no links; ends in
+    /// `Removed`, `Conflict`, `NotEmpty`, `Missing`, `NotFile`, `Linked` or a common terminal.
+    Remove { at: Place, expect: Expect },
     /// Run `command` with `sh` in `cwd`, leading its own process group. The
     /// machine signals the whole group on a deadline or cancel, but the command
     /// is not contained: it has the agent user's permissions and filesystem.
@@ -292,7 +297,11 @@ pub enum Done {
         /// IO-issued file version or record encoding version, as named by the enclosing type.
         version: Version,
     },
-    /// Store: the file is not as expected. It is at `now`, or absent.
+    /// Remove: one file or empty directory was removed.
+    Removed,
+    /// Remove: the directory contains entries; nothing was removed.
+    NotEmpty,
+    /// Store or Remove: the file is not as expected. It is at `now`, or absent.
     Conflict {
         /// Current optional file version observed by IO after an optimistic-write conflict.
         now: Option<Version>,

@@ -244,7 +244,8 @@ impl World {
                     }
                 }
             }
-            session::Event::BuiltinResult { .. }
+            session::Event::NativeVersion { .. }
+            | session::Event::BuiltinResult { .. }
             | session::Event::CancelJobs { .. }
             | session::Event::Yield { .. }
             | session::Event::Open { .. }

@@ -209,6 +209,8 @@ fn verdict(value: &Verdict) -> &str {
         Verdict::Read => "read",
         Verdict::Listed => "listed",
         Verdict::Found => "found",
+        Verdict::Removed => "removed",
+        Verdict::NotEmpty => "directory is not empty",
         Verdict::Written => "written",
         Verdict::Edited => "edited",
         Verdict::Exited => "exited",

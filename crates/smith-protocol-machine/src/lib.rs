@@ -27,6 +27,7 @@ mod guide;
 mod limits;
 mod listing;
 mod process;
+mod removing;
 mod search;
 #[cfg(test)]
 mod tests;

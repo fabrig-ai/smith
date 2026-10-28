@@ -90,6 +90,7 @@ pub fn step(domain: &mut Domain, env: &Env<Limits>, event: Event, out: &mut Queu
     assert!(domain.facts_room() >= max_facts(&env.limits), "parent reserved fact step output");
     domain.facts.begin(env.now);
     match event {
+        Event::NativeVersion { kit, at, version } => kit::native_version(domain, env, kit, at, version),
         Event::Open { session, jobs, authority } => kit::open(domain, env, session, jobs, authority, out),
         Event::Call { kit, reply_to, observation, call, deadline } => {
             kit::call(domain, env, kit, reply_to, observation, call, deadline, out);

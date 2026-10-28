@@ -328,7 +328,8 @@ pub(super) fn counts(sessions: &[Session]) -> Counts {
 fn tool_failed(verdict: &smith_events::Verdict) -> bool {
     use smith_events::Verdict;
     match verdict {
-        Verdict::Read
+        Verdict::Removed
+        | Verdict::Read
         | Verdict::Listed
         | Verdict::Found
         | Verdict::Written
@@ -340,7 +341,8 @@ fn tool_failed(verdict: &smith_events::Verdict) -> bool {
         | Verdict::Running
         | Verdict::Stopped
         | Verdict::Unknown(_) => false,
-        Verdict::Failed
+        Verdict::NotEmpty
+        | Verdict::Failed
         | Verdict::TimedOut
         | Verdict::Cancelled
         | Verdict::Invalid

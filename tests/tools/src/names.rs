@@ -11,6 +11,8 @@ pub fn kind(outcome: &Outcome) -> &'static str {
         Outcome::Read { .. } => "read",
         Outcome::Listed { .. } => "listed",
         Outcome::Found { .. } => "found",
+        Outcome::Removed => "removed",
+        Outcome::NotEmpty => "not empty",
         Outcome::Written { .. } => "written",
         Outcome::Edited { .. } => "edited",
         Outcome::Exited { .. } => "exited",

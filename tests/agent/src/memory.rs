@@ -188,6 +188,7 @@ impl Driver {
                     let op = match op {
                         Op::Load { .. } => OpKind::Load,
                         Op::List { .. } => OpKind::Scan,
+                        Op::Remove { .. } => unreachable!("memory fixture issues no removals"),
                         Op::Store { .. } => OpKind::Store,
                         Op::Spawn { .. } => OpKind::Spawn,
                         Op::Search { hits, bytes: byte_cap, .. } => OpKind::Search { hits, byte_cap },

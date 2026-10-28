@@ -23,6 +23,7 @@ mod measures;
 mod memory;
 mod session;
 pub use memory::backend_worst_case;
+mod native;
 mod permission;
 mod policy;
 mod recovery;
@@ -64,6 +65,8 @@ mod turns_tests;
 /// One normalized start directory, supplied by the service before Complete (programs.md 5.4).
 #[derive(Clone, Debug)]
 pub struct Mount {
+    /// File-driver root installed for this workspace directory.
+    pub root: Token,
     pub host: Box<[u8]>,
     pub writable: bool,
 }
@@ -157,6 +160,7 @@ enum Phase {
     reason = "child, server, stdout and once-per-Complete observation facts are independent"
 )]
 pub struct Backend {
+    native: Option<native::Snapshot>,
     mounts: Box<[Mount]>,
     first: Token,
     settings: Settings,
@@ -234,6 +238,7 @@ impl Backend {
             first,
             settings,
             names: start::Names::new(entropy),
+            native: None,
             grant: None,
             phase: Phase::Idle,
             owner: None,
@@ -320,7 +325,8 @@ impl Backend {
     /// Whether the service should route this listener, child, pipe or file owner here.
     #[must_use]
     pub fn owns(&self, owner: Token) -> bool {
-        owner == self.token(3)
+        owner == self.token(6)
+            || owner == self.token(3)
             || owner == self.token(4)
             || owner == self.token(5)
             || self.pipes.contains(&Some(owner))
@@ -419,7 +425,13 @@ impl Backend {
         below: &mut Queue<Below>,
     ) {
         match event {
-            BelowEvent::File { event, descriptor } => self.file_event(env, event, descriptor, up, below),
+            BelowEvent::File { event, descriptor } => {
+                if event.owner() == self.token(6) {
+                    self.native_done(env, event, up, below);
+                } else {
+                    self.file_event(env, event, descriptor, up, below);
+                }
+            }
             BelowEvent::Io(event) => self.io_event(env, event, up, below),
         }
         self.progress(env, up, below);

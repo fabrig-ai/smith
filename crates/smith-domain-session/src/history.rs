@@ -277,7 +277,7 @@ fn tool_limits(call: &Call, share: u64, declared: &Limits) -> Limits {
                 .search_bytes
                 .min(u32::try_from(share.checked_sub(cells).expect("cells within share")).unwrap_or(u32::MAX));
         }
-        Call::Write { .. } | Call::Edit { .. } => {}
+        Call::Write { .. } | Call::Edit { .. } | Call::Remove { .. } => {}
     }
     limits
 }

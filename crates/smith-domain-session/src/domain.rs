@@ -233,6 +233,9 @@ pub fn step(domain: &mut Domain, env: &Env<Limits>, event: Event, out: &mut Queu
         Event::Yield { session } => session::yield_completion(domain, session, out),
         Event::Close { session } => session::close(domain, env, session, out),
         Event::CancelJobs { session } => session::cancel_jobs(domain, env, session, out),
+        Event::NativeVersion { session, at, version } => {
+            session::native_version(domain, env, session, at, version, out);
+        }
         Event::BuiltinResult { session, id, text, error } => {
             session::builtin_result(domain, env, session, id, text, error, out);
         }

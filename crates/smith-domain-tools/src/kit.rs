@@ -153,6 +153,7 @@ pub(crate) fn call(
         | Call::Search { .. }
         | Call::Write { .. }
         | Call::Edit { .. }
+        | Call::Remove { .. }
         | Call::Shell { .. }) => call,
     };
     let Domain { kits, flights, facts } = domain;
@@ -373,11 +374,13 @@ fn admit(kit: &Kit, call: Call, deadline: Time, env: &Env<Limits>) -> Result<Adm
             fits(&content, limits)?;
             // As the kit knows the file: at the version its LLM read, or
             // absent.
-            let expect = match kit.knowledge.version(&located.place) {
-                Some(version) => Expect::Is { version },
-                None => Expect::Absent,
-            };
+            let expect = expected(kit, &located.place);
             Work::Write { place: located.place, content, expect }
+        }
+        Call::Remove { path } => {
+            let located = writable(&kit.checkout, &path, limits)?;
+            let expect = expected(kit, &located.place);
+            Work::Remove { place: located.place, expect }
         }
         Call::Edit { path, edits } => {
             let located = writable(&kit.checkout, &path, limits)?;
@@ -414,6 +417,13 @@ fn admit(kit: &Kit, call: Call, deadline: Time, env: &Env<Limits>) -> Result<Adm
     };
     ready(kit, deadline, env)?;
     Ok(Admitted::Work(work))
+}
+
+fn expected(kit: &Kit, place: &path::Place) -> Expect {
+    match kit.knowledge.version(place) {
+        Some(version) => Expect::Is { version },
+        None => Expect::Absent,
+    }
 }
 
 /// The common entrance deadline and concurrent-call bounds.
@@ -507,4 +517,33 @@ fn replacements_fit(edits: &[Replacement], limits: &Limits) -> Result<(), Outcom
         return Err(Outcome::TooLarge { what, size, bound: limits.tool_payload });
     }
     Ok(())
+}
+
+/// A permission/result snapshot belongs only to its session's root authority.
+pub(crate) fn native_version(
+    domain: &mut Domain,
+    env: &Env<Limits>,
+    kit: Token,
+    at: path::Place,
+    version: Option<crate::Version>,
+) {
+    if at.path.len() > usize::try_from(env.limits.path_bytes).expect("path ceiling fits usize") {
+        return;
+    }
+    let kit = domain.kits.get_mut(Id::from_token(kit)).expect("a live session owns its kit");
+    match kit.state {
+        State::Closing | State::Closed => return,
+        State::Open => {}
+    }
+    let mut admitted = false;
+    for mount in &kit.checkout.mounts {
+        if mount.root == at.root {
+            admitted = true;
+        }
+    }
+    assert!(admitted, "program snapshot belongs to an installed root");
+    match version {
+        Some(version) => kit.knowledge.record(at, version),
+        None => kit.knowledge.forget(&at),
+    }
 }

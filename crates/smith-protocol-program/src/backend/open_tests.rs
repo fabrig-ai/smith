@@ -177,7 +177,8 @@ fn a_yield_interrupts_and_returns_the_held_completion() {
         .iter()
         .filter_map(|event| match event {
             ToDomain::Completed { owner, completion } => Some((*owner, completion)),
-            ToDomain::BuiltinResult { .. }
+            ToDomain::NativeVersion { .. }
+            | ToDomain::BuiltinResult { .. }
             | ToDomain::Failed { .. }
             | ToDomain::Cancelled { .. }
             | ToDomain::Text { .. } => None,

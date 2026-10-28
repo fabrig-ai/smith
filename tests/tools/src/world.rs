@@ -511,7 +511,8 @@ impl World {
             let whose = match &event {
                 tools::Event::Call { kit, .. } => Some(*self.kits.get(kit).expect("a kit that opened")),
                 tools::Event::Done { owner, .. } => Some(*self.owners.get(owner).expect("an operation io ran")),
-                tools::Event::Open { .. }
+                tools::Event::NativeVersion { .. }
+                | tools::Event::Open { .. }
                 | tools::Event::Close { .. }
                 | tools::Event::CancelJobs { .. }
                 | tools::Event::EndWait { .. } => None,
@@ -785,7 +786,9 @@ impl World {
                 }
                 (Work::File(Op::Store { at, content, expect }), latency)
             }
-            op @ (Op::Load { .. } | Op::List { .. } | Op::Search { .. }) => (Work::File(op), latency),
+            op @ (Op::Remove { .. } | Op::Load { .. } | Op::List { .. } | Op::Search { .. }) => {
+                (Work::File(op), latency)
+            }
         }
     }
 
@@ -813,7 +816,11 @@ impl World {
     /// World contract: domain/tools.md, sections 7 and 9; testing-strategy.md, section 2.2.
     fn perform(&mut self, owner: Token, op: Op) -> Done {
         let at = match &op {
-            Op::Load { at, .. } | Op::List { at, .. } | Op::Store { at, .. } | Op::Search { at, .. } => at.clone(),
+            Op::Remove { at, .. }
+            | Op::Load { at, .. }
+            | Op::List { at, .. }
+            | Op::Store { at, .. }
+            | Op::Search { at, .. } => at.clone(),
             Op::Spawn { .. } => unreachable!("a spawn is started, not run"),
         };
         let done = translate::perform(&mut self.checkout, op);
@@ -828,7 +835,9 @@ impl World {
                 let session = *self.owners.get(&owner).expect("an operation of a kit");
                 self.versions.insert((session, at.root.raw(), at.path.to_vec(), version.raw()[0]));
             }
-            Done::Listed { .. }
+            Done::Removed
+            | Done::NotEmpty
+            | Done::Listed { .. }
             | Done::Conflict { .. }
             | Done::Missing
             | Done::NotFile

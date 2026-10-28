@@ -43,14 +43,20 @@ pub(crate) enum Pending {
     One { kind: Kind },
     /// A create still making its directories (domain/tools.md, section 3).
     Create(crate::files::Create),
+    /// A removal retaining its confined parent until close.
+    Remove(crate::removing::Removing),
 }
 
 impl Pending {
     /// The domain cancelled: a create sends no further request.
-    fn cancel(&mut self) {
+    fn cancel(&mut self) -> bool {
         match self {
-            Pending::One { .. } => {}
-            Pending::Create(create) => create.cancel(),
+            Pending::One { .. } => true,
+            Pending::Create(create) => {
+                create.cancel();
+                true
+            }
+            Pending::Remove(removing) => removing.cancel(),
         }
     }
 }
@@ -115,8 +121,9 @@ impl Component {
             }
             FromDomain::Cancel { owner } => {
                 if let Some(pending) = self.pending.get_mut(&owner) {
-                    pending.cancel();
-                    below.push(Below::CancelFile { owner });
+                    if pending.cancel() {
+                        below.push(Below::CancelFile { owner });
+                    }
                 } else if let Some(process) = self.processes.get_mut(&owner) {
                     process.cancel_job();
                     process.stop(env.now, env.limits.group_stop, crate::process::Why::Cancel, below);
@@ -196,6 +203,10 @@ impl Component {
         }
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the admitted tool vocabulary is exhaustively translated at its entrance"
+    )]
     fn admit_tool(
         &mut self,
         env: &Env<Limits>,
@@ -220,6 +231,20 @@ impl Component {
                     },
                     Err(done) => to_domain.push(ToDomain::Done { owner, done }),
                 }
+            }
+            tools::Op::Remove { at, expect } => {
+                if self.pending.len() == self.pending.capacity() {
+                    to_domain.push(ToDomain::Done { owner, done: other() });
+                    return;
+                }
+                if let Err(done) = crate::files::check(&self.roots, &env.limits, at.root, &at.path, true) {
+                    to_domain.push(ToDomain::Done { owner, done });
+                    return;
+                }
+                let (removing, request) =
+                    crate::removing::Removing::start(owner, at, expect, env.limits.file_bytes, deadline);
+                self.pending.insert(owner, Pending::Remove(removing)).expect("checked room");
+                below.push(request);
             }
             tools::Op::List { at, depth, glob, max, max_bytes } => {
                 if self.processes.len() == self.processes.capacity() {
@@ -333,6 +358,7 @@ impl Component {
             crate::process::Purpose::List => match request {
                 Below::Spawn { owner, root, spawn } => process.open_directory(owner, root, spawn),
                 Below::File { .. }
+                | Below::Remove { .. }
                 | Below::OpenRead { .. }
                 | Below::OpenDirectory { .. }
                 | Below::CancelFile { .. }
@@ -354,7 +380,11 @@ impl Component {
                         to_domain.push(ToDomain::Done { owner, done: other() });
                     }
                 },
-                Below::File { .. } | Below::CancelFile { .. } | Below::OpenRead { .. } | Below::Process(_) => {
+                Below::File { .. }
+                | Below::CancelFile { .. }
+                | Below::Remove { .. }
+                | Below::OpenRead { .. }
+                | Below::Process(_) => {
                     unreachable!("only spawn start")
                 }
             },
@@ -385,6 +415,13 @@ impl Component {
                 } else {
                     let done = match self.pending.remove(&owner).expect("file terminal has admitted owner") {
                         Pending::One { kind } => crate::files::terminal(kind, event),
+                        Pending::Remove(removing) => match removing.event(owner, env.now, event, below) {
+                            crate::removing::Next::Wait(removing) => {
+                                self.pending.insert(owner, Pending::Remove(removing)).expect("returned pending slot");
+                                return;
+                            }
+                            crate::removing::Next::Done(done) => done,
+                        },
                         Pending::Create(create) => match create.event(owner, env.now, event) {
                             crate::files::Next::Request { pending, request, deadline } => {
                                 self.pending.insert(owner, pending).expect("pending slot returned");

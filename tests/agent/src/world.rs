@@ -1423,6 +1423,7 @@ impl World {
                     }
                     op @ (tools::Op::Load { .. }
                     | tools::Op::List { .. }
+                    | tools::Op::Remove { .. }
                     | tools::Op::Store { .. }
                     | tools::Op::Search { .. }) => Delivery::Io { owner, op, deadline },
                 };
@@ -1778,7 +1779,8 @@ impl World {
             }
             Event::Failed { .. } => CompletionTerminal::Failed,
             Event::Cancelled { .. } => CompletionTerminal::Cancelled,
-            Event::BuiltinResult { .. }
+            Event::NativeVersion { .. }
+            | Event::BuiltinResult { .. }
             | Event::HostReturned { .. }
             | Event::Start { .. }
             | Event::Message { .. }
@@ -1840,7 +1842,8 @@ impl World {
                 self.check_terminals.push(self.now);
                 self.observe(Seen::Checked { owner, exit: None });
             }
-            Event::BuiltinResult { .. }
+            Event::NativeVersion { .. }
+            | Event::BuiltinResult { .. }
             | Event::HostReturned { .. }
             | Event::Message { .. }
             | Event::Acknowledge { .. }
@@ -1861,7 +1864,8 @@ impl World {
             Event::Failed { .. } | Event::Cancelled { .. } => {
                 self.messages_seen.push((self.now, crate::messages_referee::Seen::CompletionEnded));
             }
-            Event::BuiltinResult { .. }
+            Event::NativeVersion { .. }
+            | Event::BuiltinResult { .. }
             | Event::Cancel { .. }
             | Event::Start { .. }
             | Event::Message { .. }

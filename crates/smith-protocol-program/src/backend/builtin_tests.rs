@@ -143,14 +143,14 @@ fn an_init_without_a_granted_built_in_fails() {
 }
 
 #[test]
-fn the_server_lists_no_workspace_tool() {
+fn the_server_serves_remove_and_leaves_the_other_workspace_tools_to_builtins() {
     let mut backend = active();
     let Some(FromDomain::Complete { prompt, .. }) = &mut backend.request else { panic!("request") };
     prompt.tools = Grants { inspect: true, modify: true, shell: true };
     prompt.served = Box::new([llm::Served::Finish, llm::Served::Wait]);
     let tools = backend.tools();
-    assert_eq!(tools.len(), 2);
-    assert!(tools.iter().all(|tool| [b"finish".as_slice(), b"wait"].contains(&tool.name.as_ref())));
+    assert_eq!(tools.len(), 3);
+    assert!(tools.iter().all(|tool| [b"finish".as_slice(), b"wait", b"remove"].contains(&tool.name.as_ref())));
 }
 
 #[test]

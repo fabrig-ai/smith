@@ -48,7 +48,7 @@ pub(super) fn answered(tools: &mut Tools, slot: u32, block: &Block, result: &Ret
         Returned::Owned { outcome } => {
             file_change(block)
                 && match outcome {
-                    Outcome::Written { .. } | Outcome::Edited { .. } => false,
+                    Outcome::Removed | Outcome::Written { .. } | Outcome::Edited { .. } => false,
                     Outcome::Read { .. }
                     | Outcome::Listed { .. }
                     | Outcome::Found { .. }
@@ -60,6 +60,7 @@ pub(super) fn answered(tools: &mut Tools, slot: u32, block: &Block, result: &Ret
                     | Outcome::ReadOnly { .. }
                     | Outcome::TooLong
                     | Outcome::NotFound { .. }
+                    | Outcome::NotEmpty
                     | Outcome::NotFile
                     | Outcome::Linked
                     | Outcome::Protected
@@ -104,7 +105,7 @@ pub(super) fn scheduled(block: &Block, failed: &mut bool) -> bool {
 fn file_change(block: &Block) -> bool {
     match block {
         Block::ToolCall { call: Decoded::Owned { call }, .. } => match call {
-            Call::Write { .. } | Call::Edit { .. } => true,
+            Call::Write { .. } | Call::Edit { .. } | Call::Remove { .. } => true,
             Call::Read { .. } | Call::List { .. } | Call::Search { .. } | Call::Shell { .. } | Call::Job { .. } => {
                 false
             }

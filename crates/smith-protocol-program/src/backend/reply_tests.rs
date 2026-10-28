@@ -12,6 +12,7 @@ pub(super) fn call(id: &[u8]) -> Call {
         eligible: true,
         message: 1,
         builtin: false,
+        native_write: false,
         owner: None,
     }
 }

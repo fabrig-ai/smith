@@ -85,6 +85,20 @@ impl Backend {
     pub(super) fn flush_builtins(&mut self, up: &mut Queue<ToDomain>) {
         for slot in 0..self.ledger.len() {
             let call = self.ledger.get_mut(slot).expect("ledger slot");
+            if call.native_write && call.answer.is_some() {
+                if self.native.is_some() {
+                    return;
+                }
+                if let Some(at) = super::native::target(&self.mounts, &call.input, self.settings.path_bytes) {
+                    self.native = Some(super::native::Snapshot::new(
+                        call.owner.expect("native write owner"),
+                        at,
+                        super::native::After::Written { slot },
+                    ));
+                    return;
+                }
+                call.native_write = false;
+            }
             if call.builtin
                 && let Some(owner) = call.owner
             {

@@ -163,7 +163,7 @@ pub(crate) fn admit(authority: Authority, limits: &Limits) -> Option<Checkout> {
 pub(crate) const fn granted(grants: Grants, call: &Call) -> bool {
     match call {
         Call::Read { .. } | Call::List { .. } | Call::Search { .. } => grants.inspect,
-        Call::Write { .. } | Call::Edit { .. } => grants.modify,
+        Call::Write { .. } | Call::Edit { .. } | Call::Remove { .. } => grants.modify,
         Call::Shell { .. } | Call::Job { .. } => grants.shell,
     }
 }

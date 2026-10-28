@@ -107,7 +107,7 @@ impl Backend {
             }
             return;
         }
-        if self.switching {
+        if self.native.is_some() || self.switching {
             return;
         }
         if kind == Some(b"stream_event") {
@@ -480,6 +480,7 @@ fn register_blocks(ledger: &mut List<calls::Call>, blocks: &[llm::Said], message
                                 | llm::Decoded::Served { .. }
                                 | llm::Decoded::Invalid { .. } => false,
                             },
+                            native_write: false,
                             owner: None,
                         })
                         .ok()?;

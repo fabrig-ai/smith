@@ -241,7 +241,9 @@ fn run(dialect: Provider, calls: bool, observed: bool, owner_close: bool) {
         }
         if let Some(event) = up.pop() {
             match event {
-                ToDomain::BuiltinResult { .. } => panic!("a direct backend emits no program result"),
+                ToDomain::NativeVersion { .. } | ToDomain::BuiltinResult { .. } => {
+                    panic!("a direct backend emits no program result")
+                }
                 ToDomain::Text { owner, bytes } => {
                     assert_eq!(owner, Token::new(7));
                     assert!(bytes > 0);

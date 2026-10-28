@@ -113,6 +113,7 @@ pub fn fits(call: &Call, outcome: &Outcome) -> bool {
         Call::Read { path, .. }
         | Call::List { path, .. }
         | Call::Search { path, .. }
+        | Call::Remove { path }
         | Call::Write { path, .. }
         | Call::Edit { path, .. } => path,
         Call::Job { .. } => return matches!(outcome, Outcome::Job { .. }),
@@ -146,18 +147,21 @@ pub fn fits(call: &Call, outcome: &Outcome) -> bool {
                         .flat_map(|(_, content)| content.split(|byte| *byte == b'\n'))
                         .any(|line| line.starts_with(&hit.text) && holds(line, pattern)))
         }),
+        (Call::Remove { .. }, Outcome::Removed) => is_file || is_directory,
         (Call::Write { .. }, Outcome::Written { created }) => is_file && (!*created || may_be_missing),
         // What a change to a file, or a listing of one, comes to; and an edit
         // that does not apply.
         (Call::Edit { .. }, Outcome::Edited { .. } | Outcome::EditFailed { .. })
         | (Call::List { .. }, Outcome::NotDirectory { .. }) => is_file,
-        (Call::Read { .. } | Call::Write { .. } | Call::Edit { .. }, Outcome::NotFile) => is_directory,
-        (Call::Read { .. } | Call::List { .. } | Call::Search { .. } | Call::Edit { .. }, Outcome::NotFound { .. }) => {
-            may_be_missing
-        }
+        (Call::Remove { .. }, Outcome::NotEmpty)
+        | (Call::Read { .. } | Call::Write { .. } | Call::Edit { .. }, Outcome::NotFile) => is_directory,
+        (
+            Call::Read { .. } | Call::List { .. } | Call::Search { .. } | Call::Edit { .. } | Call::Remove { .. },
+            Outcome::NotFound { .. },
+        ) => may_be_missing,
         // What the tools refuse before a change: a path not read first, or
         // changed since.
-        (Call::Write { .. } | Call::Edit { .. }, Outcome::NotRead | Outcome::Stale) => true,
+        (Call::Write { .. } | Call::Edit { .. } | Call::Remove { .. }, Outcome::NotRead | Outcome::Stale) => true,
         _ => false,
     }
 }

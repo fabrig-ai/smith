@@ -148,11 +148,11 @@ pub(crate) fn judge(tool: &[u8], input: &[u8], grants: Grants, mounts: &[Mount],
     mcp::Verdict::Allow { updated_input: input.into() }
 }
 
-fn contains(mount: &[u8], path: &[u8]) -> bool {
+pub(super) fn contains(mount: &[u8], path: &[u8]) -> bool {
     mount == b"/" || path == mount || (path.starts_with(mount) && path.get(mount.len()) == Some(&b'/'))
 }
 
-fn resolve(cwd: &[u8], path: &[u8], maximum: u32) -> Box<[u8]> {
+pub(super) fn resolve(cwd: &[u8], path: &[u8], maximum: u32) -> Box<[u8]> {
     let mut resolved =
         List::with_capacity(maximum.checked_mul(2).expect("two paths").checked_add(1).expect("joining slash"));
     for part in [if path.starts_with(b"/") { b"".as_slice() } else { cwd }, path] {

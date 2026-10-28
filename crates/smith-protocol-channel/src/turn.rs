@@ -305,6 +305,8 @@ fn encode_outcome(source: &tools::Outcome, limits: &wire::v6::Limits) -> Result<
                 wire::FoundParts { hits: output, more: *more, timed_out: *timed_out },
             )?)
         }
+        tools::Outcome::Removed => wire::Outcome::Removed,
+        tools::Outcome::NotEmpty => wire::Outcome::NotEmpty,
         tools::Outcome::Written { created } => {
             wire::Outcome::Written(wire::Written::new(limits, wire::WrittenParts { created: *created })?)
         }

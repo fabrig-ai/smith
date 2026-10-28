@@ -266,6 +266,8 @@ fn write_verdict(json: &mut Encoder, value: &Verdict, _capture: &Capture) {
         Verdict::Read => json.string(b"read"),
         Verdict::Listed => json.string(b"listed"),
         Verdict::Found => json.string(b"found"),
+        Verdict::Removed => json.string(b"removed"),
+        Verdict::NotEmpty => json.string(b"not_empty"),
         Verdict::Written => json.string(b"written"),
         Verdict::Edited => json.string(b"edited"),
         Verdict::Exited => json.string(b"exited"),
@@ -1061,7 +1063,9 @@ fn validate_effect(value: &Effect, limits: &Limits) -> Result<(), Error> {
 
 fn validate_verdict(value: &Verdict, limits: &Limits) -> Result<(), Error> {
     match value {
-        Verdict::Read
+        Verdict::Removed
+        | Verdict::NotEmpty
+        | Verdict::Read
         | Verdict::Listed
         | Verdict::Found
         | Verdict::Written

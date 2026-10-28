@@ -117,10 +117,12 @@ impl Backend {
         up: &mut Queue<ToDomain>,
         below: &mut Queue<Below>,
     ) {
+        self.native_advance(env, below);
         self.consume_stdout(env, up, below);
         self.checked(env, up, below);
         self.server_events(env, up, below);
         self.switch_progress(env, up, below);
+        self.native_advance(env, below);
         if self.winding == super::stop::WindDown::YieldRequested {
             self.yield_for_wind_down(env, up, below);
         }
@@ -511,7 +513,8 @@ impl Backend {
     }
 
     pub(super) fn read_stdout(&mut self) {
-        if !self.stdout_demanding
+        if self.native.is_none()
+            && !self.stdout_demanding
             && self.intake.is_empty()
             && let Some(pipe) = self.pipes[1]
         {

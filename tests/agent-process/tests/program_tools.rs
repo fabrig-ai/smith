@@ -10,7 +10,7 @@ use smith_agent_process_world::{
 use smith_channel::{ModelFault, RunFailure, RunResult};
 use smith_fake_claude::{Decision, End, Seen, Step, Story, Turn};
 
-fn charter_tools() -> Box<[u8]> {
+fn charter_tools(shell: bool) -> Box<[u8]> {
     let mut parts = smith_charter::Charter::decode(&smith_charter::CEILINGS, &mut Reader::new(&charter()))
         .expect("charter")
         .into_parts();
@@ -21,7 +21,7 @@ fn charter_tools() -> Box<[u8]> {
     let mut tools = parts.tools.into_parts();
     tools.families = smith_charter::Families::new(
         &smith_charter::CEILINGS,
-        smith_charter::FamiliesParts { skein_bools: [true, true, true, false] },
+        smith_charter::FamiliesParts { skein_bools: [true, true, shell, false] },
     )
     .expect("workspace families");
     tools.host = List::with_capacity(1);
@@ -57,7 +57,7 @@ fn read(path: &str) -> Step {
 }
 
 fn run(story: &Story) -> Run {
-    program_world::run(Case::Tools, story, Some(b"claude.ai"), &charter_tools(), &program(b"source"), None)
+    program_world::run(Case::Tools, story, Some(b"claude.ai"), &charter_tools(true), &program(b"source"), None)
 }
 
 fn steps(steps: Vec<Step>) -> Run {
@@ -253,4 +253,69 @@ fn a_nested_host_input_is_told_and_answered() {
     assert_eq!(said.text(), b"found");
     assert!(!said.error());
     assert!(run.seen.contains(&Seen::Called { tool: "lookup".into(), error: false }));
+}
+
+fn removal_steps(steps: Vec<Step>) -> Run {
+    let story = Story { turns: vec![Turn { steps, end: End::default() }], ..Default::default() };
+    program_world::run(Case::Tools, &story, Some(b"claude.ai"), &charter_tools(false), &program(b"source"), None)
+}
+
+fn remove_file() -> Step {
+    Step::CallChecked { tool: "remove".into(), input: json!({"path":"a"}), contains: "removed".into() }
+}
+
+#[test]
+fn a_whole_native_read_then_mcp_remove_deletes_the_read_file() {
+    let run = removal_steps(vec![
+        Step::Act { tool: "Read".into(), input: json!({"file_path":"a"}) },
+        remove_file(),
+        finish(),
+    ]);
+    accepted(&run);
+    assert_eq!(run.workspace_file, None);
+    assert!(run.seen.contains(&Seen::Called { tool: "remove".into(), error: false }));
+}
+
+#[test]
+fn a_partial_native_read_does_not_allow_mcp_remove_and_says_to_read_whole() {
+    let run = removal_steps(vec![
+        Step::Builtin {
+            tool: "Read".into(),
+            input: json!({"file_path":"a", "offset":1,"limit":1}),
+            result: "before".into(),
+        },
+        Step::CallChecked { tool: "remove".into(), input: json!({"path":"a"}), contains: "read the whole file".into() },
+        finish(),
+    ]);
+    accepted(&run);
+    assert_eq!(run.workspace_file.as_deref(), Some(b"before\n".as_slice()));
+    assert!(run.seen.contains(&Seen::Called { tool: "remove".into(), error: true }));
+}
+
+#[test]
+fn a_native_write_then_mcp_remove_deletes_the_written_version() {
+    let run = removal_steps(vec![
+        Step::Act { tool: "Write".into(), input: json!({"file_path":"a","content":"new bytes"}) },
+        remove_file(),
+        finish(),
+    ]);
+    accepted(&run);
+    assert_eq!(run.workspace_file, None);
+}
+
+#[test]
+fn a_native_edit_then_mcp_remove_deletes_the_edited_version() {
+    let run = removal_steps(vec![edit("a", "before", "after"), remove_file(), finish()]);
+    accepted(&run);
+    assert_eq!(run.workspace_file, None);
+}
+
+#[test]
+fn mcp_remove_deletes_an_empty_directory_without_a_native_read() {
+    let run = removal_steps(vec![
+        Step::CallChecked { tool: "remove".into(), input: json!({"path":"empty"}), contains: "removed".into() },
+        finish(),
+    ]);
+    accepted(&run);
+    assert!(run.seen.contains(&Seen::Called { tool: "remove".into(), error: false }));
 }

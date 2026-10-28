@@ -33,6 +33,8 @@ use crate::llm::{Completion, Descriptor, Endpoint, Failure, Prompt, Usage};
 /// parent -> session
 #[derive(PartialEq, Eq, Debug)]
 pub enum Event {
+    /// A native program snapshot belongs to this session; it changes no conversation text.
+    NativeVersion { session: Token, at: tools::Place, version: Option<tools::Version> },
     /// Parent admission of bounded concrete history, including a fresh session.
     /// Ends exactly once after all provider, tools and delegated work settles.
     Open {

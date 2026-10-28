@@ -36,6 +36,12 @@ pub fn write(at: &[u8], content: &[u8]) -> Call {
     Call::Write { path: path(at), content: content.into() }
 }
 
+/// Remove one current file or empty directory (domain/tools.md, section 3).
+#[must_use]
+pub fn remove(at: &[u8]) -> Call {
+    Call::Remove { path: path(at) }
+}
+
 /// Replaces `old` with `new` in the file at `at`: its one occurrence, or every
 /// one if `all`.
 ///

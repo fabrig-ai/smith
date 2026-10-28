@@ -559,6 +559,8 @@ fn read_verdict(tokens: &[Token], limits: &Limits) -> Result<Verdict, Error> {
         b"read" => Verdict::Read,
         b"listed" => Verdict::Listed,
         b"found" => Verdict::Found,
+        b"removed" => Verdict::Removed,
+        b"not_empty" => Verdict::NotEmpty,
         b"written" => Verdict::Written,
         b"edited" => Verdict::Edited,
         b"exited" => Verdict::Exited,

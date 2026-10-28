@@ -149,6 +149,7 @@ fn builtin(backend: &mut Backend) {
                 eligible: true,
                 message: 1,
                 builtin: true,
+                native_write: false,
                 owner: Some(Token::new(80)),
             })
             .is_ok()

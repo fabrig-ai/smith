@@ -53,6 +53,10 @@ fn configured_component(variables: &[smith_protocol_machine::Variable]) -> Compo
 fn place(path: &[u8]) -> tools::Place {
     tools::Place { root: Token::new(10), path: Box::from(path) }
 }
+#[expect(
+    clippy::too_many_lines,
+    reason = "the fixture follows one listing through directory open, close and bounded output"
+)]
 fn listed(output: &[u8], depth: tools::Depth, maximum: u32, bytes: u64, glob: Option<&[u8]>) -> tools::Done {
     let mut component = component();
     let mut terminals = Queue::with_capacity(4);
@@ -74,6 +78,7 @@ fn listed(output: &[u8], depth: tools::Depth, maximum: u32, bytes: u64, glob: Op
             owner,
             root: Token::new(10),
             path: Box::from(b"src".as_slice()),
+            no_follow: false,
             deadline: Time::from_nanos(u64::MAX)
         })
     );
@@ -107,6 +112,7 @@ fn listed(output: &[u8], depth: tools::Depth, maximum: u32, bytes: u64, glob: Op
         }
         Below::File { .. }
         | Below::CancelFile { .. }
+        | Below::Remove { .. }
         | Below::OpenRead { .. }
         | Below::OpenDirectory { .. }
         | Below::Process(_) => {
@@ -217,6 +223,7 @@ fn native_output(root: &std::path::Path) -> std::process::Output {
         Below::Spawn { spawn, .. } => spawn,
         Below::File { .. }
         | Below::CancelFile { .. }
+        | Below::Remove { .. }
         | Below::OpenRead { .. }
         | Below::OpenDirectory { .. }
         | Below::Process(_) => {

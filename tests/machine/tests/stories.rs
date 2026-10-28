@@ -439,3 +439,60 @@ fn selected_paths_form_a_tree_over_the_shared_fake_machine_and_settle_once() {
         world.settle();
     }
 }
+
+#[test]
+fn removal_checks_the_file_version_and_removes_empty_directories_without_following_links() {
+    let mut world = World::new(
+        115,
+        &[
+            Item::directory(b"src"),
+            Item::file(b"src/a", b"old"),
+            Item::directory(b"empty"),
+            Item::link(b"alias", b"src"),
+            Item::link(b"link", b"src/a"),
+        ],
+    );
+    let root = world.root();
+    let old = tools::Version::new(skein_io::digest::digest(b"old").0);
+    for (number, path, expect, terminal) in [
+        (50, b"src/a".as_slice(), tools::Expect::Absent, tools::Done::Conflict { now: Some(old) }),
+        (51, b"src", tools::Expect::Absent, tools::Done::NotEmpty),
+        (52, b"alias/a", tools::Expect::Is { version: old }, tools::Done::Linked),
+        (53, b"link", tools::Expect::Is { version: old }, tools::Done::Linked),
+        (54, b"empty", tools::Expect::Absent, tools::Done::Removed),
+    ] {
+        let owner = Token::new(number);
+        let done = world.request(FromDomain::Op {
+            owner,
+            op: tools::Op::Remove { at: place(root, path), expect },
+            deadline: far(),
+        });
+        assert_eq!(done, ToDomain::Done { owner, done: terminal });
+    }
+    world.change_behind_session(b"src/a", b"new");
+    let done = world.request(FromDomain::Op {
+        owner: Token::new(55),
+        op: tools::Op::Remove { at: place(root, b"src/a"), expect: tools::Expect::Is { version: old } },
+        deadline: far(),
+    });
+    assert!(matches!(done, ToDomain::Done { done: tools::Done::Conflict { .. }, .. }));
+    assert_eq!(world.content(b"src/a"), b"new");
+    let current = tools::Version::new(skein_io::digest::digest(b"new").0);
+    assert_eq!(
+        world.request(FromDomain::Op {
+            owner: Token::new(56),
+            op: tools::Op::Remove { at: place(root, b"src/a"), expect: tools::Expect::Is { version: current } },
+            deadline: far()
+        }),
+        ToDomain::Done { owner: Token::new(56), done: tools::Done::Removed }
+    );
+    assert_eq!(
+        world.request(FromDomain::Op {
+            owner: Token::new(57),
+            op: tools::Op::Load { at: place(root, b"src/a"), max: 10 },
+            deadline: far()
+        }),
+        ToDomain::Done { owner: Token::new(57), done: tools::Done::Missing }
+    );
+    world.settle();
+}

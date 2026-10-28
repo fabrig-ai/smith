@@ -87,6 +87,12 @@ pub(crate) fn event(domain: &mut Domain, env: &Env<Limits>, event: Event) {
         Event::Probed { owner, executable } => run::Event::Probed { owner, executable },
         Event::Checked { owner, ran } => run::Event::Checked { owner, ran },
         Event::Aborted { owner } => run::Event::Aborted { owner },
+        Event::NativeVersion { owner, at, version } => {
+            if domain.sessions.contains_key(&owner) {
+                session_step(domain, env, session::Event::NativeVersion { session: owner, at, version });
+            }
+            return;
+        }
         Event::BuiltinResult { owner, id, text, error } => {
             if domain.sessions.contains_key(&owner) {
                 session_step(domain, env, session::Event::BuiltinResult { session: owner, id, text, error });

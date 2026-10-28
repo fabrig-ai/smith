@@ -145,6 +145,8 @@ pub(crate) struct Editing {
 pub(crate) enum Change {
     /// Writes a file the kit knows nothing of.
     Create,
+    /// Removes one file or empty directory; known says whether a file version was read.
+    Remove { known: bool },
     /// Writes over the file at the version the kit knows.
     Replace,
     /// Writes the file edited, having `replaced` that many occurrences.
@@ -166,6 +168,10 @@ pub(crate) enum Work {
     Write {
         place: Place,
         content: Box<[u8]>,
+        expect: Expect,
+    },
+    Remove {
+        place: Place,
         expect: Expect,
     },
     Edit {
@@ -213,6 +219,7 @@ pub(crate) fn start(
         Work::List { .. } => (Tool::List, limits.file_timeout),
         Work::Search { .. } => (Tool::Search, limits.search_timeout),
         Work::Write { .. } => (Tool::Write, limits.file_timeout),
+        Work::Remove { .. } => (Tool::Remove, limits.file_timeout),
         Work::Edit { .. } => (Tool::Edit, limits.file_timeout),
         Work::Shell { timed, .. } => (Tool::Shell, timed.timeout),
     };
@@ -234,6 +241,14 @@ pub(crate) fn start(
             };
             let op = Op::Store { at: place.clone(), content, expect };
             (State::Storing { reply_to, place, change }, op)
+        }
+        Work::Remove { place, expect } => {
+            let known = match expect {
+                Expect::Absent => false,
+                Expect::Is { .. } => true,
+            };
+            let op = Op::Remove { at: place.clone(), expect };
+            (State::Storing { reply_to, place, change: Change::Remove { known } }, op)
         }
         Work::Edit { place, edits } => {
             let op = Op::Load { at: place.clone(), max: limits.file_bytes };
@@ -313,6 +328,8 @@ pub(crate) fn done(domain: &mut Domain, env: &Env<Limits>, owner: Token, done: D
             }
             done @ (Done::Loaded { .. }
             | Done::Listed { .. }
+            | Done::Removed
+            | Done::NotEmpty
             | Done::Stored { .. }
             | Done::Conflict { .. }
             | Done::Exited { .. }
@@ -431,6 +448,8 @@ fn loaded(kit: &mut Kit, reply_to: ReplyTo, place: Place, span: Span, done: Done
         Done::Held { .. } | Done::Job { .. } => unreachable!("the tools issue no yield or job act yet"),
         Done::Cancelled => Outcome::Cancelled,
         Done::Listed { .. }
+        | Done::Removed
+        | Done::NotEmpty
         | Done::Stored { .. }
         | Done::Conflict { .. }
         | Done::Linked
@@ -452,6 +471,8 @@ fn scanned(checkout: &Checkout, reply_to: ReplyTo, place: Place, done: Done) -> 
         Done::Held { .. } | Done::Job { .. } => unreachable!("the tools issue no yield or job act yet"),
         Done::Cancelled => Outcome::Cancelled,
         Done::Loaded { .. }
+        | Done::Removed
+        | Done::NotEmpty
         | Done::Stored { .. }
         | Done::Conflict { .. }
         | Done::NotFile
@@ -484,6 +505,8 @@ fn found(checkout: &Checkout, reply_to: ReplyTo, place: Place, done: Done) -> Ne
         Done::Cancelled => Outcome::Cancelled,
         Done::Loaded { .. }
         | Done::Listed { .. }
+        | Done::Removed
+        | Done::NotEmpty
         | Done::Stored { .. }
         | Done::Conflict { .. }
         | Done::NotFile
@@ -538,6 +561,8 @@ fn to_edit(
         Done::Held { .. } | Done::Job { .. } => unreachable!("the tools issue no yield or job act yet"),
         Done::Cancelled => Outcome::Cancelled,
         Done::Listed { .. }
+        | Done::Removed
+        | Done::NotEmpty
         | Done::Stored { .. }
         | Done::Conflict { .. }
         | Done::Linked
@@ -558,16 +583,26 @@ fn stored(
     done: Done,
     bound: u32,
 ) -> Next {
-    let creating = change == Change::Create;
+    let creating = match change {
+        Change::Create | Change::Remove { known: false } => true,
+        Change::Replace | Change::Edit { .. } | Change::Remove { known: true } => false,
+    };
     let outcome = match done {
         Done::Stored { version } => {
             knowledge.record(place, version);
             match change {
+                Change::Remove { .. } => unreachable!("removal returns Removed"),
                 Change::Create => Outcome::Written { created: true },
                 Change::Replace => Outcome::Written { created: false },
                 Change::Edit { replaced } => Outcome::Edited { replaced },
             }
         }
+        Done::Removed => {
+            assert!(matches_remove(change), "only a removal returns Removed");
+            knowledge.forget(&place);
+            Outcome::Removed
+        }
+        Done::NotEmpty => Outcome::NotEmpty,
         // Something was there that the LLM has not read, even if it is gone
         // by the time io looked for its version.
         Done::Conflict { .. } if creating => Outcome::NotRead,
@@ -597,6 +632,13 @@ fn stored(
     Next::Answer { reply_to, outcome, omitted_bytes: 0 }
 }
 
+fn matches_remove(change: Change) -> bool {
+    match change {
+        Change::Remove { .. } => true,
+        Change::Create | Change::Replace | Change::Edit { .. } => false,
+    }
+}
+
 /// Running, ended: answer with how the command ended and what it wrote.
 fn exited(
     checkout: &Checkout,
@@ -618,6 +660,8 @@ fn exited(
         Done::Cancelled => Outcome::Cancelled,
         Done::Loaded { .. }
         | Done::Listed { .. }
+        | Done::Removed
+        | Done::NotEmpty
         | Done::Stored { .. }
         | Done::Conflict { .. }
         | Done::NotFile

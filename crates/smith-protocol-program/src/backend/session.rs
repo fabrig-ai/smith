@@ -167,6 +167,7 @@ impl Backend {
     ) {
         if self.phase == Phase::Ending
             || !self.switching
+            || self.native.is_some()
             || self.child.is_some()
             || self.spawning
             || self.pipes != [None; 3]

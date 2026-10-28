@@ -304,6 +304,8 @@ fn verdict(value: &Verdict) -> Verdict {
         Verdict::Read
         | Verdict::Listed
         | Verdict::Found
+        | Verdict::Removed
+        | Verdict::NotEmpty
         | Verdict::Written
         | Verdict::Edited
         | Verdict::Exited

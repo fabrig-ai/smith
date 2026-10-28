@@ -39,13 +39,14 @@ fn prompt() -> llm::Prompt {
 #[test]
 fn production_schemas_cover_every_offered_workspace_and_run_tool() {
     let schemas = adapter::schemas(&prompt(), &limits().stated);
-    assert_eq!(schemas.len(), 9);
+    assert_eq!(schemas.len(), 10);
     for kind in [
         ToolKind::Owned(tools::Tool::Read),
         ToolKind::Owned(tools::Tool::List),
         ToolKind::Owned(tools::Tool::Search),
         ToolKind::Owned(tools::Tool::Write),
         ToolKind::Owned(tools::Tool::Edit),
+        ToolKind::Owned(tools::Tool::Remove),
         ToolKind::Owned(tools::Tool::Shell),
         ToolKind::Owned(tools::Tool::Job),
         ToolKind::Wait,
@@ -68,6 +69,7 @@ fn each_workspace_call_decodes_escaped_input_and_ignores_unknown_members() {
             br#"{"path":"src/a.rs","offset":3,"window":12,"future":[1,{"x":true}]}"#.as_slice(),
             tools::Tool::Read,
         ),
+        (b"remove", br#"{"path":"a"}"#, tools::Tool::Remove),
         (b"list", br#"{"path":".","future":false}"#, tools::Tool::List),
         (b"search", br#"{"pattern":"a\\nb","glob":"*.rs"}"#, tools::Tool::Search),
         (b"write", br#"{"path":"a","content":"line\nnext"}"#, tools::Tool::Write),
@@ -382,6 +384,7 @@ fn the_empty_path_decodes_as_the_working_directory_for_each_path_field() {
         let path = match call {
             tools::Call::Read { path, .. }
             | tools::Call::List { path, .. }
+            | tools::Call::Remove { path }
             | tools::Call::Write { path, .. }
             | tools::Call::Edit { path, .. }
             | tools::Call::Search { path, .. } => path,
@@ -470,4 +473,20 @@ fn several_directories_offer_listing_the_directory_names() {
     let schemas = adapter::schemas(&prompt, &limits().stated);
     let list = schemas.iter().find(|schema| schema.name.as_ref() == b"list").expect("list tool");
     assert!(String::from_utf8_lossy(&list.description).contains("List / for directory names"));
+}
+
+#[test]
+fn remove_uses_the_owners_words_and_is_offered_only_with_modify() {
+    let mut prompt = prompt();
+    let schemas = adapter::schemas(&prompt, &limits().stated);
+    let remove = schemas.iter().find(|tool| tool.name.as_ref() == b"remove").expect("modify offers remove");
+    assert_eq!(remove.description.as_ref(), b"Remove a file you have read at its current version, or an empty directory; never a directory with files in it.");
+    assert!(remove.description.len() <= 160);
+    assert!(String::from_utf8_lossy(&remove.schema).contains("The path, inside the workspace, as write takes it."));
+    prompt.tools.modify = false;
+    assert!(!adapter::schemas(&prompt, &limits().stated).iter().any(|tool| tool.name.as_ref() == b"remove"));
+    assert_eq!(
+        adapter::decode(b"remove", br#"{"path":"a"}"#, prompt.tools, &[], llm::Asker::Main, &limits()),
+        llm::Decoded::Invalid { problem: llm::Problem::UnknownTool }
+    );
 }
