@@ -329,7 +329,7 @@ fn prepare_front(
 ) -> Result<crate::front::Front, Refused> {
     if let Some(plain) = interactive {
         let front = crate::front::interactive::Interactive::new(plain, &agent.service.limits)
-            .ok_or_else(|| Refused::Usage(Usage("interactive footprint overflows".into())))?;
+            .ok_or_else(|| Refused::Usage(Usage("interactive view bound overflows".into())))?;
         return Ok(crate::front::Front::Interactive(front));
     }
     let mut front = crate::front::headless::Headless::new(
@@ -337,10 +337,9 @@ fn prepare_front(
         skein_shell::prepare_output(skein_io::kernel::Fd::new(1))
             .map_err(|why| Refused::Local(startup::Failure::Host { detail: format!("standard output: {why:?}") }))?,
         limits.local.show_bytes,
-        limits.local.smith.run.outcome_bytes,
     );
     front.input_closed = input_closed;
-    files.reserve(&mut front)?;
+    front.result_file = files.has_output();
     Ok(crate::front::Front::Headless(front))
 }
 

@@ -151,13 +151,6 @@ impl Host for Child {
     fn operations(&self) -> u32 {
         1
     }
-    fn worst_case(&self) -> u64 {
-        65_536
-            + 2 * std::mem::size_of::<kernel::Fd>() as u64
-            + Queue::<kernel::Complete>::worst_case(32).expect("git completions")
-            + Queue::<kernel::Submit>::worst_case(32).expect("git submissions")
-            + std::mem::size_of::<Self>() as u64
-    }
 }
 
 /// Child startup reading a bounded fake-checkout result through its own root.
@@ -290,9 +283,6 @@ impl Host for Prepared {
     }
     fn exit(&self) -> Option<kernel::Exit> {
         self.is_empty().then(|| kernel::Exit::Code(self.child.as_ref().expect("settled child").code()))
-    }
-    fn worst_case(&self) -> u64 {
-        400_000
     }
     fn operations(&self) -> u32 {
         4

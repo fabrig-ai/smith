@@ -68,38 +68,15 @@ pub struct Headless {
     pub json: bool,
     pub output_kind: skein_shell::OutputKind,
     pub input_closed: bool,
-    pub(crate) file_memory: u64,
-    pub(crate) cleanup_memory: u64,
-    cap: u32,
-    result_bytes: u64,
+    pub(crate) result_file: bool,
     text: skein_lib::List<u8>,
 }
 
 impl Headless {
-    /// Reserve a bounded last response before the product's memory admission.
+    /// Prepare a bounded last response before resource adoption.
     #[must_use]
-    pub fn new(json: bool, output_kind: skein_shell::OutputKind, cap: u32, result_bytes: u64) -> Self {
-        Self {
-            json,
-            output_kind,
-            input_closed: false,
-            file_memory: 0,
-            cleanup_memory: 0,
-            cap,
-            result_bytes,
-            text: skein_lib::List::with_capacity(cap),
-        }
-    }
-
-    /// Price the retained last response and its terminal copy.
-    #[must_use]
-    pub fn worst_case(&self) -> Option<u64> {
-        skein_lib::List::<u8>::worst_case(self.cap)?
-            .checked_add(u64::from(self.cap))?
-            .checked_add(self.result_bytes)?
-            .checked_add(4096)?
-            .checked_add(self.file_memory)?
-            .checked_add(self.cleanup_memory)
+    pub fn new(json: bool, output_kind: skein_shell::OutputKind, cap: u32) -> Self {
+        Self { json, output_kind, input_closed: false, result_file: false, text: skein_lib::List::with_capacity(cap) }
     }
 
     /// Show tool status and keep the latest told text, with names clipped for the operator.
@@ -194,7 +171,7 @@ mod tests {
     #[test]
     fn a_headless_result_keeps_its_last_text_across_tool_only_turns() {
         use smith_domain::session::llm::{Block, Decoded};
-        let mut front = Headless::new(false, skein_shell::OutputKind::Pipe, 32, 32);
+        let mut front = Headless::new(false, skein_shell::OutputKind::Pipe, 32);
         let mut errors = Vec::new();
         front.told(
             &turn(Box::new([Block::Text { text: b"Please answer".as_slice().into(), replay: None }])),
@@ -221,7 +198,7 @@ mod tests {
     #[test]
     fn a_new_headless_text_replaces_the_previous_turn_within_its_cap() {
         use smith_domain::session::llm::Block;
-        let mut front = Headless::new(false, skein_shell::OutputKind::Pipe, 5, 5);
+        let mut front = Headless::new(false, skein_shell::OutputKind::Pipe, 5);
         let mut errors = Vec::new();
         front.told(&turn(Box::new([Block::Text { text: b"old".as_slice().into(), replay: None }])), &mut errors);
         front.told(

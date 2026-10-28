@@ -127,9 +127,6 @@ pub(in crate::credentials) fn run(
         others,
         ssh,
         operations,
-        worst: smith_local_service::accounts_worst_case(&limits)
-            .and_then(|n| n.checked_add(1_048_576))
-            .ok_or("login memory bound overflows")?,
         out: Queue::with_capacity(ACCOUNTS_MAX_OUT),
         completions: Queue::with_capacity(8),
     };

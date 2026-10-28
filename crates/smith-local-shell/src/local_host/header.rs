@@ -83,26 +83,6 @@ impl Local {
             names(configuration, limits, result_file)?,
         ))
     }
-
-    /// Price the startup record and its inventory while the product owners are live.
-    #[must_use]
-    pub fn header_memory(header: &smith_events::SessionStarted) -> Option<u64> {
-        let mut bytes = u64::try_from(size_of::<smith_events::SessionStarted>()).ok()?.checked_add(List::<
-            smith_events::EffectiveLimit,
-        >::worst_case(
-            header.limits.capacity(),
-        )?)?;
-        for name in [&header.agent.name, &header.agent.version, &header.profile] {
-            bytes = bytes.checked_add(u64::try_from(name.len()).ok()?)?;
-        }
-        if let Some(chat) = &header.chat {
-            bytes = bytes.checked_add(u64::try_from(chat.len()).ok()?)?;
-        }
-        for entry in &header.limits {
-            bytes = bytes.checked_add(u64::try_from(entry.name.len()).ok()?)?;
-        }
-        Some(bytes)
-    }
 }
 
 fn names(

@@ -24,7 +24,6 @@ pub(super) struct Login {
     pub others: Vec<(String, std::path::PathBuf)>,
     pub ssh: Option<String>,
     pub operations: u32,
-    pub worst: u64,
     pub out: Queue<CredentialRequest>,
     pub completions: Queue<kernel::Complete>,
 }
@@ -157,9 +156,6 @@ impl Host for Login {
     }
     fn is_empty(&self) -> bool {
         self.outcome.is_some() && self.driver.closed()
-    }
-    fn worst_case(&self) -> u64 {
-        self.worst
     }
     fn operations(&self) -> u32 {
         self.operations

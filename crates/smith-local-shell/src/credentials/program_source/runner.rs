@@ -1,10 +1,9 @@
 //! I/O routing for one source request (protocol/hosts.md, section 2).
-use super::{DETAIL_BYTES, QUEUE, ROOT_CLOSE, SUBMISSIONS};
+use super::ROOT_CLOSE;
 use skein_io::{self as io, kernel};
 use skein_lib::{Env, Queue, Time, Wall};
 use skein_shell::Host;
 use smith_host_protocol::{ProgramSource, SourceAnswer};
-use smith_protocol_program::ENVIRONMENT_ENTRIES;
 
 pub(super) struct Runner {
     pub io: io::Io,
@@ -19,7 +18,6 @@ pub(super) struct Runner {
     pub completions: Queue<kernel::Complete>,
     pub submissions: Queue<kernel::Submit>,
     pub operations: u32,
-    pub launch_bytes: u64,
 }
 
 impl Host for Runner {
@@ -100,18 +98,6 @@ impl Host for Runner {
             && self.events.is_empty()
             && self.completions.is_empty()
             && self.submissions.is_empty()
-    }
-    fn worst_case(&self) -> u64 {
-        io::worst_case(&self.limits)
-            .and_then(|n| n.checked_add(smith_host_protocol::program_source_worst_case(DETAIL_BYTES)?))
-            .and_then(|n| n.checked_add(Queue::<io::Event>::worst_case(QUEUE)?))
-            .and_then(|n| n.checked_add(Queue::<io::Request>::worst_case(QUEUE)?))
-            .and_then(|n| n.checked_add(Queue::<kernel::Complete>::worst_case(QUEUE)?))
-            .and_then(|n| n.checked_add(Queue::<kernel::Submit>::worst_case(SUBMISSIONS)?))
-            .and_then(|n| n.checked_add(self.launch_bytes))
-            .and_then(|n| n.checked_add(skein_lib::List::<Box<[u8]>>::worst_case(ENVIRONMENT_ENTRIES)?))
-            .and_then(|n| n.checked_add(u64::try_from(size_of::<Self>()).ok()?))
-            .expect("bounded program runner")
     }
     fn operations(&self) -> u32 {
         self.operations

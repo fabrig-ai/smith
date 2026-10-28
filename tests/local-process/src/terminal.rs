@@ -490,10 +490,6 @@ impl Host for Terminal {
             && self.completions.is_empty()
             && self.submissions.is_empty()
     }
-    fn worst_case(&self) -> u64 {
-        // lib.md, section 7: each output stream owns one maximum delivery.
-        io::worst_case(&self.env.limits).expect("terminal bound") + 1_000_000 + u64::from(OUTPUT_READ) * 2
-    }
     fn operations(&self) -> u32 {
         io::operations(&self.env.limits).expect("terminal operations") + 1
     }

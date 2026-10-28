@@ -47,7 +47,6 @@ pub(super) fn store(path: &Path, bytes: Box<[u8]>, expected: file::Expect, entro
         closed: false,
         failure: None,
         kept: false,
-        maximum,
         events: Queue::with_capacity(4),
         completions: Queue::with_capacity(4),
         submissions: Queue::with_capacity(4),
@@ -66,7 +65,6 @@ struct Writing {
     terminal: bool,
     closed: bool,
     kept: bool,
-    maximum: u32,
     failure: Option<String>,
     events: Queue<file::Event>,
     completions: Queue<kernel::Complete>,
@@ -154,10 +152,5 @@ impl Host for Writing {
     }
     fn operations(&self) -> u32 {
         8
-    }
-    fn worst_case(&self) -> u64 {
-        file_layer::FileIo::worst_case(2, 4096, 1, self.maximum)
-            .and_then(|n| n.checked_add(65536))
-            .expect("bounded private writer")
     }
 }

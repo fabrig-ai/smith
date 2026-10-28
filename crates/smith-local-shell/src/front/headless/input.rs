@@ -130,21 +130,6 @@ impl Host for Input {
     fn operations(&self) -> u32 {
         io::operations(&self.env.limits).expect("resolved IO operations")
     }
-    fn worst_case(&self) -> u64 {
-        footprint(&self.env.limits, self.bytes.capacity()).expect("prompt phase admitted before allocation")
-    }
-}
-
-fn footprint(limits: &io::Limits, maximum: u32) -> Option<u64> {
-    io::worst_case(limits)
-        .and_then(|bytes| bytes.checked_add(u64::try_from(size_of::<Input>()).ok()?))
-        .and_then(|bytes| bytes.checked_add(List::<u8>::worst_case(maximum)?))
-        // lib.md, section 7: the prompt owns one maximum delivery.
-        .and_then(|bytes| bytes.checked_add(u64::from(PROMPT_READ)))
-        .and_then(|bytes| bytes.checked_add(Queue::<io::Event>::worst_case(64)?))
-        .and_then(|bytes| bytes.checked_add(Queue::<io::Request>::worst_case(64)?))
-        .and_then(|bytes| bytes.checked_add(Queue::<kernel::Complete>::worst_case(64)?))
-        .and_then(|bytes| bytes.checked_add(Queue::<kernel::Submit>::worst_case(64)?))
 }
 
 fn append_prompt(prompt: &mut List<u8>, bytes: &[u8]) -> bool {

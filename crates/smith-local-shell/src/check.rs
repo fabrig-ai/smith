@@ -374,34 +374,17 @@ fn derive_invocation(
         }
         smith_local_domain::AgentLimits::Spawned(_) => {}
     }
-    let mut front = crate::front::headless::Headless::new(
-        invocation.json,
-        skein_shell::OutputKind::Pipe,
-        limits.local.show_bytes,
-        limits.local.smith.run.outcome_bytes,
-    );
-    files.reserve(&mut front).map_err(|why| why.line())?;
     let handed = handed_accounts(resolved)?;
-    let screen = if interactive {
-        Some(
-            crate::front::interactive::Interactive::new(false, &resolved.agent.service.limits)
-                .ok_or_else(|| "interactive footprint overflows".to_owned())?,
-        )
-    } else {
-        None
-    };
+    if interactive {
+        crate::front::interactive::Interactive::new(false, &resolved.agent.service.limits)
+            .ok_or_else(|| "interactive view bound overflows".to_owned())?;
+    }
     let lower_routes = match limits.local.agent {
         smith_local_domain::AgentLimits::Inline(_) => resolved.agent.service.limits.routes,
         smith_local_domain::AgentLimits::Spawned(_) => 0,
     };
-    crate::Local::startup_memory(
-        &limits,
-        lower_routes,
-        Some(&handed),
-        if interactive { None } else { Some(&front) },
-        screen.as_ref(),
-    )
-    .map_err(|why| why.detail().to_owned())?;
+    crate::Local::startup_operations(&limits, lower_routes, Some(&handed), !interactive && files.has_output())
+        .map_err(|why| why.detail().to_owned())?;
     Ok((limits, result_file))
 }
 
@@ -486,25 +469,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_view_footprint_is_its_slots_times_its_projection_bound() {
+    fn interactive_checks_enable_the_live_front() {
         let mut resolved = execution_fixture();
         let (limits, _) = interactive_limits(&mut resolved).expect("interactive admission");
         let events = resolved.agent.service.limits.events.expect("interactive sink");
         assert!(events.front);
-        let view = smith_agent_service::events::front_worst_case(&resolved.agent.service.limits).unwrap();
-        let one = smith_agent_service::sinks::View::worst_case(
-            resolved
-                .agent
-                .service
-                .limits
-                .llm
-                .adapter
-                .client
-                .answer
-                .max(resolved.agent.service.limits.llm.adapter.client.strings),
-        )
-        .unwrap();
-        assert_eq!(view, one * 4);
         assert!(smith_local_service::worst_case(&limits).is_some());
     }
 
@@ -617,10 +586,10 @@ mod tests {
     }
 
     #[test]
-    fn the_interactive_chat_start_fits_the_standard_memory() {
+    fn interactive_chat_checks_derive_accounts_endpoints_and_the_live_sink() {
         // The smoke-tools Chat arm: standard profile, codex/gpt-6-luna
         // selected at low effort, an env token and an everything trace.
-        // Invocation derivation prices descriptors without reading the variable.
+        // Invocation derivation checks the selected sources without reading the variable.
         let certificate =
             skein_scratch::paths::workspace().join("tests/protocol-llm/fixtures/root.der").display().to_string();
         let text = format!(
@@ -644,45 +613,11 @@ mod tests {
         assert_eq!(resolved.limits.endpoints.len(), 1);
 
         // This is check's derive_invocation -> interactive_header path; its
-        // admission includes the trace header's reservation as well.
-        let memory = resolved.agent.memory;
-        let (limits, _) = interactive_limits(&mut resolved).expect("standard Chat startup admission");
+        // derivation includes the trace header's event limits as well.
+        interactive_limits(&mut resolved).expect("standard Chat startup checks");
         let events = resolved.agent.service.limits.events.expect("interactive trace and view");
         assert!(events.front);
         assert_eq!(events.sinks.destinations, 1);
-        let account = resolved.accounts.first().expect("one selected account");
-        let mut locations = skein_lib::List::with_capacity(1);
-        locations
-            .push(crate::credentials::Location {
-                account: account.number,
-                name: account.name.clone(),
-                source: crate::credentials::source(&account.fields, &settings, false, &account.name, None),
-            })
-            .expect("one handed credential location");
-        let handed = crate::credentials::Prepared {
-            sources: skein_lib::List::with_capacity(1),
-            lendable: skein_lib::Map::with_capacity(1),
-            locations,
-            limits: crate::credentials::limits(
-                resolved.agent.service.limits.io,
-                1,
-                resolved.agent.profile.policy.refresh_lead,
-            ),
-        };
-        let screen = crate::front::interactive::Interactive::new(false, &resolved.agent.service.limits)
-            .expect("interactive footprint");
-        // Ask startup's complete owner for the number, including credential
-        // and Map routing allocations and the selected model's inline effects.
-        let (worst_case, _) = crate::Local::startup_memory(
-            &limits,
-            resolved.agent.service.limits.routes,
-            Some(&handed),
-            None,
-            Some(&screen),
-        )
-        .unwrap_or_else(|why| panic!("{}", why.detail()));
-        let margin = memory.checked_sub(worst_case).expect("Chat startup fits declared memory");
-        println!("CHAT_START worst_case={worst_case} memory={memory} margin={margin}");
     }
 }
 

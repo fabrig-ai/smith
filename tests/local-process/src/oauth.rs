@@ -270,9 +270,6 @@ impl Host for Browser {
             && self.completions.is_empty()
             && self.submissions.is_empty()
     }
-    fn worst_case(&self) -> u64 {
-        browser_worst_case()
-    }
     fn operations(&self) -> u32 {
         io::operations(&self.env.limits).expect("browser operations")
     }
@@ -311,12 +308,4 @@ fn browser_limits() -> io::Limits {
         close_timeout: Duration::from_secs(1),
         retry: Duration::from_millis(1),
     }
-}
-
-/// Complete browser IO, TLS and bounded queue-payload ownership allowance.
-#[must_use]
-pub fn browser_worst_case() -> u64 {
-    io::worst_case(&browser_limits()).expect("browser IO bound")
-        + tls::worst_case(&tls_limits()).expect("browser TLS bound")
-        + 8_388_608
 }

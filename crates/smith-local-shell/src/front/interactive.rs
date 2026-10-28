@@ -96,17 +96,6 @@ impl Live {
         matches!(self.screen, Screen::Plain)
     }
 
-    /// Price the model names and one retained budget snapshot beside the typed queue.
-    #[must_use]
-    pub fn worst_case(conversations: u32, name_bytes: u32) -> Option<u64> {
-        Map::<Token, Model>::worst_case(conversations)?
-            .checked_add(u64::from(conversations).checked_mul(u64::from(name_bytes).checked_mul(3)?)?)?
-            // The budget's labels, one copied model, and the output's names coexist.
-            .checked_add(u64::from(name_bytes).checked_mul(8)?)?
-            .checked_add(4096)?
-            .checked_add(u64::try_from(size_of::<Self>()).ok()?)
-    }
-
     /// Move streamed text into the terminal; status joins tolerate a dropped opening.
     pub fn record(&mut self, record: View) -> Option<Box<[u8]>> {
         match record {
@@ -248,7 +237,6 @@ fn verdict(value: &Verdict) -> &str {
 /// One product front end, holding its screen and its startup reservation.
 pub struct Interactive {
     screen: Live,
-    memory: u64,
     remote: super::remote::Remote,
     remote_config: Option<(Box<[u8]>, smith_domain::run::Budget)>,
 }
@@ -263,21 +251,11 @@ impl Interactive {
     /// Prepare the bounded screen before any resource is adopted.
     #[must_use]
     pub fn new(plain: bool, limits: &smith_agent_service::Limits) -> Option<Self> {
-        let conversations = limits.domain.run.conversations;
-        let name_bytes = u32::try_from(smith_events::DETAIL_BYTES).ok()?;
         let client = limits.llm.adapter.client;
-        // The writer can retain one popped view while the sink fills its slots.
-        let memory = Live::worst_case(conversations, name_bytes)?
-            .checked_add(View::worst_case(client.answer.max(client.strings))?)?;
-        let mut screen = Live::new(plain, conversations);
+        View::worst_case(client.answer.max(client.strings))?;
+        let mut screen = Live::new(plain, limits.domain.run.conversations);
         screen.accounts = Map::with_capacity(limits.domain.accounts);
-        let memory = memory.checked_add(Map::<u32, &'static str>::worst_case(limits.domain.accounts)?)?;
-        Some(Self {
-            screen,
-            memory: memory.checked_add(super::remote::Remote::worst_case(super::remote::TEXT_BYTES)?)?,
-            remote: super::remote::Remote::new(super::remote::TEXT_BYTES),
-            remote_config: None,
-        })
+        Some(Self { screen, remote: super::remote::Remote::new(super::remote::TEXT_BYTES), remote_config: None })
     }
 
     pub(crate) fn account(&mut self, number: u32, words: &'static str, main: bool) {
@@ -321,12 +299,6 @@ impl Interactive {
     /// Render the next typed record from the one sink's live queue.
     pub(crate) fn record(&mut self, record: View) -> Option<Box<[u8]>> {
         self.screen.record(record)
-    }
-
-    /// The outer shell's retained live-view footprint.
-    #[must_use]
-    pub const fn worst_case(&self) -> u64 {
-        self.memory
     }
 }
 

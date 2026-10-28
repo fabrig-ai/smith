@@ -1,6 +1,6 @@
 # Uses of the old forms (skein's docs/design/draft/dynamic-memory.md, 7): each count may only fall.
 # Lower them with `python3 -I -B scripts/old_forms.py --write`; only the director raises one, recorded in a `# Raised:` line.
-max_out 299
+max_out 297
 JournalRoom 0
 takes 0
-worst_case 979
+worst_case 877

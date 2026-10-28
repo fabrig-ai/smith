@@ -90,7 +90,6 @@ pub struct Local {
     announcement: Announcement,
     started: Option<Time>,
     last_line: Option<Box<[u8]>>,
-    worst: u64,
     operations: u32,
 }
 
@@ -146,7 +145,6 @@ impl Local {
                 false,
                 skein_shell::OutputKind::Pipe,
                 config.limits.local.show_bytes,
-                config.limits.local.smith.run.outcome_bytes,
             )),
             domain::Mode::Chat { .. } => None,
         });
@@ -202,20 +200,12 @@ impl Local {
         let outer_queue =
             queue.checked_mul(2).ok_or_else(|| configuration_failure(derivation_refusal("local_queue")))?;
         let io_limits = config.limits.process.io;
-        let (worst, operations) = Self::startup_memory(
+        let operations = Self::startup_operations(
             &config.limits,
             lower_routes,
             handed.as_ref(),
-            headless.as_ref(),
-            interactive.as_ref(),
+            headless.as_ref().is_some_and(|front| front.result_file),
         )?;
-        let worst = worst
-            .checked_add(match &producer {
-                Some(configuration) => Self::producer_memory(configuration)
-                    .ok_or_else(|| configuration_failure(derivation_refusal("local_trace")))?,
-                None => 0,
-            })
-            .ok_or_else(|| configuration_failure(derivation_refusal("local_trace")))?;
         if handed.as_ref().is_some_and(memory::has_programs) {
             config.limits.process.io.sockets = config
                 .limits
@@ -295,7 +285,6 @@ impl Local {
             announcement: Announcement::BeforeStart,
             started: None,
             last_line: None,
-            worst,
             operations,
         };
         local
@@ -331,15 +320,9 @@ impl Local {
         Ok(local)
     }
 
-    /// Price and configure the spawned product's bounded trace producer.
-    pub fn prepare_trace(&mut self, configuration: &agent::Config) -> Result<(), crate::startup::Failure> {
-        let bytes = Self::producer_memory(configuration)
-            .ok_or_else(|| configuration_failure(derivation_refusal("local_trace")))?;
-        let worst =
-            self.worst.checked_add(bytes).ok_or_else(|| configuration_failure(derivation_refusal("local_trace")))?;
+    /// Configure the spawned product's bounded trace producer.
+    pub fn prepare_trace(&mut self, configuration: &agent::Config) {
         self.service.prepare_trace(configuration);
-        self.worst = worst;
-        Ok(())
     }
 
     /// Adopt an opened product trace before the first loop pass.
@@ -909,9 +892,6 @@ impl Host for Local {
         })
     }
 
-    fn worst_case(&self) -> u64 {
-        self.worst
-    }
     fn operations(&self) -> u32 {
         self.operations
     }

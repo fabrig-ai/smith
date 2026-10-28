@@ -234,9 +234,6 @@ impl Host for LocalProcess {
     fn exit(&self) -> Option<kernel::Exit> {
         self.local.exit()
     }
-    fn worst_case(&self) -> u64 {
-        self.local.worst_case() + 1_048_576 + (size_of::<local::Fact>() * 256 + size_of::<Self>()) as u64
-    }
     fn operations(&self) -> u32 {
         self.local.operations()
     }
@@ -328,9 +325,6 @@ impl Host for BrowserProcess {
             && self.completions.is_empty()
             && self.submissions.is_empty()
     }
-    fn worst_case(&self) -> u64 {
-        crate::oauth::browser_worst_case() + 131_072
-    }
     fn operations(&self) -> u32 {
         128
     }
@@ -412,9 +406,6 @@ impl Host for IssuerProcess {
     }
     fn is_empty(&self) -> bool {
         self.peer.is_empty()
-    }
-    fn worst_case(&self) -> u64 {
-        self.peer.worst_case() + size_of::<Self>() as u64
     }
     fn operations(&self) -> u32 {
         self.peer.operations()
@@ -510,9 +501,6 @@ impl Host for Proc {
             Self::LingeringAgent(_) => None,
             _ => self.host().exit(),
         }
-    }
-    fn worst_case(&self) -> u64 {
-        self.host().worst_case() + size_of::<Self>() as u64 + 4096
     }
     fn operations(&self) -> u32 {
         self.host().operations()
@@ -663,7 +651,7 @@ pub fn make_local(spawn: &kernel::Spawn, inherited: &Inherited) -> Proc {
     if let Some(configuration) = &spawned
         && launch.traced
     {
-        local.prepare_trace(configuration).expect("priced trace");
+        local.prepare_trace(configuration);
     }
     if launch.traced {
         let fd = inherited.appends.iter().find(|(name, _)| name.as_ref() == b"product-trace").expect("trace fd").1;

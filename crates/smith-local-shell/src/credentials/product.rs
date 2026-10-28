@@ -3,7 +3,7 @@
 //! for repeated shell lends (shell.md, section 7.1). Locations contain no values.
 use super::{Credential, Refusal, Source, environment, inspect, source};
 use crate::settings::resolve::Resolved;
-use skein_lib::{Duration, List, Map, Queue, Wall};
+use skein_lib::{Duration, List, Map, Wall};
 use smith_local_service as service;
 use smith_protocol_channel::GrantValue;
 
@@ -22,42 +22,6 @@ pub struct Prepared {
     /// Last lent generation (zero at startup) and value per shell-owned account.
     pub lendable: Map<u32, (u64, GrantValue)>,
     pub limits: skein_oauth_accounts::Limits,
-}
-
-impl Prepared {
-    /// Price the driver, its translated outputs and source-specific rendering.
-    #[must_use]
-    pub fn worst_case(&self) -> Option<u64> {
-        let mut bytes = service::accounts_worst_case(&self.limits)?
-            .checked_add(List::<Location>::worst_case(self.locations.capacity())?)?
-            .checked_add(Map::<u32, (u64, GrantValue)>::worst_case(self.locations.capacity())?)?
-            .checked_add(Queue::<smith_local_service::CredentialRequest>::worst_case(service::ACCOUNTS_MAX_OUT)?)?
-            .checked_add(
-                u64::from(self.limits.client.document.token_bytes).checked_mul(u64::from(service::ACCOUNTS_MAX_OUT))?,
-            )?;
-        for location in &self.locations {
-            let source = match &location.source {
-                Source::Env { variable, .. } => variable.len(),
-                Source::SignIn { file, required_scopes } => file
-                    .as_os_str()
-                    .as_encoded_bytes()
-                    .len()
-                    .checked_add(required_scopes.as_ref().map_or(0, |scopes| scopes.len()))?,
-                Source::Key { file } => {
-                    bytes = bytes.checked_add(u64::from(crate::local_host::token_limits().token_bytes))?;
-                    file.as_os_str().as_encoded_bytes().len()
-                }
-                Source::Program { name } => {
-                    bytes = bytes.checked_add(u64::try_from(name.len()).ok()?)?;
-                    name.len()
-                }
-                Source::Nothing => 0,
-            };
-            let length = location.name.len().checked_add(source)?.checked_add(256)?;
-            bytes = bytes.checked_add(u64::try_from(length).ok()?.checked_mul(4)?)?;
-        }
-        Some(bytes)
-    }
 }
 
 pub(crate) fn codex(resolved: &Resolved, account: u32) -> bool {

@@ -193,11 +193,6 @@ impl Remote {
             }),
         }
     }
-
-    pub(super) fn worst_case(cap: u32) -> Option<u64> {
-        // Prefix, collected told text, output, a copied status and popped piece.
-        u64::from(cap).checked_mul(3)?.checked_add(8192)?.checked_add(u64::try_from(size_of::<Self>()).ok()?)
-    }
 }
 
 fn millis(duration: Duration) -> u64 {

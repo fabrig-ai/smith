@@ -59,11 +59,8 @@ impl Files {
         })
     }
 
-    pub(crate) fn reserve(&self, front: &mut crate::front::headless::Headless) -> Result<(), Refused> {
-        front.file_memory =
-            self.live_memory().ok_or_else(|| Refused::Usage(Usage("the product file bound overflows".into())))?;
-        front.cleanup_memory = self.cleanup_memory();
-        Ok(())
+    pub(crate) fn has_output(&self) -> bool {
+        self.target.is_some()
     }
 
     pub(crate) fn teardown_bound(&self) -> Result<Duration, Refused> {
@@ -89,21 +86,11 @@ impl Files {
         super::prepare_stream(agent, chat, limits, json, wall, self.teardown_bound()?, front)
     }
 
-    pub(super) fn live_memory(&self) -> Option<u64> {
-        if self.target.is_some() { ResultFile::footprint(self.maximum) } else { Some(0) }
-    }
-
     pub(super) fn prepare_output(&mut self, seed: u64) -> Result<(), Refused> {
         if let Some(path) = &self.target {
             self.output = Some(Box::new(ResultFile::open(path, self.maximum, self.timeout, seed)?));
         }
         Ok(())
-    }
-
-    pub(super) fn cleanup_memory(&self) -> u64 {
-        // The shell retains the full path; a warning can also retain its
-        // lossy UTF-8 conversion, at three bytes for each input byte.
-        if self.temporary.is_some() { 4 * PATH_BYTES } else { 0 }
     }
 
     pub(super) fn create_temporary(&mut self) -> Result<(), Refused> {
@@ -209,7 +196,6 @@ pub(crate) struct ResultFile {
     request: Option<file::Request>,
     state: State,
     failure: Option<Failure>,
-    bound: u64,
     events: Queue<file::Event>,
     completions: Queue<kernel::Complete>,
     submissions: Queue<kernel::Submit>,
@@ -237,7 +223,7 @@ impl ResultFile {
         }
     }
 
-    fn new(io: file_layer::FileIo, directory: Option<Token>, path: &Path, maximum: u32) -> Self {
+    fn new(io: file_layer::FileIo, directory: Option<Token>, path: &Path) -> Self {
         Self {
             io,
             directory,
@@ -246,7 +232,6 @@ impl ResultFile {
             request: None,
             state: State::Waiting,
             failure: None,
-            bound: Self::footprint(maximum).expect("file footprint fits"),
             events: Queue::with_capacity(4),
             completions: Queue::with_capacity(4),
             submissions: Queue::with_capacity(4),
@@ -258,7 +243,7 @@ impl ResultFile {
         let mut io = file_layer::FileIo::with_whole_limit(2, 4096, 1, maximum, timeout);
         let directory = io.adopt_root(root(parent)?).expect("one result directory");
         io.seed_randomness(seed);
-        Ok(Self::new(io, Some(directory), path, maximum))
+        Ok(Self::new(io, Some(directory), path))
     }
 
     fn empty_directory(path: &Path, store: Option<kernel::Fd>, parent: Option<kernel::Fd>, timeout: Duration) -> Self {
@@ -276,7 +261,7 @@ impl ResultFile {
             }
         };
         let store = store.map(|root| io.adopt_root(root).expect("unfinished store slot"));
-        let mut cleanup = Self::new(io, directory, path, 1);
+        let mut cleanup = Self::new(io, directory, path);
         cleanup.failure = failure;
         match store {
             Some(file) => {
@@ -368,17 +353,6 @@ impl ResultFile {
             State::Waiting | State::Closed => unreachable!("only active file requests fail"),
         }
     }
-
-    fn footprint(maximum: u32) -> Option<u64> {
-        file_layer::FileIo::worst_case(2, 4096, 1, maximum)?
-            // Retained path, its lossy rendering (up to three bytes per input
-            // byte), and the formatted failure beside it, including growth.
-            .checked_add(PATH_BYTES.checked_mul(10)?.checked_add(511)?)?
-            .checked_add(Queue::<file::Event>::worst_case(4)?)?
-            .checked_add(Queue::<kernel::Complete>::worst_case(4)?)?
-            .checked_add(Queue::<kernel::Submit>::worst_case(4)?)?
-            .checked_add(u64::try_from(size_of::<Self>()).ok()?)
-    }
 }
 
 impl Host for ResultFile {
@@ -463,9 +437,6 @@ impl Host for ResultFile {
     fn operations(&self) -> u32 {
         4
     }
-    fn worst_case(&self) -> u64 {
-        self.bound
-    }
 }
 
 #[cfg(test)]
@@ -476,7 +447,7 @@ mod tests {
         let mut io = file_layer::FileIo::with_whole_limit(2, 4096, 1, 4096, Duration::from_secs(1));
         let directory = io.adopt_root(kernel::Fd::new(41)).unwrap();
         io.seed_randomness(1);
-        ResultFile::new(io, Some(directory), Path::new("answer.txt"), 4096)
+        ResultFile::new(io, Some(directory), Path::new("answer.txt"))
     }
 
     fn complete(file: &mut ResultFile, submit: kernel::Submit, result: Result<kernel::Done, kernel::Error>) {
@@ -550,13 +521,10 @@ mod tests {
     }
 
     #[test]
-    fn the_result_owner_prices_its_retained_text_paths_and_queues() {
-        let span = skein_heap::Span::start();
+    fn the_result_owner_keeps_four_kernel_operations() {
         let mut file = file();
         file.begin(vec![b'x'; 4096].into_boxed_slice());
         file.iterate(Time::ZERO, Wall::from_nanos(0));
-        let measured = span.end();
-        assert!(u64::try_from(measured.peak).unwrap() <= file.worst_case());
         assert_eq!(file.operations(), 4);
     }
 
@@ -573,9 +541,8 @@ mod tests {
     }
 
     #[test]
-    fn startup_private_cleanup_prices_the_path_and_its_native_file_owner() {
+    fn startup_private_cleanup_settles_after_a_long_path_removal_fails() {
         let path = PathBuf::from(format!("{}private", "p/".repeat(2000)));
-        let span = skein_heap::Span::start();
         let mut cleanup = ResultFile::empty_directory(
             &path,
             Some(kernel::Fd::new(41)),
@@ -589,8 +556,6 @@ mod tests {
         complete(&mut cleanup, removing, Err(kernel::Error::NotEmpty));
         let closing = cleanup.submissions.pop().unwrap();
         complete(&mut cleanup, closing, Ok(kernel::Done::Nothing));
-        let measured = span.end();
-        assert!(u64::try_from(measured.peak).unwrap() <= cleanup.worst_case());
         assert!(cleanup.is_empty());
     }
 }
