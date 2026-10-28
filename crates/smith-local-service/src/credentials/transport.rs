@@ -21,28 +21,18 @@ impl Accounts {
 
     pub(super) fn socket_up(&mut self, now: Time, wall: Wall) {
         let env = Env { now, wall, limits: self.limits.io };
-        if self.socket_events.room() >= io::MAX_OUT_RESUME.events
-            && self.socket_submissions.room() >= io::MAX_OUT_RESUME.submissions
-            && self.sockets.is_ready()
-        {
+        if self.socket_submissions.room() >= io::MAX_OUT_RESUME.submissions && self.sockets.is_ready() {
             io::resume(&mut self.sockets, &env, &mut self.socket_events, &mut self.socket_submissions);
         }
-        if self.socket_events.room() >= io::MAX_OUT_UP.events
-            && self.socket_submissions.room() >= io::MAX_OUT_UP.submissions
+        if self.socket_submissions.room() >= io::MAX_OUT_UP.submissions
             && let Some(complete) = self.socket_completions.pop()
         {
             io::up(&mut self.sockets, &env, complete, &mut self.socket_events, &mut self.socket_submissions);
         }
-        if self.socket_events.room() >= io::MAX_OUT_FIRE.events
-            && self.socket_submissions.room() >= io::MAX_OUT_FIRE.submissions
-            && self.sockets.is_due(now)
-        {
+        if self.socket_submissions.room() >= io::MAX_OUT_FIRE.submissions && self.sockets.is_due(now) {
             io::fire(&mut self.sockets, &env, &mut self.socket_events, &mut self.socket_submissions);
         }
-        if self.out.room() >= oauth::MAX_OUT_UP.above
-            && self.socket_requests.room() >= oauth::MAX_OUT_UP.io
-            && let Some(event) = self.socket_events.pop()
-        {
+        if let Some(event) = self.socket_events.pop() {
             let env = Env { now, wall, limits: self.limits };
             self.driver.up(&env, event, &mut self.out, &mut self.socket_requests, &mut self.file_requests);
         }
