@@ -6,7 +6,7 @@ fn program_invocations_fit_the_standard_memory() {
     // Agent program paths are bounded at 4096 bytes; /programs consumes nine.
     const PROGRAM_PATH_BYTES: usize = 4096;
     const PROGRAMS_SUFFIX_BYTES: usize = 9;
-    const MEMORY: u64 = 2_281_701_376;
+    let memory = smith_agent_service::profile::standard().declared.memory;
     const BEFORE_CHAT: u64 = 885_273_688;
     const LIVE_GROWTH: u64 = 64 * 1024;
     const MARGIN: u64 = 134_217_728;
@@ -50,7 +50,7 @@ fn program_invocations_fit_the_standard_memory() {
             .expect("program invocation startup admission");
         assert!(matches!(limits.local.agent, smith_local_domain::AgentLimits::Spawned(_)), "program placement");
         assert!(limits.inline.is_none(), "spawned composition has no inline effects");
-        assert_eq!(resolved.agent.memory, MEMORY);
+        assert_eq!(resolved.agent.memory, memory);
         assert_eq!(resolved.agent.service.limits.events.is_some(), interactive || json);
         let producer = crate::Local::producer_memory(&resolved.agent.service).expect("priced producer");
         if interactive || json {
@@ -64,8 +64,8 @@ fn program_invocations_fit_the_standard_memory() {
                 "program chat grew beyond 64 KiB: before={BEFORE_CHAT}; after={worst}"
             );
         }
-        let margin = MEMORY.checked_sub(worst).expect("program invocation fits shipped cap");
+        let margin = memory.checked_sub(worst).expect("program invocation fits shipped cap");
         assert!(margin >= MARGIN, "{name}: worst_case={worst}; margin={margin}");
-        println!("PROGRAM_{name} worst_case={worst} memory={MEMORY} margin={margin}");
+        println!("PROGRAM_{name} worst_case={worst} memory={memory} margin={margin}");
     }
 }

@@ -265,7 +265,7 @@ fn omitted_memory_uses_the_standard_process_declaration() {
     let mut document = shaped_document();
     document["profile"]["declared"].as_object_mut().expect("declarations").remove("memory");
     let configuration = parse_value(&document).expect("default memory fits");
-    assert_eq!(configuration.memory, 2_281_701_376);
+    assert_eq!(configuration.memory, smith_agent_service::profile::standard().declared.memory);
 }
 
 #[test]

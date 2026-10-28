@@ -74,7 +74,7 @@ fn an_unbound_million_token_model_fits_default_memory() {
     let service = worst_case(&configuration.service.limits, &configuration.service.llm_endpoints).unwrap();
     let program = program_worst_case(&configuration.service).unwrap();
     println!("MILLION service={service} program={program} complete={}", service + program);
-    assert_eq!(configuration.memory, 2_281_701_376);
+    assert_eq!(configuration.memory, smith_agent_service::profile::standard().declared.memory);
     super::super::check_memory(&configuration.service, configuration.memory).expect("complete admission");
 }
 
@@ -86,7 +86,7 @@ fn a_bound_million_token_model_fits_default_memory() {
     let service = worst_case(&configuration.service.limits, &configuration.service.llm_endpoints).unwrap();
     let program = program_worst_case(&configuration.service).unwrap();
     println!("MILLION_BOUND service={service} program={program} complete={}", service + program);
-    assert_eq!(configuration.memory, 2_281_701_376);
+    assert_eq!(configuration.memory, smith_agent_service::profile::standard().declared.memory);
     super::super::check_memory(&configuration.service, configuration.memory).expect("complete admission");
     assert!(program > 0, "a bound program is charged");
     let refusal = super::super::check_memory(&configuration.service, service + program - 1)
