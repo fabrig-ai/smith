@@ -84,7 +84,7 @@ struct Measured {
     retain_message: bool,
 }
 impl Measured {
-    fn new(limits: Limits, caller_reserve: u64) -> Self {
+    fn new(limits: Limits, ceiling: u64) -> Self {
         let out = Queue::with_capacity(host::max_out(&limits));
         let held_messages = Vec::with_capacity(usize::try_from(limits.agents).expect("finite agent count"));
         let meter = Meter::new();
@@ -94,7 +94,7 @@ impl Measured {
             env: Env { now: Time::ZERO, wall: Wall::EPOCH, limits },
             out,
             meter,
-            bound: host::worst_case(&limits).expect("valid").checked_add(caller_reserve).expect("small"),
+            bound: ceiling,
             held_start: None,
             held_messages,
             retain_message: false,
@@ -196,15 +196,18 @@ impl Measured {
     }
 }
 
+// Peaks for 1, 8 and 32 slots retaining maximum starts and full queued replies.
+const FULL_SLOT_CEILINGS: [(u32, u64); 3] = [(1, 97_000), (8, 240_000), (32, 700_000)];
+
 #[test]
 fn maximum_v2_starts_and_full_queued_replies_fit_every_slot() {
-    for agents in [1, 8, 32] {
+    for (agents, ceiling) in FULL_SLOT_CEILINGS {
         let mut limits = smith_host_world::limits();
         limits.agents = agents;
         limits.charter_bytes = 4096;
         limits.transcript_bytes = 2048;
         limits.answered_bytes = 1024;
-        let mut measured = Measured::new(limits, 0);
+        let mut measured = Measured::new(limits, ceiling);
         let owners: Vec<Token> = (1..=u64::from(agents)).map(|client| measured.spawn(client)).collect();
         let retained = u64::from(agents) * (limits.charter_bytes + limits.transcript_bytes + limits.answered_bytes);
         assert!(measured.meter.held() >= retained, "maximum starts actually retained");
@@ -281,6 +284,9 @@ fn maximum_v2_starts_and_full_queued_replies_fit_every_slot() {
     }
 }
 
+// Peak while IO retains the maximum Start beside a full pre-read message queue.
+const START_IO_CEILING: u64 = 220_000;
+
 #[test]
 fn maximum_start_io_ownership_coexists_with_full_pre_read_message_queue() {
     let mut limits = smith_host_world::limits();
@@ -292,7 +298,7 @@ fn maximum_start_io_ownership_coexists_with_full_pre_read_message_queue() {
     limits.answered_bytes = 16_384;
     limits.message_bytes = 16_384;
     let caller = limits.charter_bytes + limits.transcript_bytes + limits.answered_bytes;
-    let mut measured = Measured::new(limits, caller);
+    let mut measured = Measured::new(limits, START_IO_CEILING);
     let owner = measured.spawn(1);
     measured.step(
         Input::Parent(parent::Event::Message {
@@ -319,7 +325,7 @@ fn maximum_start_io_ownership_coexists_with_full_pre_read_message_queue() {
     }
     assert!(measured.held_start.is_some(), "actual IO still owns the maximum first Send");
     assert!(measured.meter.held() >= caller + u64::from(limits.messages) * (limits.message_bytes - 2));
-    // The domain max and caller ownership sum are checked at every step;
+    // The scenario ceiling includes domain and caller ownership at every step;
     // dropping the caller's Start is a send terminal ownership boundary.
     measured.held_start = None;
     measured.up(owner, Up::Admitted);
@@ -327,10 +333,13 @@ fn maximum_start_io_ownership_coexists_with_full_pre_read_message_queue() {
     measured.cleanup(owner, 0, true);
 }
 
+// Peak while maximum delivery receipts coexist with shutdown rights.
+const DELIVERY_SHUTDOWN_CEILING: u64 = 54_000;
+
 #[test]
 fn delivery_replies_and_shutdown_rights_stay_priced() {
     let limits = smith_host_world::limits();
-    let mut measured = Measured::new(limits, 0);
+    let mut measured = Measured::new(limits, DELIVERY_SHUTDOWN_CEILING);
     let owner = measured.spawn(1);
     measured.start(owner);
     measured.step(Input::Process(process::Event::Sent { owner }), false);
@@ -384,24 +393,24 @@ fn delivery_replies_and_shutdown_rights_stay_priced() {
 #[test]
 fn checked_capacity_arithmetic_refuses_unrepresentable_or_incompatible_caps() {
     let mut limits = smith_host_world::limits();
-    assert!(host::worst_case(&limits).is_some());
+    assert!(host::valid(&limits));
     limits.answer_bytes = Delivered::worst_case() - 1;
-    assert_eq!(host::worst_case(&limits), None);
+    assert!(!host::valid(&limits));
     limits = smith_host_world::limits();
     limits.messages = u32::MAX;
-    assert_eq!(host::worst_case(&limits), None);
-    limits = smith_host_world::limits();
-    limits.charter_bytes = u64::MAX;
-    assert_eq!(host::worst_case(&limits), None);
+    assert!(!host::valid(&limits));
     limits = smith_host_world::limits();
     limits.turns = 0;
-    assert_eq!(host::worst_case(&limits), None);
+    assert!(!host::valid(&limits));
 }
+
+// Peak while a spawning agent owns its maximum carried Start messages.
+const CARRIED_START_CEILING: u64 = 13_000;
 
 #[test]
 fn maximum_carried_start_messages_are_owned_and_priced_during_spawn() {
     let limits = smith_host_world::limits();
-    let mut measured = Measured::new(limits, 0);
+    let mut measured = Measured::new(limits, CARRIED_START_CEILING);
     let mut start = maximum_start(limits);
     start.messages = (0..limits.messages)
         .map(|name| host::Message {

@@ -252,12 +252,12 @@ fn cancel_fire_resume_terminal_and_reclaim_settle_exactly_once() {
 #[test]
 fn checked_limits_require_one_concrete_turn_and_positive_wall_time() {
     let mut limits = bounds();
-    assert!(crate::worst_case(&limits).is_some());
+    assert!(crate::valid(&limits));
     limits.window.bytes = smith::max_turn_bytes(&limits.smith).expect("turn bound") - 1;
-    assert_eq!(crate::worst_case(&limits), None);
+    assert!(!crate::valid(&limits));
     limits = bounds();
     limits.wall_time = Duration::ZERO;
-    assert_eq!(crate::worst_case(&limits), None);
+    assert!(!crate::valid(&limits));
 }
 
 #[test]
@@ -386,7 +386,7 @@ fn a_slot_roots_undrained_facts_refuse_nothing_and_are_all_drained() {
 fn lifecycle_fact_estimates_do_not_restrict_valid_limits() {
     for facts in [0, 1, 2, u32::MAX] {
         let limits = Limits { facts, ..bounds() };
-        assert!(crate::worst_case(&limits).is_some());
+        assert!(crate::valid(&limits));
     }
 }
 
@@ -658,4 +658,46 @@ fn grant_forms_keep_their_policy_at_start_and_refresh() {
             assert_eq!(decoded, Err(host::Invalid::Grants), "program admission remains restricted");
         }
     }
+}
+
+#[test]
+fn invalid_limits_are_refused() {
+    let limits = bounds();
+    assert!(crate::valid(&limits));
+    let mut invalid = limits;
+    invalid.window.turns = 0;
+    assert!(!crate::valid(&invalid));
+    invalid = limits;
+    invalid.window.bytes = smith::max_turn_bytes(&limits.smith).expect("turn bound") - 1;
+    assert!(!crate::valid(&invalid));
+    invalid = limits;
+    invalid.wall_time = Duration::ZERO;
+    assert!(!crate::valid(&invalid));
+    invalid = limits;
+    invalid.smith.session.history_bytes = u64::MAX;
+    assert_eq!(smith::max_turn_bytes(&invalid.smith), None);
+    assert!(!crate::valid(&invalid));
+    invalid = limits;
+    invalid.smith.run.offer_messages = 0;
+    assert!(!crate::valid(&invalid));
+    // A heap total can overflow while all constructor and edge bounds fit.
+    let mut large = limits;
+    large.smith.configured_model_bytes = u64::MAX;
+    assert!(crate::valid(&large));
+    // Each root capacity fits, but its saturated output count leaves no room
+    // for the inline routing outputs. Only this wrapper's count refuses it.
+    invalid = limits;
+    invalid.smith.session.tools.calls = 100_000_000;
+    assert!(smith::valid(&invalid.smith));
+    assert!(!crate::valid(&invalid));
+    // The root/child guards also reject these tighter capacity failures.
+    invalid = limits;
+    invalid.smith.session.tools.kits = u32::MAX;
+    assert!(!crate::valid(&invalid));
+    invalid = limits;
+    invalid.smith.run.calls = u32::MAX;
+    assert!(!crate::valid(&invalid));
+    invalid = limits;
+    invalid.smith.run.conversations = u32::MAX;
+    assert!(!crate::valid(&invalid));
 }

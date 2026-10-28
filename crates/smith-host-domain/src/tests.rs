@@ -382,7 +382,7 @@ fn host_mount_metadata_admission_agrees_with_optional_workspace_and_git_kind() {
             ) => panic!("metadata refuses before lower spawn"),
         }
     }
-    assert!(crate::worst_case(&crate::Limits { path_bytes: 4097, ..receiving }).is_none());
+    assert!(!crate::valid(&crate::Limits { path_bytes: 4097, ..receiving }));
 }
 
 #[test]
@@ -626,5 +626,26 @@ fn a_source_name_reads_back_its_bytes() {
         let name = crate::SourceName::new(bytes).expect("channel name");
         assert_eq!(name.as_bytes(), bytes);
         assert_eq!(format!("{name:?}"), debug);
+    }
+}
+
+#[test]
+fn invalid_limits_are_refused() {
+    let limits = limits();
+    assert!(crate::valid(&limits));
+    assert!(crate::valid(&crate::Limits { charter_bytes: u64::MAX, ..limits }));
+    assert!(crate::valid(&crate::Limits { path_bytes: 4096, ..limits }));
+    for invalid in [
+        crate::Limits { path_bytes: 4097, ..limits },
+        crate::Limits { turns: 0, ..limits },
+        crate::Limits { turn_bytes: 0, ..limits },
+        crate::Limits { unacknowledged_bytes: limits.turn_bytes - 1, ..limits },
+        crate::Limits { answer_bytes: crate::Delivered::worst_case() - 1, ..limits },
+        // Leave room in the outbox so only the entry output count overflows.
+        crate::Limits { calls: u32::MAX - 8, messages: 0, accounts: 0, turns: 1, ..limits },
+        crate::Limits { messages: u32::MAX, ..limits },
+        crate::Limits { agents: u32::MAX / 3 + 1, ..limits },
+    ] {
+        assert!(!crate::valid(&invalid));
     }
 }

@@ -47,9 +47,8 @@ fn output_count(limits: &Limits) -> Option<u32> {
 /// The shell refuses limits for which this is false.
 #[must_use]
 pub fn valid(limits: &Limits) -> bool {
-    let turn_bytes = match smith::max_turn_bytes(&limits.smith) {
-        Some(bytes) => bytes,
-        None => return false,
+    let Some(turn_bytes) = smith::max_turn_bytes(&limits.smith) else {
+        return false;
     };
     limits.window.turns > 0
         && limits.window.bytes >= turn_bytes

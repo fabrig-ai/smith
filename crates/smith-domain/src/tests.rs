@@ -23,7 +23,7 @@ use smith_domain_session as session;
 use crate::limits;
 use crate::llm::{Block, Completion, Decoded, Message, Problem, Prompt, Returned, Role, Said, Served, Stop, Usage};
 use crate::tools::{self, Call, Name, Op, Part, Path, Place};
-use crate::{Domain, Event, Fact, Limits, Request, fire, max_out, resume, step, worst_case};
+use crate::{Domain, Event, Fact, Limits, Request, fire, max_out, resume, step, valid};
 
 #[test]
 fn oversized_saved_answer_says_the_call_was_decided() {
@@ -235,9 +235,9 @@ fn decoded_receiving_cells_are_required_before_provider_work() {
     limits.decoded_call_bytes = u64::from(limits.session.completion_blocks)
         .checked_mul(u64::try_from(size_of::<Decoded>()).expect("cell size fits"))
         .expect("configured cells fit");
-    assert!(worst_case(&limits).is_some());
+    assert!(valid(&limits));
     limits.decoded_call_bytes = limits.decoded_call_bytes.checked_sub(1).expect("nonempty receiving cells");
-    assert!(worst_case(&limits).is_none());
+    assert!(!valid(&limits));
 }
 
 /// The domain, its environment, and room for one entry point's output.
@@ -945,12 +945,12 @@ fn no_grant_fails_locally_and_exhaustion_reports_the_account() {
 
 #[test]
 fn the_limits_fit_and_a_session_must_take_what_the_run_asks() {
-    assert!(worst_case(&LIMITS).is_some());
+    assert!(valid(&LIMITS));
     let fewer = Limits { session: session::Limits { sessions: 3, spend: 1, ..LIMITS.session }, ..LIMITS };
-    assert_eq!(worst_case(&fewer), None, "a session for every conversation the run may have");
+    assert!(!valid(&fewer), "a session for every conversation the run may have");
     let budget = session::Budget { turns: 50, ..CEILING };
     let smaller = Limits { session: session::Limits { budget, ..LIMITS.session }, ..LIMITS };
-    assert_eq!(worst_case(&smaller), None, "a session's budget as large as the run's");
+    assert!(!valid(&smaller), "a session's budget as large as the run's");
 }
 
 #[test]
@@ -1064,7 +1064,7 @@ fn an_opening_larger_than_a_session_holds_refuses_main_as_invalid() {
         },
         ..LIMITS
     };
-    assert!(worst_case(&limits).is_some());
+    assert!(valid(&limits));
     let mut h = Harness::with(&limits);
     let brief = filler(10_240);
     let emitted = h.step(Event::Start {
@@ -1890,7 +1890,7 @@ fn maximum_custom_guide_headings_obey_the_session_receiving_limit_after_discover
             },
             ..LIMITS
         };
-        assert!(worst_case(&receiving).is_some());
+        assert!(valid(&receiving));
         let mut harness = Harness::with(&receiving);
         let selected = if maximum_paths {
             Some(run::Conventions {
@@ -2587,62 +2587,76 @@ fn a_key_race_uses_the_new_generation_then_ends_on_its_own_policy() {
 }
 
 #[test]
-#[expect(
-    clippy::print_stderr,
-    clippy::disallowed_macros,
-    reason = "unit test records actual metadata layout and container measurements (programming-model.md, section 10.2)"
-)]
-fn renewal_metadata_layout_and_container_costs_are_derived() {
-    use crate::domain::{Credential, IssuedCompletion};
-    use skein_lib::Map;
-    // Frozen pre-change field shapes; the types themselves price the before containers.
-    #[expect(dead_code, reason = "pre-change layout evidence, never instantiated")]
-    struct BeforeGrant {
-        name: crate::GrantName,
-        valid: Duration,
+fn invalid_limits_are_refused() {
+    assert!(valid(&LIMITS));
+    // Aggregate heap accounting is independent of constructor validity.
+    assert!(valid(&Limits { configured_model_bytes: u64::MAX, ..LIMITS }));
+    for budget in [
+        run::Budget { turns: CEILING.turns + 1, ..BUDGET },
+        run::Budget { spend: LIMITS.session.spend + 1, ..BUDGET },
+        run::Budget { time: Duration::from_secs(3601), ..BUDGET },
+    ] {
+        assert!(!valid(&Limits { run: run::Limits { budget, ..LIMITS.run }, ..LIMITS }));
     }
-    #[expect(dead_code, reason = "pre-change layout evidence, never instantiated")]
-    struct BeforeCredential {
-        name: crate::GrantName,
-        expires: Time,
-        rejected: Option<u64>,
+    for run in [
+        run::Limits { conversations: LIMITS.session.sessions + 1, ..LIMITS.run },
+        run::Limits { directories: LIMITS.session.tools.repos + 1, ..LIMITS.run },
+        run::Limits { directory_name_bytes: LIMITS.session.tools.path_bytes + 1, ..LIMITS.run },
+        run::Limits { host_path_bytes: LIMITS.session.tools.host_path_bytes + 1, ..LIMITS.run },
+        run::Limits { answered_bytes: u32::try_from(LIMITS.session.history_bytes + 1).expect("small"), ..LIMITS.run },
+        // Feedback's live price must be representable independently of receiving room.
+        run::Limits { run_bytes: u64::MAX, ..LIMITS.run },
+        // Run-child validity is checked even when root compatibility holds.
+        run::Limits { offer_messages: 0, ..LIMITS.run },
+    ] {
+        assert!(!valid(&Limits { run, ..LIMITS }));
     }
-    #[expect(dead_code, reason = "pre-change layout evidence, never instantiated")]
-    struct BeforeIssued {
-        grant: Option<crate::GrantName>,
-        name: crate::llm::CompletionName,
-    }
-    let layouts = [
-        ("Grant", size_of::<BeforeGrant>(), size_of::<crate::Grant>()),
-        ("Credential", size_of::<BeforeCredential>(), size_of::<Credential>()),
-        ("IssuedCompletion", size_of::<BeforeIssued>(), size_of::<IssuedCompletion>()),
-    ];
-    for (name, before, after) in layouts {
-        eprintln!(
-            "{name}: before={before}, after={after}, delta={}",
-            after.checked_sub(before).expect("metadata only adds storage")
-        );
-        assert!(
-            after >= before && after <= before.checked_add(align_of::<crate::Grant>()).expect("small metadata layout")
-        );
-    }
-    for accounts in [1, LIMITS.accounts] {
-        let before = Map::<u32, BeforeCredential>::worst_case(accounts).expect("before credentials");
-        let after = Map::<u32, Credential>::worst_case(accounts).expect("after credentials");
-        eprintln!(
-            "Credential Map capacity={accounts}: before={before}, after={after}, delta={}",
-            after.checked_sub(before).expect("metadata only adds storage")
-        );
-        assert!(after >= before);
-    }
-    for conversations in [1, LIMITS.run.conversations] {
-        let before = Map::<Token, BeforeIssued>::worst_case(conversations).expect("before issued");
-        let after = Map::<Token, IssuedCompletion>::worst_case(conversations).expect("after issued");
-        eprintln!(
-            "IssuedCompletion Map capacity={conversations}: before={before}, after={after}, delta={}",
-            after.checked_sub(before).expect("metadata only adds storage")
-        );
-        assert!(after >= before);
-    }
-    eprintln!("root worst_case at root unit LIMITS: {}", worst_case(&LIMITS).expect("valid root limits"));
+    assert!(!valid(&Limits {
+        run: run::Limits { budget: run::Budget { spend: 0, ..BUDGET }, ..LIMITS.run },
+        session: session::Limits { spend: 0, ..LIMITS.session },
+        ..LIMITS
+    }));
+    let feedback = crate::feedback_worst_case(&LIMITS.run).expect("representable feedback");
+    assert!(valid(&Limits {
+        session: session::Limits { delegated_result_bytes: feedback, ..LIMITS.session },
+        ..LIMITS
+    }));
+    assert!(!valid(&Limits {
+        session: session::Limits { delegated_result_bytes: feedback - 1, ..LIMITS.session },
+        ..LIMITS
+    }));
+    let cells =
+        u64::from(LIMITS.session.completion_blocks) * u64::try_from(size_of::<Decoded>()).expect("cell fits u64");
+    assert!(valid(&Limits { decoded_call_bytes: cells, ..LIMITS }));
+    assert!(!valid(&Limits { decoded_call_bytes: cells - 1, ..LIMITS }));
+    let receiving = Limits { run: run::Limits { answered_bytes: 0, ..LIMITS.run }, ..LIMITS };
+    assert!(valid(&Limits { session: session::Limits { history_bytes: cells, ..receiving.session }, ..receiving }));
+    assert!(!valid(&Limits {
+        session: session::Limits { history_bytes: cells - 1, ..receiving.session },
+        ..receiving
+    }));
+    assert!(!valid(&Limits { session: session::Limits { history_messages: 1, ..LIMITS.session }, ..LIMITS }));
+
+    // Child tables already impose tighter caps. Exercise these defensive root
+    // capacities directly as well as refusing the resulting invalid limits.
+    let flights = Limits { run: run::Limits { conversations: u32::MAX, ..LIMITS.run }, ..LIMITS };
+    assert_eq!(limits::flights(&flights), None);
+    assert!(!valid(&flights));
+    let handoffs = Limits {
+        run: run::Limits { conversations: u32::MAX / 2 + 1, ..LIMITS.run },
+        session: session::Limits { parallel_tools: 1, ..LIMITS.session },
+        ..LIMITS
+    };
+    assert!(limits::flights(&handoffs).is_some());
+    assert_eq!(limits::handoffs(&handoffs), None);
+    assert!(!valid(&handoffs));
+    let commands = Limits {
+        session: session::Limits {
+            tools: tools::Limits { kits: u32::MAX, calls: 2, ..LIMITS.session.tools },
+            ..LIMITS.session
+        },
+        ..LIMITS
+    };
+    assert_eq!(limits::commands(&commands), None);
+    assert!(!valid(&commands));
 }

@@ -60,18 +60,16 @@ pub fn valid(limits: &Limits) -> bool {
     {
         return false;
     }
-    let feedback = match crate::feedback_worst_case(run_limits) {
-        Some(bytes) => bytes,
-        None => return false,
+    let Some(feedback) = crate::feedback_worst_case(run_limits) else {
+        return false;
     };
     if session_limits.spend == 0 || feedback > session_limits.delegated_result_bytes {
         return false;
     }
-    let decoded_cells = match u64::from(session_limits.completion_blocks)
+    let Some(decoded_cells) = u64::from(session_limits.completion_blocks)
         .checked_mul(u64::try_from(size_of::<crate::llm::Decoded>()).expect("decoded cell size fits u64"))
-    {
-        Some(bytes) => bytes,
-        None => return false,
+    else {
+        return false;
     };
     if decoded_cells > limits.decoded_call_bytes.min(session_limits.history_bytes) {
         return false;
@@ -103,7 +101,6 @@ pub fn valid(limits: &Limits) -> bool {
 /// transfer. V2 has no persistent answer-ticket map; valid results own
 /// pre-effect session credit until received and recorded through close.
 #[must_use]
-#[expect(clippy::too_many_lines, reason = "the worst-case sum keeps each owning container and payload visible")]
 pub fn worst_case(limits: &Limits) -> Option<u64> {
     if !valid(limits) {
         return None;

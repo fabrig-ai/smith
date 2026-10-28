@@ -1,4 +1,4 @@
-//! Both inline slots retain independent root inventories within their checked bound.
+//! Both inline slots retain independent root inventories under a scenario ceiling.
 use skein_lib::{Env, Queue, Time, Token, Wall};
 use skein_world::domain::heap::Meter;
 use smith_agent_world::Job;
@@ -6,10 +6,12 @@ use smith_host_domain::parent;
 use smith_host_world::inline;
 use smith_inline_agent::{Domain, Input, Output};
 
+// Peak with two full inline roots, their carried messages and emitted prompts.
+const INLINE_SLOTS_CEILING: u64 = 5_500_000;
+
 #[test]
-fn two_full_inline_slots_and_their_emitted_prompts_fit_the_worst_case() {
+fn two_full_inline_slots_and_their_emitted_prompts_stay_under_the_ceiling() {
     let limits = inline::limits();
-    let bound = smith_inline_agent::worst_case(&limits).expect("checked bound");
     let env = Env { now: Time::ZERO, wall: Wall::EPOCH, limits };
     let meter = Meter::new();
     let mut domain = Domain::new(&limits, inline::configuration(), 319);
@@ -48,7 +50,7 @@ fn two_full_inline_slots_and_their_emitted_prompts_fit_the_worst_case() {
             }
         }
         assert!(emitted, "each composed root reaches the actual provider boundary");
-        meter.check(measured, bound, &limits);
+        meter.check(measured, INLINE_SLOTS_CEILING, &limits);
     }
     assert_eq!(domain.hosted(), 2, "maximum configured slots actually retained");
     assert!(meter.held() > 0);
