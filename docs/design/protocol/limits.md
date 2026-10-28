@@ -463,6 +463,24 @@ process, compose the chain, run the startup checks, and sum the worst
 cases (section 5). Each holds its profiles as step code (README.md,
 section 5).
 
+**Admission by a watermark** (skein's draft/dynamic-memory.md 4, the
+stab of 10-28). The queues between the service's own children (the
+domain's events and requests, the LLM's, the machine's, IO's and the
+file driver's) are uncapped: no child reserves room in another, and
+startup no longer asks `queue` to hold any child's largest output. Two
+kinds of queue keep their caps, as edges: the three the host's channel
+fills and drains, and the kernel's submissions and completions, which
+the shell fills from outside the service. New work, the host's `Start`
+and each `Message`, waits in the channel's queue while the service's
+backlog, the entries in its uncapped queues, is at `queue`; everything
+that advances admitted work is taken at any backlog, still waiting on
+real credit (a destination's, the channel's to the host, the file
+table, the kernel's queue). `queue` also bounds each drain's work per
+iteration. One order the room checks used to impose is stated instead:
+a domain entrance (a resume, an event, a timer) waits until the
+previous entrance's requests have been dispatched, so its facts never
+overtake the turn they follow.
+
 ### 3.9 A window's room
 
 A window is counted in tokens and most of what fills it in bytes. A
@@ -656,7 +674,10 @@ reserve against the budget.
     answer has carried it, a closed conversation's history and calls;
   - capacity reserved up front, slabs' and queues' (programming-model.md,
     section 6.1), is the exception: sized by the limits, counted in the
-    worst case, held for the process's life.
+    worst case, held for the process's life. A queue whose cap holds more
+    than 1 MiB grows to it instead, priced at its growth peak, and the
+    service's uncapped queues (3.8) are priced at `queue` entries each,
+    an estimate (skein's lib.md 5).
 - **Room is made by raising the cap.** A change that grows the worst
   case names, in its commit, each part that grew, by how many bytes, and
   what the worst case leaves under `memory`. One whose worst case passes
