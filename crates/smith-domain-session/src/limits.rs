@@ -1,5 +1,6 @@
 //! Ownership caps and checked worst-case arithmetic. This module retains no runtime state.
-//! `worst_case` projects immutable limits into container and payload bounds, returning `None` on overflow.
+//! `valid` checks limit compatibility and representable capacities, without knowing live ownership.
+//! `worst_case` retains the transitional container and payload sum for the parent.
 //!
 //! Contract: domain/session.md, sections 3 and 6; programming-model.md, sections 4.4, 4.5 and 6.3.
 
@@ -102,6 +103,30 @@ pub fn completion_reserve(limits: &Limits) -> Option<u64> {
     crate::session::provider_reserve(limits)
 }
 
+/// Whether a domain can be built under `limits`: compatible limits and
+/// representable constructor capacities (programming-model.md, section 6.3).
+/// The shell refuses limits for which this is false.
+#[must_use]
+pub fn valid(limits: &Limits) -> bool {
+    let tools_facts = match limits.parallel_tools.checked_add(2) {
+        Some(batches) => match batches.checked_mul(tools::max_facts(&limits.tools)) {
+            Some(facts) => facts,
+            None => return false,
+        },
+        None => return false,
+    };
+    limits.tools.facts >= tools_facts
+        && limits.facts >= crate::max_facts(limits)
+        && (1..=MAX_PARALLEL).contains(&limits.parallel_tools)
+        && limits.parallel_tools <= limits.tools.calls
+        && limits.history_messages >= 2
+        && limits.history_blocks > 0
+        && limits.tools.kits >= limits.sessions
+        && alarms(limits).is_some()
+        && runs(limits).is_some()
+        && tools::valid(&limits.tools)
+}
+
 /// The most memory the domain holds under `limits`, in bytes (programming-model.md, section 6.3), or `None`
 /// if it does not fit a `u64` or the limits cannot be honoured: a parallel
 /// batch wider than [`MAX_PARALLEL`] or than the tools run for a kit at once
@@ -115,19 +140,7 @@ pub fn completion_reserve(limits: &Limits) -> Option<u64> {
 /// held by the opener, which count them. Call observations copy only provider IDs and names, bounded by the completion byte cap.
 #[must_use]
 pub fn worst_case(limits: &Limits) -> Option<u64> {
-    let tools_facts = limits.parallel_tools.checked_add(2)?.checked_mul(tools::max_facts(&limits.tools))?;
-    if limits.tools.facts < tools_facts || limits.facts < crate::max_facts(limits) {
-        return None;
-    }
-    let parallel = limits.parallel_tools;
-    if !(1..=MAX_PARALLEL).contains(&parallel)
-        || parallel > limits.tools.calls
-        || limits.history_messages < 2
-        || limits.history_blocks == 0
-    {
-        return None;
-    }
-    if limits.tools.kits < limits.sessions {
+    if !valid(limits) {
         return None;
     }
     let sessions = Slab::<Session>::worst_case(limits.sessions)?;

@@ -80,7 +80,7 @@ pub const TOOLS: tools::Limits = tools::Limits {
 /// The provider and a result batch own their credits successively, so the larger
 /// envelope suffices. All six owned result families and concrete delegated results
 /// are included; record arrays and caller/emitted copies remain independently
-/// counted by `worst_case` and the shared heap meter.
+/// measured by the shared heap meter under scenario ceilings.
 /// World contract: domain/session.md, sections 3, 5, 6 and 12;
 /// domain/tools.md, sections 4, 5 and 9; programming-model.md, section 6.3.
 #[must_use]
@@ -895,7 +895,7 @@ impl World {
     /// Construct the same world with explicit application tool turns for focused stories.
     #[must_use]
     pub fn with_scripts(settings: Settings, scripts: Box<[provider::api::Script]>) -> World {
-        assert!(agent::worst_case(&settings.agent).is_some(), "the shell refuses limits it cannot provision");
+        assert!(agent::valid(&settings.agent), "the shell refuses invalid limits");
         let mut rng = Rng::new(settings.seed);
         let agent = agent::Domain::new(&settings.agent, rng.next_u64());
         let provider =

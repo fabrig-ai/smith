@@ -99,8 +99,8 @@ impl Domain {
     /// A domain with room for `limits`, drawing randomness from `seed`.
     #[must_use]
     pub fn new(limits: &Limits, seed: u64) -> Domain {
-        let alarms = limits::alarms(limits).expect("worst_case accepted the limits");
-        let runs = limits::runs(limits).expect("worst_case accepted the limits");
+        let alarms = limits::alarms(limits).expect("valid limits");
+        let runs = limits::runs(limits).expect("valid limits");
         let calls = Calls {
             runs: Slab::with_capacity(runs),
             tools: tools::Domain::new(&limits.tools),

@@ -18,7 +18,7 @@ use crate::llm::{
 };
 use crate::{
     Budget, Dimension, Domain, End, Event, FactKind as Fact, Limits, MAX_PARALLEL, Request, Spec, Yield, fire, max_out,
-    resume, step, worst_case,
+    resume, step, valid,
 };
 
 /// The budget every spec asks for, unless a test says otherwise: the most the
@@ -905,11 +905,11 @@ fn a_batch_as_wide_as_the_most_a_step_emits_fits() {
     step(&mut h.domain, &h.env, Event::Completed { owner, completion }, &mut h.out);
     assert_eq!(h.out.len(), 2 + MAX_PARALLEL, "the price, usage, and an operation for each call");
     assert!(h.out.len() <= max_out(&limits), "within what a step may emit");
-    assert_eq!(worst_case(&Limits { parallel_tools: 0, ..LIMITS }), None);
-    assert_eq!(worst_case(&Limits { parallel_tools: MAX_PARALLEL + 1, ..LIMITS }), None);
+    assert!(!valid(&Limits { parallel_tools: 0, ..LIMITS }));
+    assert!(!valid(&Limits { parallel_tools: MAX_PARALLEL + 1, ..LIMITS }));
     // A batch the tools could not take whole, and a session without a kit.
-    assert_eq!(worst_case(&Limits { tools: tools::Limits { calls: 1, ..TOOLS }, ..LIMITS }), None);
-    assert_eq!(worst_case(&Limits { tools: tools::Limits { kits: 1, ..TOOLS }, ..LIMITS }), None);
+    assert!(!valid(&Limits { tools: tools::Limits { calls: 1, ..TOOLS }, ..LIMITS }));
+    assert!(!valid(&Limits { tools: tools::Limits { kits: 1, ..TOOLS }, ..LIMITS }));
 }
 
 #[test]
@@ -2000,7 +2000,7 @@ fn drive(h: &mut Harness) -> (Token, Prompt, Option<Request>, Option<Request>) {
 #[test]
 fn the_minimum_fact_reserve_keeps_the_same_complete_native_call_history() {
     let required = crate::max_facts(&LIMITS);
-    assert!(worst_case(&Limits { facts: required - 1, ..LIMITS }).is_none());
+    assert!(!valid(&Limits { facts: required - 1, ..LIMITS }));
     let mut bounded = Harness::new(&Limits { facts: required, ..LIMITS });
     let mut roomy = Harness::new(&LIMITS);
     assert_eq!(drive(&mut bounded), drive(&mut roomy));
@@ -2014,13 +2014,44 @@ fn the_minimum_fact_reserve_keeps_the_same_complete_native_call_history() {
 }
 
 #[test]
-fn the_worst_case_is_bounded_or_refused() {
-    let bytes = worst_case(&LIMITS).expect("the test limits fit");
-    assert!(bytes > 2 * LIMITS.history_bytes, "every session may hold its bytes");
-    let told = worst_case(&Limits { facts: LIMITS.facts + 1, ..LIMITS }).expect("the test limits fit");
-    let fact = u64::try_from(size_of::<crate::Fact>()).expect("a size fits");
-    assert_eq!(told - bytes, fact, "queue cells grow independently of each session's shared answer payload");
-    assert_eq!(worst_case(&Limits { sessions: u32::MAX, history_bytes: u64::MAX, ..LIMITS }), None);
+fn invalid_limits_are_refused() {
+    assert!(valid(&LIMITS));
+    // The child reserves a whole batch of entrance observations.
+    assert!(!valid(&Limits { tools: tools::Limits { facts: 23, ..TOOLS }, ..LIMITS }));
+    // The session reserves its own full fact batch.
+    assert!(!valid(&Limits { facts: crate::max_facts(&LIMITS) - 1, ..LIMITS }));
+    // A batch has positive width.
+    assert!(!valid(&Limits { parallel_tools: 0, ..LIMITS }));
+    // Batch width stays within the vocabulary cap (with enough facts and calls).
+    let wide =
+        Limits { parallel_tools: MAX_PARALLEL + 1, tools: tools::Limits { calls: 9, facts: 128, ..TOOLS }, ..LIMITS };
+    assert!(!valid(&Limits { facts: crate::max_facts(&wide), ..wide }));
+    // The child can accept the whole batch.
+    assert!(!valid(&Limits { tools: tools::Limits { calls: 1, ..TOOLS }, ..LIMITS }));
+    // A transcript has room for its prompt and answer.
+    assert!(!valid(&Limits { history_messages: 1, ..LIMITS }));
+    // A transcript can hold a block.
+    assert!(!valid(&Limits { history_blocks: 0, ..LIMITS }));
+    // Every session can own a kit.
+    assert!(!valid(&Limits { tools: tools::Limits { kits: 1, ..TOOLS }, ..LIMITS }));
+    // Two generations and completion observations fit the run table.
+    assert!(!valid(&Limits { completion_blocks: u32::MAX, facts: u32::MAX, ..LIMITS }));
+    // Multiplying sessions by the per-session run capacity is checked.
+    let many = Limits {
+        sessions: u32::MAX / 8,
+        completion_blocks: 8,
+        tools: tools::Limits { kits: u32::MAX / 8, calls: 2, jobs: 0, ..TOOLS },
+        ..LIMITS
+    };
+    assert!(!valid(&many));
+    // Alarm capacity is checked; these limits also exceed the larger run table.
+    assert!(!valid(&Limits {
+        sessions: u32::MAX / 2 + 1,
+        tools: tools::Limits { kits: u32::MAX / 2 + 1, ..TOOLS },
+        ..LIMITS
+    }));
+    // Child validity is independent of session compatibility.
+    assert!(!valid(&Limits { tools: tools::Limits { host_path_bytes: u32::MAX, ..TOOLS }, ..LIMITS }));
 }
 
 #[test]

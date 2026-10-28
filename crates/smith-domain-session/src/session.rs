@@ -2553,7 +2553,7 @@ pub(crate) fn provider_reserve(limits: &Limits) -> Option<u64> {
     // All copied result IDs and Invalid details already appear in C's content
     // payload, so their aggregate is <= C. Result wrappers require an additional
     // N*max(Block,Slot), irrespective of enum padding. Slot containers and
-    // simultaneous result assembly are priced separately by worst_case.
+    // simultaneous result assembly are measured under scenario ceilings.
     let cell = size_of::<Block>().max(size_of::<Slot>());
     let wrappers = u64::try_from(cell).ok()?.checked_mul(u64::from(limits.completion_blocks))?;
     // Rules 1 and 2: copied IDs/details share one decoded answer total.
@@ -2696,7 +2696,7 @@ fn spec_cost(model: &[u8], system: &[u8], delegated: &[Descriptor], content: &[B
 /// skeleton before provider work and separately reserves each batch's payloads
 /// before effects. The terminal transfers its credit into held bytes.
 /// Slot containers and their transient coexistence with assembled Block arrays
-/// are independently priced by `worst_case`; no Slot/Block size inequality is assumed.
+/// are measured under scenario ceilings; no Slot/Block size inequality is assumed.
 fn held(content: &[Block], calls: u32, choice: &ToolChoice, names: Option<&[Box<[u8]>]>) -> Option<u64> {
     let slots = u64::try_from(size_of::<Block>()).ok()?.checked_mul(u64::from(calls))?;
     let mut cost = content_cost(content)?.checked_add(slots)?;

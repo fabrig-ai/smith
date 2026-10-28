@@ -20,8 +20,7 @@ use crate::outcome::{
 use crate::prepare::{Found, Guide};
 use crate::{
     Answer, Ask, AskRefusal, Budget, Charter, Delivery, Domain, End, Event, Exhausted, Exit, Failure, Fault, Invalid,
-    Limits, MAX_OUT, Opening, Place, Policy, Ran, Read, Refusal, Request, Returned, Spend, Stop, fire, step,
-    worst_case,
+    Limits, MAX_OUT, Opening, Place, Policy, Ran, Read, Refusal, Request, Returned, Spend, Stop, fire, step, valid,
 };
 use crate::{Directory, Workspace};
 
@@ -993,10 +992,26 @@ fn the_deadline_closes_main_and_fails_the_run_for_time() {
 }
 
 #[test]
-fn the_worst_case_is_bounded_or_refused() {
-    let bytes = worst_case(&LIMITS).expect("the test limits fit");
-    assert!(bytes > 2 * LIMITS.run_bytes, "every run may hold its bytes");
-    assert_eq!(worst_case(&Limits { runs: u32::MAX, run_bytes: u64::MAX, ..LIMITS }), None);
+fn invalid_limits_are_refused() {
+    assert!(valid(&LIMITS));
+    // The fact reserve must hold both message observations and the terminal.
+    assert!(!valid(&Limits { facts: crate::max_facts(&LIMITS) - 1, ..LIMITS }));
+    // Doubling the message count must not overflow.
+    assert!(!valid(&Limits { messages: u32::MAX / 2 + 1, facts: u32::MAX, ..LIMITS }));
+    // Adding the terminal reserve must not overflow.
+    assert!(!valid(&Limits { messages: u32::MAX / 2, facts: u32::MAX, ..LIMITS }));
+    // Every yield can offer a message.
+    assert!(!valid(&Limits { offer_messages: 0, ..LIMITS }));
+    // The offer holds at least one maximum message.
+    assert!(!valid(&Limits { offer_bytes: LIMITS.message_bytes - 1, ..LIMITS }));
+    // Conflict paths fit the sealed marker vocabulary.
+    assert!(!valid(&Limits { conflict_path_bytes: 4097, ..LIMITS }));
+    // Run alarms must be representable.
+    assert!(!valid(&Limits { runs: u32::MAX / 2 + 1, ..LIMITS }));
+    // Delegated-call alarms must be representable.
+    assert!(!valid(&Limits { calls: u32::MAX / 2 + 1, ..LIMITS }));
+    // Their joint alarm table must be representable even when each product fits.
+    assert!(!valid(&Limits { runs: u32::MAX / 2, calls: 1, ..LIMITS }));
 }
 
 // Finishing.
@@ -2507,7 +2522,7 @@ fn a_run_tells_what_it_did_as_content_free_facts() {
 #[test]
 fn a_minimum_fact_reserve_keeps_the_admitted_terminal_and_every_prior_fact() {
     let required = crate::max_facts(&LIMITS);
-    assert!(worst_case(&Limits { facts: required - 1, ..LIMITS }).is_none());
+    assert!(!valid(&Limits { facts: required - 1, ..LIMITS }));
     let mut h = Harness::new(Limits { facts: required, ..LIMITS });
     let (run, conversation) = h.running(1, 100);
     assert_eq!(&*h.step(Event::Cancel { run }), &[Request::Close { peer: Token::new(100) }]);
@@ -3689,7 +3704,7 @@ fn initial_conflicts_require_git_unique_relative_paths_and_independent_caps() {
         Invalid::Workspace,
     );
     let invalid_limits = Limits { conflict_path_bytes: 4097, ..limits };
-    assert_eq!(worst_case(&invalid_limits), None);
+    assert!(!valid(&invalid_limits));
     refuse_workspace(None, invalid_limits, Invalid::Workspace);
 }
 
@@ -3711,7 +3726,7 @@ fn exact_workspace_limits_and_aggregate_price_include_every_owner() {
     let mut duplicate = mounted;
     duplicate.directories[1].root = duplicate.directories[0].root;
     refuse_workspace(Some(duplicate), Limits { run_bytes: exact - 1, ..limits }, Invalid::TooLarge);
-    assert!(worst_case(&exact_limits).is_some());
+    assert!(valid(&exact_limits));
 }
 
 #[test]

@@ -62,5 +62,5 @@ pub use call::{
 };
 pub use domain::{Domain, max_facts, max_out, step};
 pub use facts::{CallInfo, Fact, FactKind, Verdict};
-pub use limits::{Derivation, Field, Limits, batch_result_worst_case, derive, result_worst_case, worst_case};
+pub use limits::{Derivation, Field, Limits, batch_result_worst_case, derive, result_worst_case, valid, worst_case};
 pub use path::{Name, Namespace, Part, Path, Place, Resolved};

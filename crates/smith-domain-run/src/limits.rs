@@ -1,5 +1,6 @@
 //! Ownership caps and checked worst-case arithmetic. This module retains no runtime state.
-//! `worst_case` projects immutable limits into container and payload bounds, returning `None` on overflow.
+//! `valid` checks limit compatibility and representable capacities, without knowing live ownership.
+//! `worst_case` retains the transitional container and payload sum for the parent.
 //!
 //! Contract: domain/run.md, section 13; programming-model.md, sections 4.4, 4.5 and 6.3.
 
@@ -131,6 +132,26 @@ pub struct Limits {
     pub facts: u32,
 }
 
+/// Whether a domain can be built under `limits`: compatible limits and
+/// representable constructor capacities (programming-model.md, section 6.3).
+/// The shell refuses limits for which this is false.
+#[must_use]
+pub fn valid(limits: &Limits) -> bool {
+    let facts = match limits.messages.checked_mul(2) {
+        Some(messages) => match messages.checked_add(8) {
+            Some(facts) => facts,
+            None => return false,
+        },
+        None => return false,
+    };
+    limits.facts >= facts
+        && limits.offer_messages > 0
+        && limits.offer_bytes >= limits.message_bytes
+        && u64::from(limits.conflict_path_bytes)
+            <= u64::try_from(crate::Marker::CAPACITY).expect("marker capacity fits u64")
+        && alarms(limits).is_some()
+}
+
 /// The most memory the domain holds under `limits`, in bytes (programming-model.md, section 6.3), or `None`
 /// if it does not fit a `u64`.
 ///
@@ -139,22 +160,14 @@ pub struct Limits {
 /// what it receives and only passes on (a check's output) is the sender's.
 #[must_use]
 pub fn worst_case(limits: &Limits) -> Option<u64> {
-    let facts = limits.messages.checked_mul(2)?.checked_add(8)?;
-    if limits.facts < facts {
-        return None;
-    }
-    if limits.offer_messages == 0 || limits.offer_bytes < limits.message_bytes {
-        return None;
-    }
-    if limits.conflict_path_bytes > u32::try_from(crate::Marker::CAPACITY).ok()? {
+    if !valid(limits) {
         return None;
     }
     let runs = Slab::<Run>::worst_case(limits.runs)?;
     let ready = crate::wind_down::Ready::worst_case(limits.runs)?;
     let conversations = Slab::<Conversation>::worst_case(limits.conversations)?;
     // A deadline per run, and two per call.
-    let alarms =
-        Deadlines::<Alarm>::worst_case(limits.runs.checked_mul(2)?.checked_add(limits.calls.checked_mul(2)?)?)?;
+    let alarms = Deadlines::<Alarm>::worst_case(alarms(limits)?)?;
     // Each run holds its charter, including both convention path payloads, up
     // to its byte limit (inline path wrappers are in Slab<Run>), and what it found in
     // its checkout: a guide and a mark for checks per repository.
@@ -203,6 +216,11 @@ pub fn worst_case(limits: &Limits) -> Option<u64> {
         .checked_add(calls)?
         .checked_add(waiting)?
         .checked_add(facts)
+}
+
+/// Two alarms per run and two per delegated call.
+pub(crate) fn alarms(limits: &Limits) -> Option<u32> {
+    limits.runs.checked_mul(2)?.checked_add(limits.calls.checked_mul(2)?)
 }
 
 /// Numeric declarations needed by this layer's transitional derivation.

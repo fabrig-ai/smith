@@ -37,7 +37,7 @@ struct Harness { domain: tools::Domain, env: Env<tools::Limits>, out: Queue<tool
 impl Harness {
     fn new() -> Self {
         let limits = limits();
-        assert!(tools::worst_case(&limits).is_some());
+        assert!(tools::valid(&limits));
         Self { domain: tools::Domain::new(&limits), env: Env { now: Time::ZERO, wall: Wall::EPOCH, limits }, out: Queue::with_capacity(tools::max_out(&limits)), grants: Vec::new() }
     }
     fn emit(&mut self, event: tools::Event) -> Vec<tools::Request> {

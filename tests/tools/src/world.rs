@@ -351,7 +351,7 @@ impl World {
     /// World contract: domain/tools.md, sections 7 and 9; testing-strategy.md, section 2.2.
     #[must_use]
     pub fn new(settings: Settings, checkout: Checkout) -> World {
-        assert!(tools::worst_case(&settings.tools).is_some(), "the shell refuses limits it cannot provision");
+        assert!(tools::valid(&settings.tools), "the shell refuses invalid limits");
         let room = tools::max_out(&settings.tools).saturating_mul(2);
         World {
             now: Time::ZERO,

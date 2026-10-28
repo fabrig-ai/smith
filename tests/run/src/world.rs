@@ -640,7 +640,7 @@ impl World {
     /// Scripted-world contract: domain/run.md, sections 13 and 14; testing-strategy.md, section 2.2.
     #[must_use]
     pub fn new(settings: Settings) -> World {
-        assert!(run::worst_case(&settings.run).is_some(), "the shell refuses limits it cannot provision");
+        assert!(run::valid(&settings.run), "the shell refuses invalid limits");
         let mut rng = Rng::new(settings.seed);
         let host = Host::new(host::Script { checks: settings.run.check_timeout, ..settings.host }, rng.next_u64());
         let partner = Partner::new(settings.partner, rng.next_u64());

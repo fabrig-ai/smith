@@ -1,5 +1,6 @@
 //! Ownership caps and checked worst-case arithmetic. This module retains no runtime state.
-//! `worst_case` projects immutable limits into container and payload bounds, returning `None` on overflow.
+//! `valid` checks limit compatibility and representable capacities, without knowing live ownership.
+//! `worst_case` retains the transitional container and payload sum for the parent.
 //!
 //! Contract: domain/tools.md, section 4; programming-model.md, sections 4.4, 4.5 and 6.3.
 
@@ -76,6 +77,26 @@ pub struct Limits {
     pub facts: u32,
 }
 
+/// Whether a domain can be built under `limits`: compatible limits and
+/// representable constructor capacities (programming-model.md, section 6.3).
+/// The shell refuses limits for which this is false.
+#[must_use]
+pub fn valid(limits: &Limits) -> bool {
+    let smallest_entry = match u64::try_from(size_of::<Entry>()) {
+        Ok(bytes) => match bytes.checked_add(1) {
+            Some(bytes) => bytes,
+            None => return false,
+        },
+        Err(_) => return false,
+    };
+    limits.shell_head.checked_add(limits.shell_tail).is_some()
+        && limits.facts >= crate::max_facts(limits)
+        && limits.list_bytes >= smallest_entry
+        && flight::slots(limits).is_some()
+        && limits.path_bytes.checked_add(1).is_some()
+        && limits.host_path_bytes.checked_add(1).is_some()
+}
+
 /// The most memory the domain holds under `limits`, in bytes (programming-model.md, section 6.3), or `None`
 /// if it does not fit a `u64` or the limits cannot be honoured.
 ///
@@ -89,8 +110,7 @@ pub fn worst_case(limits: &Limits) -> Option<u64> {
     if limits.facts < crate::max_facts(limits) {
         return None;
     }
-    let smallest_entry = u64::try_from(size_of::<Entry>()).ok()?.checked_add(1)?;
-    if limits.list_bytes < smallest_entry {
+    if !valid(limits) {
         return None;
     }
     let kits = Slab::<Kit>::worst_case(limits.kits)?.checked_add(u64::from(limits.kits).checked_mul(kit(limits)?)?)?;

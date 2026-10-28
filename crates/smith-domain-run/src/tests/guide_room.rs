@@ -123,20 +123,6 @@ fn one_directory_keeps_a_guide_at_the_bound_whole_when_four_are_available() {
     assert!(!opening.system.windows(b"The file goes on".len()).any(|piece| piece == b"The file goes on"));
 }
 
-#[test]
-fn retained_guides_are_bounded_by_both_their_caps_and_the_host_part() {
-    let limits = Limits { directories: 4, host_part: 260, guide_bytes: 0, ..LIMITS };
-    let empty = crate::worst_case(&limits).expect("empty guides");
-    let capped = crate::worst_case(&Limits { guide_bytes: 64, ..limits }).expect("guide caps");
-    let shared = crate::worst_case(&Limits { guide_bytes: 65, ..limits }).expect("host part");
-    let larger = crate::worst_case(&Limits { guide_bytes: 66, ..limits }).expect("same host part");
-    // Per run, 4 * 64 = 256 guide bytes fit; at 65 the host part caps
-    // their sum at 260, and larger guides cannot grow retained ownership.
-    assert_eq!(capped - empty, u64::from(limits.runs) * 256);
-    assert_eq!(shared - empty, u64::from(limits.runs) * 260);
-    assert_eq!(larger, shared);
-}
-
 // A one-directory start may now retain a guide larger than the old profile's
 // host / directories allowance. Child admission must count that retained text.
 const CHILD_GUIDE_BYTES: usize = 1024;

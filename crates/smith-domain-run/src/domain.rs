@@ -50,9 +50,7 @@ impl Domain {
             runs: Slab::with_capacity(limits.runs),
             conversations: Slab::with_capacity(limits.conversations),
             calls: Calls::with_capacity(limits.calls),
-            alarms: Deadlines::with_capacity(
-                limits.runs.saturating_mul(2).saturating_add(limits.calls.saturating_mul(2)),
-            ),
+            alarms: Deadlines::with_capacity(crate::limits::alarms(limits).expect("valid limits")),
             facts: Facts::with_capacity(limits.facts),
             ready: crate::wind_down::Ready::with_capacity(limits.runs),
         }

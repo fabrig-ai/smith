@@ -41,7 +41,7 @@ impl Domain {
     /// A domain with room for `limits`.
     #[must_use]
     pub fn new(limits: &Limits) -> Domain {
-        let flights = flight::slots(limits).expect("worst_case accepted the limits");
+        let flights = flight::slots(limits).expect("valid limits");
         Domain {
             kits: Slab::with_capacity(limits.kits),
             flights: Slab::with_capacity(flights),

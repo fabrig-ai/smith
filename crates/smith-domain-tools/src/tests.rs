@@ -14,7 +14,7 @@ use crate::path;
 use crate::window::{self, Span};
 use crate::{
     Authority, Call, Domain, Done, Effect, Entry, Event, Exit, Expect, Fault, Grants, Hit, Kind, Limits, Name, Op,
-    Outcome, Part, Path, Place, Refusal, Repo, Request, Version, effect, max_out, step, worst_case,
+    Outcome, Part, Path, Place, Refusal, Repo, Request, Version, effect, max_out, step, valid,
 };
 use crate::{FactKind as Fact, Tool, Verdict};
 
@@ -585,11 +585,24 @@ fn a_small_call_limit_reserves_held_job_outputs() {
 }
 
 #[test]
-fn the_worst_case_is_bounded_or_refused() {
-    let bytes = worst_case(&LIMITS).expect("the test limits fit");
-    let paths = u64::from(LIMITS.kits) * u64::from(LIMITS.repos + 1) * u64::from(LIMITS.path_bytes);
-    assert!(bytes > paths, "every kit may hold its paths");
-    assert_eq!(worst_case(&Limits { kits: u32::MAX, path_bytes: u32::MAX, ..LIMITS }), None);
+fn invalid_limits_are_refused() {
+    assert!(valid(&LIMITS));
+    // One shell capture's head and tail share a u32 byte budget.
+    assert!(!valid(&Limits { shell_head: u32::MAX, ..LIMITS }));
+    // Every native entrance can emit its reserved observations.
+    assert!(!valid(&Limits { facts: crate::max_facts(&LIMITS) - 1, ..LIMITS }));
+    // One listing entry and its nonempty name must fit.
+    assert!(!valid(&Limits { list_bytes: u64::try_from(size_of::<Entry>()).expect("entry fits"), ..LIMITS }));
+    // A kit's active and retained flight counts must add without overflow.
+    assert!(!valid(&Limits { kits: 0, calls: u32::MAX, jobs: 1, ..LIMITS }));
+    // Every kit's flights must fit the slab, before retiring slots are added.
+    assert!(!valid(&Limits { kits: u32::MAX, calls: 2, jobs: 0, ..LIMITS }));
+    // Retiring flights need a second generation of slots.
+    assert!(!valid(&Limits { kits: u32::MAX / 2 + 1, calls: 1, jobs: 0, ..LIMITS }));
+    // Path normalisation's component count must be representable.
+    assert!(!valid(&Limits { path_bytes: u32::MAX, ..LIMITS }));
+    // Host-path normalisation has an independent component count.
+    assert!(!valid(&Limits { host_path_bytes: u32::MAX, ..LIMITS }));
 }
 
 fn place(root: u64, path: &[u8]) -> Place {
@@ -995,21 +1008,6 @@ fn derived_limits() -> Limits {
         job_wait: LIMITS.job_wait,
     })
     .expect("fixture declarations derive")
-}
-
-#[test]
-fn knowledge_counts_the_extra_files_in_each_session() {
-    // Ceiling on extra knowledge ownership: a quarter above 10-28's figure, moved by hand when a real change passes it.
-    const KNOWLEDGE_GROWTH_CEILING: u64 = 260_000;
-    let limits = derived_limits();
-    let old = Limits { known_files: 16, ..limits };
-    let growth = worst_case(&limits).expect("derived limits fit") - worst_case(&old).expect("old limits fit");
-    // 240 more paths of 256 bytes in each kit.
-    assert!(growth >= 240 * 256 * u64::from(LIMITS.kits), "extra knowledge owns every additional path payload");
-    assert!(
-        growth <= KNOWLEDGE_GROWTH_CEILING,
-        "extra knowledge ownership {growth} exceeds {KNOWLEDGE_GROWTH_CEILING}"
-    );
 }
 
 #[test]
@@ -1520,7 +1518,7 @@ fn a_kit_tells_what_happens_as_facts() {
 
 #[test]
 fn a_minimum_fact_reserve_keeps_every_native_entrance_observation() {
-    assert!(worst_case(&Limits { facts: 1, ..LIMITS }).is_none());
+    assert!(!valid(&Limits { facts: 1, ..LIMITS }));
     let mut h = Harness::new(Limits { facts: crate::max_facts(&LIMITS), ..LIMITS });
     let kit = h.open(5, authority(ALL));
     assert!(h.domain.facts_room() < crate::max_facts(&LIMITS));
