@@ -648,10 +648,16 @@ impl Service {
     }
 
     // Entries between the service's own children (protocol/limits.md 3.8).
-    // Edges and each child's own internal queues never count.
+    // Count the local domain's agent facts and output too; edges, Effects and Accounts stay outside.
     fn backlog(&self) -> u64 {
         let mut total = u64::from(self.below.process().backlog());
-        for entries in [self.local_events.len(), self.local_requests.len(), self.host_events.len(), self.lower.len()] {
+        for entries in [
+            self.local.backlog(),
+            self.local_events.len(),
+            self.local_requests.len(),
+            self.host_events.len(),
+            self.lower.len(),
+        ] {
             total = total.checked_add(u64::from(entries)).expect("service backlog entries fit u64");
         }
         total

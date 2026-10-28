@@ -311,6 +311,14 @@ impl Domain {
         self.facts_lost
     }
 
+    /// Entries this domain and its agent child hold for the service to
+    /// drain (protocol/limits.md 3.8): the child's `backlog()` and the
+    /// child's output queue. The service counts them in its backlog.
+    #[must_use]
+    pub fn backlog(&self) -> u32 {
+        self.agent.backlog()
+    }
+
     /// One fact of the inline run, oldest first; none for a spawned agent.
     pub fn pop_run_fact(&mut self) -> Option<agent::Fact> {
         match &mut self.agent {
@@ -384,7 +392,7 @@ pub fn step(domain: &mut Domain, env: &Env<Limits>, event: Event, out: &mut Queu
     }
 }
 
-/// Release duplicate capture content and inline lifecycle observations.
+/// Release duplicate capture content, inline lifecycle observations and unused host facts.
 /// The service alone takes native run facts into its event producer.
 fn drain_agent_content(domain: &mut Domain, env: &Env<Limits>) {
     let maximum = agent::max_facts(&env.limits.smith)
@@ -404,7 +412,13 @@ fn drain_agent_content(domain: &mut Domain, env: &Env<Limits>) {
                 }
             }
         }
-        Agent::Spawned { .. } => {}
+        Agent::Spawned { domain: child, limits, .. } => {
+            for _ in 0..limits.facts {
+                if child.pop_fact().is_none() {
+                    break;
+                }
+            }
+        }
     }
 }
 
@@ -2133,3 +2147,7 @@ mod parent_tests;
 #[cfg(test)]
 #[path = "program_check_tests.rs"]
 mod program_check_tests;
+
+#[cfg(test)]
+#[path = "child_backlog_tests.rs"]
+mod child_backlog_tests;

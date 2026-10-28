@@ -520,7 +520,7 @@ pub(super) fn spawned_chat_with_saved_hello() -> (Domain, Env<Limits>, Queue<Req
     (domain, env, out, owner)
 }
 
-fn drain_requests(out: &mut Queue<Request>) -> Vec<Request> {
+pub(super) fn drain_requests(out: &mut Queue<Request>) -> Vec<Request> {
     let mut requests = Vec::new();
     while let Some(request) = out.pop() {
         requests.push(request);
@@ -618,7 +618,7 @@ fn a_one_turn_configuration_keeps_scalar_and_completion_startup_checks() {
     );
 }
 
-fn saved_window_turn() -> smith_domain::Turn {
+pub(super) fn saved_window_turn() -> smith_domain::Turn {
     smith_domain::Turn {
         model: b"model".as_slice().into(),
         effort: None,
@@ -697,11 +697,14 @@ fn an_inline_runs_facts_wait_for_the_service() {
         drop(drain_requests(&mut out));
         crate::resume(&mut domain, &env, &mut out);
     }
+    let backlog = domain.backlog();
     let mut facts = 0_u32;
     while domain.pop_run_fact().is_some() {
         facts += 1;
     }
     assert!(facts > 0, "ordinary local entrances retained the native run facts");
+    assert_eq!(backlog, facts, "every held native fact contributes to the local backlog");
+    assert_eq!(domain.backlog(), 0);
     assert!(domain.pop_run_fact().is_none());
 }
 

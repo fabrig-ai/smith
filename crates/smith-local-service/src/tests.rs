@@ -975,7 +975,7 @@ fn a_later_entrance_keeps_its_facts_behind_the_earlier_entrances_requests() {
     machine.close(root);
 }
 
-fn recording_colocated_config() -> (Config, smith_agent_service::EventLimits) {
+pub(crate) fn recording_colocated_config() -> (Config, smith_agent_service::EventLimits) {
     use smith_agent_service::sinks;
     let mut config = colocated_config();
     let crate::AgentConfig::Inline { configuration: lower, .. } = &mut config.agent else { panic!("inline") };
@@ -1174,7 +1174,7 @@ fn an_inline_service_refuses_a_different_common_io_capacity() {
     let Err(crate::Error::Process) = Service::new(config, 1) else { panic!("one common IO configuration") };
 }
 
-fn session_started() -> smith_events::SessionStarted {
+pub(crate) fn session_started() -> smith_events::SessionStarted {
     smith_events::SessionStarted {
         chat: None,
         wall_ms: 0,
@@ -1192,7 +1192,7 @@ fn session_started() -> smith_events::SessionStarted {
 
 /// The trace's first `Append`, within a few passes; the inline agent's
 /// requests reach the kernel one pass after it makes them.
-fn trace_append(service: &mut Service, trace: skein_io::kernel::Fd) -> skein_io::kernel::Submit {
+pub(crate) fn trace_append(service: &mut Service, trace: skein_io::kernel::Fd) -> skein_io::kernel::Submit {
     for _ in 0_u32..4 {
         iterate(service, Time::ZERO, Wall::EPOCH);
         while let Some(submit) = service.submissions().pop() {

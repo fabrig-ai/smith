@@ -212,6 +212,18 @@ impl Agent {
         }
     }
 
+    /// Child facts and unrouted output counted by the local service (protocol/limits.md 3.8).
+    pub(crate) fn backlog(&self) -> u32 {
+        match self {
+            Self::Inline { domain, out, .. } => {
+                domain.backlog().checked_add(out.len()).expect("local agent backlog fits u32")
+            }
+            Self::Spawned { domain, out, .. } => {
+                domain.backlog().checked_add(out.len()).expect("local agent backlog fits u32")
+            }
+        }
+    }
+
     pub(crate) fn ready(&self) -> bool {
         match self {
             Self::Inline { domain, .. } => domain.is_ready(),

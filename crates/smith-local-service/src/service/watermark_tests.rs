@@ -101,4 +101,86 @@ fn the_backlog_counts_internal_queues_and_never_edges() {
     assert_eq!(service.backlog(), 4);
     service.below.process_mut().store_request(smith_local_protocol::StoreRequest::Load);
     assert_eq!(service.backlog(), 5, "process internal handoffs contribute too");
+    let held = a_service_with_held_inline_facts();
+    let child_entries = held.local.backlog();
+    assert!(child_entries > 0, "native facts wait for the service");
+    service.local = held.local;
+    assert_eq!(service.backlog(), 5 + u64::from(child_entries), "the local domain contributes its child entries");
+}
+
+// Native run facts survive a domain entrance while its complete sink waits.
+fn a_service_with_held_inline_facts() -> Service {
+    use skein_lib::{Duration, Env};
+    use smith_host_domain::{Form, Scheme};
+    let (mut config, _) = crate::tests::recording_colocated_config();
+    config.limits.watermark = 1; // One retained fact must hold the next line.
+    let mut service = Service::new(config, 7).unwrap();
+    let env = Env { now: Time::ZERO, wall: Wall::EPOCH, limits: service.limits.local.clone() };
+    local::resume(&mut service.local, &env, &mut service.local_requests);
+    while service.local_requests.pop().is_some() {}
+    for event in [
+        local::Event::Loaded { state: None, transcript: None, deliveries: Box::new([]) },
+        local::Event::Line { text: b"hello".as_slice().into() },
+        local::Event::Credential {
+            form: Form::Credential(Scheme::Bearer),
+            grant: smith_domain::Grant {
+                name: smith_domain::GrantName { account: 0, generation: 1 },
+                renewable: true,
+                valid: Duration::from_secs(60),
+            },
+        },
+        local::Event::StateSaved,
+    ] {
+        local::step(&mut service.local, &env, event, &mut service.local_requests);
+        while service.local_requests.pop().is_some() {}
+    }
+    service
+}
+
+#[test]
+fn a_line_waits_while_the_local_child_holds_the_backlog() {
+    use skein_io::kernel::Fd;
+    use smith_agent_service::sinks;
+    // A destination has six line slots; eight offers reach its reservation.
+    const SINK_OFFERS: u64 = 8;
+    const HELD_ITERATIONS: u32 = 2; // Check retention across an iteration boundary.
+    let mut service = a_service_with_held_inline_facts();
+    let trace = Fd::new(20);
+    service.adopt_trace(trace, Time::ZERO, crate::tests::session_started(), sinks::Delivery::Complete).unwrap();
+    let (charter, messages) = service.local.charter();
+    let effects = service.below.inline_mut().expect("inline effects");
+    effects.starting(1, messages, &charter);
+    let sinks = effects.front_sinks().expect("configured event sink");
+    for name in 0..SINK_OFFERS {
+        if !sinks.takes() {
+            break;
+        }
+        sinks.record(&smith_events::Record {
+            t_ms: 0,
+            event: smith_events::Event::MessageRead(smith_events::MessageRead { run: 1, name, turn: 1 }),
+        });
+    }
+    service.capture_activation = Some(1); // The held facts belong to the already started activation.
+    feed_line(&mut service, b"later\n");
+    for _ in 0..HELD_ITERATIONS {
+        iterate(&mut service, Time::ZERO, Wall::EPOCH);
+        assert!(service.local.backlog() > 0, "the complete sink retains native run facts");
+        assert!(service.local_events.is_empty());
+        assert!(service.local_requests.is_empty());
+        assert_eq!(service.backlog(), u64::from(service.local.backlog()), "the held entries belong to the child");
+        assert_eq!(service.terminal_events.len(), 1, "the child alone holds admission");
+    }
+    // Giving up this destination releases its credit; facts and the waiting line advance.
+    let append = crate::tests::trace_append(&mut service, trace);
+    service.completions().push(skein_io::kernel::Complete {
+        op: append.op,
+        kind: append.kind,
+        result: Err(skein_io::kernel::Error::NoSpace),
+    });
+    iterate(&mut service, Time::ZERO, Wall::EPOCH);
+    assert_eq!(service.local.backlog(), 0);
+    // The newly resumed root can hand off lower work in this pass; admission
+    // sees its dispatch on the next pass, as it does for other admitted work.
+    iterate(&mut service, Time::ZERO, Wall::EPOCH);
+    assert!(service.terminal_events.is_empty(), "draining the child releases the waiting line");
 }
