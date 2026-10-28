@@ -22,6 +22,7 @@ pub(super) fn limits(bound: u32, depth: u32, tokens: u32) -> collector::Limits {
     }
 }
 
+#[expect(dead_code, reason = "programming-model.md 6.3: preserve the independent edge workspace bound")]
 pub(super) fn worst_case(bound: u32, depth: u32, tokens: u32) -> Option<u64> {
     json::worst_case_limited(limits(bound, depth, tokens))
 }
@@ -166,9 +167,6 @@ fn user(json: &mut Encoder, prompt: &llm::Prompt) {
     json.object_end();
     json.object_end();
 }
-
-// The compact request with "smith-" and twenty digits, including its newline.
-pub(super) const INTERRUPT_BYTES: u64 = 103;
 
 // "smith-" and the largest u64's twenty decimal digits.
 pub(super) fn interrupt_id(sequence: u64) -> Box<[u8]> {

@@ -31,15 +31,6 @@ pub(super) fn carries(settings: &super::Settings) -> List<Carry> {
     carries
 }
 
-pub(super) fn worst_case(settings: &super::Settings) -> Option<u64> {
-    let carry = u64::from(capacity(settings)?);
-    List::<Carry>::worst_case(settings.receiving.max_completion_blocks)?
-        .checked_add(carry.checked_mul(u64::from(settings.receiving.max_completion_blocks))?)?
-        // Joining and emitting one delta can own two copies beside the carry.
-        .checked_add(u64::from(settings.adapter.client.answer).checked_mul(2)?)?
-        .checked_add(carry.checked_mul(3)?)
-}
-
 impl Backend {
     pub(super) fn text_delta(&mut self, at: Time, owner: Token, block: u32, text: &[u8]) -> Option<()> {
         let carry = self.delta_carry.get_mut(block)?;

@@ -1,9 +1,5 @@
 //! Host-side opening limits (protocol/channel.md, sections 2 and 7).
-use core::mem::size_of;
-use skein_channel::{Lower, SchemaError};
-use skein_lib::{List, Queue};
-
-use crate::{Component, OpenEvent};
+use skein_channel::SchemaError;
 
 /// Codec, framing and queue allowances fixed before the channel opens.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -76,27 +72,6 @@ pub struct MaxOut {
 #[must_use]
 pub const fn max_out(_limits: &Limits) -> MaxOut {
     MaxOut { to_domain: 1, below: 6 }
-}
-
-/// Price the machine, the opening event queue and caller output queues.
-#[must_use]
-pub fn worst_case(limits: &Limits) -> Option<u64> {
-    let schema = smith_protocol_channel::schema_for_start(&limits.bodies, limits.start_bytes).ok()?;
-    let mut duplicate = List::<skein_channel::Version>::worst_case(schema.versions.capacity())?;
-    for version in &schema.versions {
-        duplicate = duplicate.checked_add(List::<skein_channel::Kind>::worst_case(version.kinds.capacity())?)?;
-    }
-    let bytes = skein_channel::worst_case(&schema, skein_channel::Role::Initiator, &limits.channel)?
-        .checked_add(duplicate)?
-        .checked_add(smith_protocol_channel::Endpoints::worst_case(limits.endpoints, limits.charter.llm_endpoint)?)?
-        .checked_add(Queue::<skein_channel::Event>::worst_case(8)?)?
-        .checked_add(Queue::<OpenEvent>::worst_case(1)?)?
-        .checked_add(Queue::<Lower>::worst_case(6)?)?
-        .checked_add(320)?;
-    bytes
-        .checked_add(skein_lib::Map::<crate::component::CallKey, skein_lib::Token>::worst_case(limits.calls)?)?
-        .checked_add(skein_lib::Map::<skein_lib::Token, crate::component::CallKey>::worst_case(limits.calls)?)?
-        .checked_add(u64::try_from(size_of::<Component>()).ok()?)
 }
 
 /// Largest frame sent by the host, including its fixed framing header.

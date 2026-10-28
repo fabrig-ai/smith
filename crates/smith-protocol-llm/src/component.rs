@@ -190,52 +190,6 @@ pub fn component_valid(limits: &ComponentLimits, endpoints: &Endpoints) -> bool 
     true
 }
 
-/// Checked retained pool, grant, context, and event-queue ownership, using
-/// configured endpoints to count their request heads and credential bounds.
-#[must_use]
-pub fn component_worst_case(limits: &ComponentLimits, endpoints: &Endpoints) -> Option<u64> {
-    if !component_valid(limits, endpoints) {
-        return None;
-    }
-    let entrance = crate::worst_case(&limits.adapter, &limits.receiving)?;
-    let base = connection::worst_case(&limits.connection, endpoints.destinations())?
-        .checked_add(Grants::worst_case(limits.accounts, limits.grant_value_bytes)?)?
-        .checked_add(Map::<u32, EndpointOptions>::worst_case(limits.connection.endpoints)?)?
-        .checked_add(Map::<(u32, u32), ()>::worst_case(limits.llms)?)?
-        .checked_add(endpoints.option_bytes()?)?
-        .checked_add(Map::<Token, Active>::worst_case(limits.connection.connections)?)?
-        .checked_add(Set::<Token>::worst_case(limits.connection.connections)?)?
-        .checked_add(Queue::<connection::Event>::worst_case(MAX_OUT.above)?)?;
-    // Active keeps declarations and contracts, not the consumed neutral
-    // prompt or parser workspace. Only one component entrance translates or
-    // decodes at once; the connection child owns every retained native Client.
-    let retained = limits
-        .adapter
-        .tool_bytes
-        .checked_add(limits.contract_bytes)?
-        .checked_mul(u64::from(limits.connection.connections))?;
-    base.checked_add(retained)?.checked_add(entrance)?.checked_add(capture_worst_case(limits)?)
-}
-
-fn capture_worst_case(limits: &ComponentLimits) -> Option<u64> {
-    let client = limits.adapter.client;
-    let history = u64::from(client.history_items).checked_mul(
-        u64::try_from(size_of::<smith_events::Message>())
-            .ok()?
-            .checked_add(u64::try_from(size_of::<smith_events::Block>()).ok()?)?,
-    )?;
-    let tools = u64::from(client.tools).checked_mul(u64::try_from(size_of::<Box<[u8]>>()).ok()?)?;
-    let prompt = u64::from(client.request).checked_add(history)?.checked_add(tools)?;
-    // The Client admits the sum of text, call IDs/names/arguments and replay
-    // token payload under answer, rather than one full string per block.
-    // Capture omits replay payload. Two separate answer allowances cover text
-    // and call identity/argument measures beside completed provider blocks.
-    let completion = List::<smith_events::Block>::worst_case(client.output_items)?
-        .checked_add(u64::from(client.answer).checked_mul(3)?)?
-        .checked_mul(u64::from(limits.connection.calls))?;
-    Queue::<crate::Measure>::worst_case(MEASURES)?.checked_add(prompt)?.checked_add(completion)
-}
-
 impl Component {
     /// Validate the configured endpoint and pool bounds before the loop.
     pub fn new(limits: &ComponentLimits, endpoints: Endpoints) -> Result<Component, ComponentError> {

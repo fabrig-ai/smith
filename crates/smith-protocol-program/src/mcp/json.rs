@@ -55,6 +55,7 @@ pub(crate) fn collect_limited(bytes: &[u8], limits: collector::Limits) -> Option
     None
 }
 
+#[expect(dead_code, reason = "programming-model.md 6.3: preserve the independent edge workspace bound")]
 pub(crate) fn worst_case(bound: u32) -> Option<u64> {
     bound.checked_add(2)?;
     worst_case_limited(limits(bound))

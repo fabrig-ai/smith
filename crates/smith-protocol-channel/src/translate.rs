@@ -248,12 +248,6 @@ impl Endpoints {
         true
     }
 
-    /// Checked retained table storage for bounded names, in bytes.
-    #[must_use]
-    pub fn worst_case(count: u32, name_bytes: u32) -> Option<u64> {
-        List::<Endpoint>::worst_case(count)?.checked_add(u64::from(count).checked_mul(u64::from(name_bytes))?)
-    }
-
     /// Find a charter name without exposing endpoint addresses.
     #[must_use]
     #[expect(clippy::manual_find, reason = "production steps do not use closures")]

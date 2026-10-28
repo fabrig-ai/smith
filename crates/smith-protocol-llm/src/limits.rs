@@ -3,11 +3,8 @@
 
 use core::mem::size_of;
 
-use skein_lib::List;
-use skein_llm::{Block, Message, Tool, client};
+use skein_llm::client;
 use smith_domain::{llm, session};
-
-use crate::types::{Context, ResolvedCall, ToolSchema};
 
 /// Immutable protocol bounds for application translation and the shared Client.
 /// The caller supplies these at startup, independently from application scheduling limits.
@@ -115,47 +112,6 @@ pub fn valid(limits: &Limits, receiving: &Receiving) -> bool {
     };
     skein_llm::replay_worst_case(&document_limits(&limits.client, document_bytes)).is_some()
         && skein_llm::replay_worst_case(&replay).is_some()
-}
-
-/// Protocol footprint, including its retained declaration context,
-/// native prompt/schema/replay transit and simultaneous translated output.
-/// The connection pool separately owns the Client and its native preparation.
-/// Caller-owned root input, endpoint/credential grants, application decoder input
-/// and observation queues are priced separately by their owners. None means
-/// receiving incompatibility or arithmetic overflow; no Client is prepared.
-#[must_use]
-pub fn worst_case(limits: &Limits, receiving: &Receiving) -> Option<u64> {
-    if !valid(limits, receiving) {
-        return None;
-    }
-    let completion = completion_worst_case(&limits.client, receiving.decoded_call_bytes)?;
-    let parts = limits.client.output_items;
-    // Rules 1 and 2: neutral schema/replay documents share actual source
-    // bytes. Each retained JSON record consumes a source byte; its Compact
-    // cell and decoded text are priced once. Outgoing request escaping does
-    // not expand held documents. The one current parser/packing scratch is
-    // independent below; it is not multiplied over every retained record.
-    let compact = u64::try_from(size_of::<skein_json::document::Compact>()).ok()?;
-    let documents = limits.history_bytes.checked_add(limits.tool_bytes)?.checked_mul(compact.checked_add(1)?)?;
-    let slots = List::<Tool>::worst_case(limits.client.tools)?
-        .checked_add(List::<Message>::worst_case(limits.client.history_items)?)?
-        .checked_add(List::<Block>::worst_case(limits.client.history_items)?)?
-        .checked_add(List::<ToolSchema>::worst_case(limits.client.tools)?)?
-        .checked_add(List::<Option<ResolvedCall>>::worst_case(parts)?)?;
-    // The connection's shared pool owns the Client and native preparation.
-    // This owner retains its context and one neutral prompt alongside it.
-    u64::try_from(size_of::<Context>())
-        .ok()?
-        .checked_add(limits.tool_bytes.checked_mul(2)?)?
-        .checked_add(slots.checked_mul(2)?)?
-        .checked_add(documents)?
-        .checked_add(skein_llm::replay_worst_case(&document_limits(
-            &limits.client,
-            u32::try_from(limits.tool_bytes.max(u64::from(limits.client.input))).ok()?,
-        ))?)?
-        .checked_add(skein_llm::replay_worst_case(&replay_limits(&limits.client)?)?)?
-        .checked_add(completion.checked_mul(2)?)?
-        .checked_add(u64::from(receiving.max_failure_bytes))
 }
 
 /// Derive one result's rendering from the workspace caps and host/delegated text.

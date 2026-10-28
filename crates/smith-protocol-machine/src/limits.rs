@@ -1,14 +1,8 @@
 //! Bounded machine ownership (programming-model.md, section 6.3;
 //! protocol/agent.md, section 2).
 
-use alloc::boxed::Box;
-use core::mem::size_of;
 use skein_json::tokenizer;
-use skein_lib::stream::Down;
-use skein_lib::{Duration, List, Map, Queue, Stack, Token};
-
-use crate::component::{Pending, Root};
-use crate::process::Process;
+use skein_lib::Duration;
 
 /// File translation capacity, checked before effects.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,87 +52,6 @@ pub const fn max_out(limits: &Limits) -> MaxOut {
     let stopping = limits.processes.checked_mul(2).expect("process emission count fits");
     let below = if stopping > 3 { stopping } else { 3 };
     MaxOut { to_domain: if limits.processes == 0 { 1 } else { limits.processes }, below }
-}
-
-/// Heap retained by the component, plus its largest transient translation.
-/// Caller-owned request buffers handed below are accounted by their owner.
-#[must_use]
-pub fn worst_case(limits: &Limits) -> Option<u64> {
-    if !valid(limits) {
-        return None;
-    }
-    // Installing a new workspace temporarily coexists with the old root list.
-    let roots = List::<Root>::worst_case(limits.roots)?.checked_mul(2)?;
-    // A create in a directory hands io one directory path of its own at a
-    // time, the probe's or a make's (domain/tools.md, section 3); its content
-    // and file path stay the domain's.
-    let operations = Map::<Token, Pending>::worst_case(limits.operations)?
-        .checked_add(u64::from(limits.path_bytes).checked_mul(u64::from(limits.operations))?)?;
-    let guides = Map::<Token, crate::guide::Guide>::worst_case(limits.operations)?
-        .checked_add(u64::from(limits.file_bytes).checked_mul(u64::from(limits.operations))?)?;
-    // Each pending listing retains one encoded glob, its line, previous
-    // pathname and cutoff. Decoding a path and retaining an entry overlap
-    // only in the current step, like the argument translation buffers.
-    let listing = List::<Option<smith_domain::tools::Entry>>::worst_case(limits.entries)?
-        .checked_add(limits.entry_bytes)?
-        .checked_add(u64::from(limits.tool_payload))?
-        .checked_add(u64::from(limits.path_bytes).checked_mul(2)?)?
-        .checked_add(512)?
-        .checked_add(u64::from(limits.search_line_bytes).checked_mul(3)?)?
-        .checked_mul(u64::from(limits.processes))?
-        // Only the listing finishing in this step allocates its terminal's cells.
-        .checked_add(List::<smith_domain::tools::Entry>::worst_case(limits.entries)?)?
-        .checked_add(u64::from(limits.search_line_bytes).checked_mul(2)?)?
-        .checked_add(u64::from(limits.tool_payload).checked_mul(4)?)?;
-    // The process bound includes every conversation's jobs beside its batch
-    // and the checks (protocol/limits.md, sections 3.5 and 5).
-    let processes = Map::<Token, Process>::worst_case(limits.processes)?;
-    let pipes = Map::<Token, Token>::worst_case(limits.processes.checked_mul(2)?)?;
-    let window = limits.output_bytes.max(limits.search_bytes);
-    // Each process, jobs included, keeps two windows at least as large as
-    // shell_head + shell_tail in total. Their records are counted above.
-    let output = u64::from(window).checked_mul(2)?.checked_mul(u64::from(limits.processes))?;
-    let search = u64::from(limits.search_bytes)
-        .checked_add(u64::from(limits.search_line_bytes))?
-        .checked_add(
-            u64::from(limits.search_hits).checked_mul(u64::try_from(size_of::<smith_domain::tools::Hit>()).ok()?)?,
-        )?
-        .checked_mul(u64::from(limits.processes))?;
-    let variables = u64::from(limits.env_bytes / 2).checked_mul(u64::try_from(size_of::<Box<[u8]>>()).ok()?)?;
-    let encoded_environment = variables.checked_add(u64::from(limits.env_bytes))?;
-    // Startup name validation and one spawn copy are disjoint transients.
-    let environment = encoded_environment
-        .checked_add(encoded_environment.max(skein_lib::Set::<&[u8]>::worst_case(limits.env_bytes / 2)?))?;
-    let tokenizer_limits = tokenizer::Limits {
-        depth: 8,
-        string: limits.search_line_bytes.max(1),
-        number: 20,
-        chunk: 64,
-        length: limits.search_line_bytes.max(1),
-    };
-    // One JSON line parses at a time. Its token payloads and a sorting swap
-    // can overlap the retained line and hit buffers at their largest size.
-    let parse = tokenizer::worst_case(&tokenizer_limits)?
-        .checked_add(Queue::<tokenizer::Event>::worst_case(1)?)?
-        .checked_add(Queue::<Down>::worst_case(1)?)?
-        .checked_add(Stack::<u8>::worst_case(8)?)?
-        .checked_add(u64::from(limits.search_line_bytes).checked_mul(2)?)?
-        .checked_add(u64::from(limits.search_bytes).checked_mul(2)?)?;
-    let scratch = List::<Token>::worst_case(limits.processes)?
-        .checked_add(u64::from(window).checked_mul(2)?)?
-        .checked_add(parse)?;
-    roots
-        .checked_add(operations)?
-        .checked_add(guides)?
-        .checked_add(processes)?
-        .checked_add(pipes)?
-        .checked_add(output)?
-        // lib.md, section 7: each output pipe can deliver its maximum.
-        .checked_add(u64::from(crate::process::OUTPUT_READ).checked_mul(2)?)?
-        .checked_add(search)?
-        .checked_add(listing)?
-        .checked_add(environment)?
-        .checked_add(scratch)
 }
 
 /// Whether the machine's capacities and search edge fit (programming-model.md, 6.3).
@@ -226,7 +139,6 @@ pub fn derive(inputs: &Derivation) -> Result<Limits, Field> {
 mod memory {
     use super::Limits;
     use crate::{Below, BelowEvent, Component, Environment, FromDomain, ToDomain};
-    use alloc::boxed::Box;
     use skein_io::{file, kernel};
     use skein_lib::{Duration, Env, Queue, Time, Token, Wall};
     use skein_world::domain::heap::{Counting, Meter};

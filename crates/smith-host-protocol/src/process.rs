@@ -6,7 +6,6 @@
 //! `send_*` encodes output, and `next_channel_down`/`channel_down` route its IO.
 
 use alloc::boxed::Box;
-use core::mem::size_of;
 use skein_channel::{Lower, LowerEvent, StreamMode};
 use skein_io::{Event as IoEvent, Request as IoRequest, kernel};
 use skein_lib::{List, Queue, Time, Token, stream};
@@ -75,18 +74,6 @@ pub struct Process {
     tail: List<u8>,
     channel_events: Queue<OpenEvent>,
     channel_below: Queue<Lower>,
-}
-
-/// Checked upper bound for one process adapter and its channel state.
-#[must_use]
-pub fn process_worst_case(limits: &Limits, detail_bytes: u32) -> Option<u64> {
-    crate::worst_case(limits)?
-        .checked_add(List::<u8>::worst_case(detail_bytes)?)?
-        // lib.md, section 7: one maximum standard-error delivery.
-        .checked_add(u64::from(STDERR_READ))?
-        .checked_add(Queue::<OpenEvent>::worst_case(8)?)?
-        .checked_add(Queue::<Lower>::worst_case(16)?)?
-        .checked_add(u64::try_from(size_of::<Process>()).ok()?)
 }
 
 impl Process {

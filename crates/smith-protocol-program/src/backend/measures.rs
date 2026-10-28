@@ -6,42 +6,16 @@ use super::{Backend, policy, turns};
 use crate::mcp::json;
 use alloc::boxed::Box;
 use skein_json::Document;
-use skein_lib::{List, Queue, Time, Token};
+use skein_lib::{List, Time, Token};
 use smith_domain::llm;
 use smith_events::{Block, Completion, Message, Prompt, Role};
 use smith_protocol_llm::{self as protocol, FromDomain, Measure};
 
 pub(super) const MEASURES: u32 = 16;
 const PROGRAM_TOOLS: usize = policy::BUILTINS.len() + 1;
-// The six built-in names and permission_prompt fit in 64 payload bytes.
-const PROGRAM_TOOL_BYTES: u64 = 64;
-// An extra empty prompt's message cell plus scalar terminal/delta bookkeeping.
-const OBSERVATION_FIXED_BYTES: u64 = 256;
 
 pub(super) fn capacity(settings: &super::Settings) -> Option<u32> {
     MEASURES.checked_add(settings.receiving.max_completion_blocks)
-}
-
-pub(super) fn worst_case(settings: &super::Settings) -> Option<u64> {
-    let client = settings.adapter.client;
-    // Intake pauses until these measures drain: a sent prompt, a completion,
-    // or one partial text line owns payload here. An empty later prompt may
-    // accompany its completion; fixed room covers that message cell and names.
-    // Compaction render borrows this payload slot before spawn: earlier
-    // measures drained, begin_prompt cleared pending, and capture moves text.
-    let prompt = u64::from(settings.input_bytes)
-        .checked_add(List::<Block>::worst_case(client.history_items)?)?
-        .checked_add(List::<Box<[u8]>>::worst_case(client.tools.checked_add(u32::try_from(PROGRAM_TOOLS).ok()?)?)?)?
-        .checked_add(List::<Message>::worst_case(1)?)?
-        .checked_add(PROGRAM_TOOL_BYTES)?;
-    let completion = settings
-        .receiving
-        .max_completion_bytes
-        .checked_add(List::<Block>::worst_case(settings.receiving.max_completion_blocks)?)?;
-    Queue::<Measure>::worst_case(capacity(settings)?)?
-        .checked_add(prompt.max(completion).max(u64::from(client.answer)))?
-        .checked_add(OBSERVATION_FIXED_BYTES)?
-        .checked_add(super::redaction::worst_case(settings)?)
 }
 
 impl Backend {

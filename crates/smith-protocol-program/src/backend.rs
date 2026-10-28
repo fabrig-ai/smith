@@ -22,7 +22,7 @@ mod intake;
 mod measures;
 mod memory;
 mod session;
-pub use memory::{backend_valid, backend_worst_case};
+pub use memory::backend_valid;
 mod permission;
 mod policy;
 mod recovery;

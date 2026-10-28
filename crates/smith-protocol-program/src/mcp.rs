@@ -5,10 +5,7 @@
 //! entry point and reserve eight downward records before calling one.
 
 use alloc::boxed::Box;
-use core::{
-    mem::size_of,
-    net::{Ipv4Addr, SocketAddr},
-};
+use core::net::{Ipv4Addr, SocketAddr};
 use skein_io::{self as io, Addr};
 use skein_lib::{Duration, List, Queue, Secret, Time, Token, sha256, stream};
 
@@ -178,29 +175,6 @@ pub fn secret_text(entropy: &[u8; 32]) -> [u8; SECRET_BYTES] {
         *pair.last_mut().expect("hex pair") = *digits.get(usize::from(byte & 15)).expect("hex digit");
     }
     text
-}
-
-/// Held lines, call IDs, tools and JSON collection/encoding peaks (programs.md, 9).
-#[must_use]
-pub fn mcp_worst_case(limits: &Limits) -> Option<u64> {
-    let calls = u32::from(limits.calls);
-    // Reading pauses at calls + 1 queued lines. Answers for the calls
-    // already admitted can still arrive, beside one line awaiting its grant.
-    let queued = calls.checked_mul(2)?.checked_add(2)?;
-    u64::try_from(size_of::<Server>())
-        .ok()?
-        .checked_add(64 + 130)?
-        .checked_add(List::<Option<Call>>::worst_case(calls)?)?
-        .checked_add(u64::from(calls).checked_mul(64)?)?
-        .checked_add(Queue::<Box<[u8]>>::worst_case(queued)?)?
-        .checked_add(u64::from(queued).checked_mul(u64::from(limits.answer_bytes))?)?
-        // Tool records and their list, quoting, result/envelope copies and
-        // the owner's output record overlap while one answer is encoded.
-        .checked_add(u64::from(limits.answer_bytes).checked_mul(12)?)?
-        .checked_add(u64::from(limits.message_bytes).checked_mul(12)?)?
-        // tool_list drops each schema document before new returns; message drops its document on return.
-        .checked_add(json::worst_case(limits.message_bytes)?.max(json::worst_case(limits.schema_bytes)?))?
-        .checked_add(Queue::<Up>::worst_case(2)?)
 }
 
 impl Server {

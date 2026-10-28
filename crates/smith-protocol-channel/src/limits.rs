@@ -1,9 +1,5 @@
 //! Agent-side opening limits (protocol/channel.md, sections 2 and 7).
-use core::mem::size_of;
-use skein_channel::{Lower, SchemaError};
-use skein_lib::{List, Queue};
-
-use crate::{Component, OpenEvent};
+use skein_channel::SchemaError;
 
 /// Codec, framing and queue allowances fixed before the channel opens.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -115,54 +111,6 @@ pub(crate) const MAX_OUT: MaxOut = MaxOut { to_domain: 1, below: 6 };
 #[must_use]
 pub const fn max_out(_limits: &Limits) -> MaxOut {
     MAX_OUT
-}
-
-/// Price the machine, the opening event queue and caller output queues.
-#[must_use]
-pub fn worst_case(limits: &Limits) -> Option<u64> {
-    if !valid(limits) {
-        return None;
-    }
-    let schema = schema(limits).ok()?;
-    let mut duplicate = List::<skein_channel::Version>::worst_case(schema.versions.capacity())?;
-    for version in &schema.versions {
-        duplicate = duplicate.checked_add(List::<skein_channel::Kind>::worst_case(version.kinds.capacity())?)?;
-    }
-    let grant_value_bytes = u64::from(limits.bodies.withdrawn_value_id)
-        .checked_add(u64::from(limits.bodies.withdrawn_value_bearer))?
-        .max(u64::from(limits.bodies.credential_value_bytes))
-        .max(u64::from(limits.bodies.program_value_name));
-    let bytes = skein_channel::worst_case(&schema, skein_channel::Role::Responder, &limits.channel)?
-        .checked_add(duplicate)?
-        .checked_add(u64::from(limits.endpoints).checked_mul(u64::try_from(size_of::<crate::Endpoint>()).ok()?)?)?
-        .checked_add(u64::from(limits.endpoints).checked_mul(u64::from(smith_charter::CEILINGS.llm_endpoint))?)?
-        // Rules 1 and 6: all decoded byte fields share the received frame.
-        // Generated zero-payload prices retain every permitted list cell.
-        // Input, decoded codec values and translated values can coexist.
-        .checked_add(start_cells(&limits.bodies)?.checked_mul(2)?)?
-        .checked_add(charter_cells(&limits.charter)?.checked_mul(2)?)?
-        // One saved turn decodes at a time. The accumulating concrete turn
-        // envelopes are separate from the whole window's shared payload.
-        .checked_add(turn_cells(&limits.transcript)?.checked_mul(2)?)?
-        .checked_add(List::<smith_domain_session::record::Turn>::worst_case(limits.resume_turns)?)?
-        // Retain the first endpoint name while checking later turns, including unknown names.
-        .checked_add(u64::from(limits.transcript.turn_endpoint))?
-        // Body, decoded Start fields, accumulated translated fields, and
-        // the one Charter/Turn currently being decoded. A saved window is
-        // decoded sequentially; codec nodes are priced separately above.
-        .checked_add(u64::from(limits.start_bytes).checked_mul(4)?)?
-        .checked_add(Queue::<skein_channel::Event>::worst_case(8)?)?
-        .checked_add(Queue::<OpenEvent>::worst_case(1)?)?
-        .checked_add(Queue::<Lower>::worst_case(6)?)?;
-    bytes
-        .checked_add(skein_lib::Map::<crate::component::CallKey, crate::component::CallRoute>::worst_case(
-            limits.calls,
-        )?)?
-        .checked_add(skein_lib::Map::<u32, u64>::worst_case(limits.turns)?)?
-        .checked_add(List::<u32>::worst_case(limits.turns)?)?
-        .checked_add(skein_lib::Map::<(u32, u64), crate::GrantValue>::worst_case(limits.grants)?)?
-        .checked_add(u64::from(limits.grants).checked_mul(grant_value_bytes)?)?
-        .checked_add(u64::try_from(size_of::<Component>()).ok()?)
 }
 
 /// Whether codec edges and responder capacities fit (programming-model.md, 6.3).

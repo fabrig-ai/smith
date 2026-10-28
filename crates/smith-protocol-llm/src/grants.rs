@@ -118,12 +118,4 @@ impl Grants {
             None => Ok(None),
         }
     }
-
-    /// Worst retained table and secret payload ownership for configured caps.
-    #[must_use]
-    pub fn worst_case(accounts: u32, value_bytes: u32) -> Option<u64> {
-        let capacity = accounts.checked_mul(2)?;
-        Map::<(u32, u64), Entry>::worst_case(capacity)?
-            .checked_add(u64::from(capacity).checked_mul(u64::from(value_bytes))?)
-    }
 }
